@@ -10,3 +10,4 @@ DerivedData/
 .DS_Store
 .superpowers/
 LifePath/Info.plist
+.claude/
