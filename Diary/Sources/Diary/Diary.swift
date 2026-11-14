@@ -24,6 +24,14 @@ public final class Diary: Sendable {
                 CREATE TABLE smoothedPoint(t REAL PRIMARY KEY, lat REAL, lon REAL);
                 """)
         }
+        migrator.registerMigration("v3") { db in
+            try db.execute(sql: """
+                CREATE TABLE tripLine(
+                    start REAL PRIMARY KEY, end REAL, minLat REAL, maxLat REAL, minLon REAL, maxLon REAL,
+                    distance REAL, coords BLOB);
+                CREATE INDEX tripLine_end ON tripLine(end);
+                """)
+        }
         try migrator.migrate(pool)
     }
 
@@ -98,6 +106,54 @@ public final class Diary: Sendable {
         try pool.read { db in
             try Double.fetchOne(db, sql: "SELECT MAX(t) FROM smoothedPoint").map { Date(timeIntervalSince1970: $0) }
         }
+    }
+
+    /// Derived cache: replaced freely, never the stored points.
+    public func saveTripLines(_ lines: [TripLine], replacingFrom: Date) throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM tripLine WHERE end >= ?", arguments: [replacingFrom.timeIntervalSince1970])
+            for l in lines {
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO tripLine(start, end, minLat, maxLat, minLon, maxLon, distance, coords) VALUES (?,?,?,?,?,?,?,?)",
+                    arguments: [l.start.timeIntervalSince1970, l.end.timeIntervalSince1970, l.minLat, l.maxLat, l.minLon, l.maxLon,
+                                l.distance, Self.encode(l.coords)])
+            }
+        }
+    }
+
+    public func tripLines(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date) throws -> [TripLine] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT * FROM tripLine WHERE maxLat >= ? AND minLat <= ? AND maxLon >= ? AND minLon <= ?
+                AND end >= ? AND start <= ? ORDER BY start
+                """, arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970]).map { r in
+                TripLine(start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"]),
+                         minLat: r["minLat"], maxLat: r["maxLat"], minLon: r["minLon"], maxLon: r["maxLon"],
+                         distance: r["distance"], coords: Self.decode(r["coords"]))
+            }
+        }
+    }
+
+    public func tripLinesUntil() throws -> Date? {
+        try pool.read { db in
+            try Double.fetchOne(db, sql: "SELECT MAX(end) FROM tripLine").map { Date(timeIntervalSince1970: $0) }
+        }
+    }
+
+    /// Little-endian Float64 triples (lat, lon, speed).
+    private static func encode(_ coords: [(lat: Double, lon: Double, speed: Double)]) -> Data {
+        var d = Data(capacity: coords.count * 24)
+        for c in coords {
+            for v in [c.lat, c.lon, c.speed] { withUnsafeBytes(of: v.bitPattern.littleEndian) { d.append(contentsOf: $0) } }
+        }
+        return d
+    }
+
+    private static func decode(_ d: Data) -> [(lat: Double, lon: Double, speed: Double)] {
+        let vals = (0..<d.count / 8).map { i in
+            Double(bitPattern: UInt64(littleEndian: d.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: i * 8, as: UInt64.self) }))
+        }
+        return (0..<vals.count / 3).map { (vals[$0 * 3], vals[$0 * 3 + 1], vals[$0 * 3 + 2]) }
     }
 
     public func events(from: Date, to: Date) throws -> [LoggedEvent] {
