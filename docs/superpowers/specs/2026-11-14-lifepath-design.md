@@ -116,6 +116,7 @@ Battery targets for Balanced (from the brief, verified on device via the health 
 2. Drop teleports: implied speed from the last accepted point > 60 m/s after subtracting both accuracies.
 3. Smooth (LocoKit's proven design): a Kalman filter per axis in metres, no velocity term. Measurement variance = `hAcc²`, process variance grows by Δt · q² with q = 6 m/s on foot (LocoKit uses 4; 6 measured better against the 8 m bar), 8 cycling, 15 automotive, gain k = P / (P + hAcc²). Then a short accuracy-weighted moving average. While Still, output is the pinned point.
 4. Store both raw and smoothed coordinates for each point.
+5. **Trip smoothing (offline, best estimate):** the live filter can only use the past. Once a trip is finished, a constant-velocity Kalman filter (state: position and velocity per axis) runs forward over the trip's raw fixes, then a Rauch–Tung–Striebel pass runs backward, so every point is estimated from the fixes before *and* after it. This is the optimal linear smoother for this model, O(n) with a few dozen multiplications per point. It runs only while the app is open or charging (cool-phone rule), feeds map matching and the map's line, and is cached (`smoothedPoint(t, lat, lon)`, recomputable); stored points stay untouched. Bar: median ≤ 6 m on the same synthetic walks where the live filter must reach ≤ 8 m. Built in stage 2.
 
 Acceptance: on synthetic tracks (straight streets, corners, stops) with 30 m-class noise added, median error of smoothed output ≤ 8 m. Corners are not cut by more than 10 m.
 
@@ -175,7 +176,7 @@ The app reads `ExpirationDate` from its own `embedded.mobileprovision` and sched
 
 0. **Pipeline**: repo, XcodeGen, CI, Release, near-empty app on the phone via SideStore, one refresh done. Proves the €0 route.
 1. **Recorder**: Core filter + motion state, recorder, diary, status box, health report, onboarding (plain).
-2. **Map**: tracks (recorded line), filters, colouring, heat, locate.
+2. **Map**: offline trip smoothing (RTS), tracks, filters, colouring, heat, locate.
 3. **Streets**: OSM download (manual + automatic), map matching, matched display, Streets walked coverage.
 4. **Timeline + Stats + steps**.
 5. **Export / backup / import / restore prompt**.
