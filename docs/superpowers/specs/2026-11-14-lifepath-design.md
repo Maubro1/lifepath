@@ -13,6 +13,17 @@ Changes from the original brief, forced by iOS:
 - Downloading street maps sends the map area's rectangle (not your track) to OpenStreetMap's free Overpass service. Nothing else ever leaves the phone.
 - Steps and stairs come from the motion chip (CoreMotion), not Apple Health.
 
+## Where LifePath aims past existing apps
+
+Existing diary apps are the floor: LifePath borrows their proven battery mechanics and is held to stricter, checkable bars.
+
+- **Departures caught fast, cheaply.** Arc checks for departure with GPS every 6–60 s. LifePath uses the motion chip (steps, activity) as the first signal and GPS spot checks only as a backup with a 5-minute cap. Bar: trip start dated within 30 s of the first step (via CoreMotion history), and fewer than 15 GPS spot checks per hour of rest.
+- **Accuracy proven, not claimed.** No app in this category publishes accuracy measurements. LifePath's CI measures the filter on every change. Bar: median ≤ 8 m on noisy synthetic walks, no corner cut by more than 10 m, zero false stops at red lights in test drives, zero false trips from a phone lying still.
+- **No silent gaps.** Every gap over 15 minutes in the diary has a recorded reason (permission, swipe-away, signing expiry, iOS relaunch delay), shown in the health report and the status box.
+- **Battery visible.** The health report shows hours of GPS-on time per day and wake counts, so a battery problem points at a cause.
+- **Map that stays fast.** The map opens instantly at any history size and costs nothing when off screen.
+- **Yours outright.** No account, no subscription, open export formats, merge-safe backups.
+
 ## Constraints
 
 - €0. Windows 11 only, no Mac. Target: one iPhone 15 Pro on iOS 26.6.x. Never on the App Store.
