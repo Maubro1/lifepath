@@ -15,7 +15,12 @@ jobs:
           xcodebuild -version
           xcodebuild -version | grep -q "Xcode 26" || { echo "::error::Runner lacks Xcode 26"; exit 1; }
       - name: Core tests
-        run: swift test --package-path Core
+        # Failures become annotations, readable via the public API without a login.
+        run: |
+          swift test --package-path Core 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          grep -E "error:|failed" test.log | head -10 | while read -r line; do echo "::error::$line"; done
+          exit $status
 
   build:
     needs: test
