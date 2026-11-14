@@ -19,7 +19,7 @@ public struct TrackFilter: Sendable {
         switch activity {
         case .cycling: q = 8
         case .automotive: q = 15
-        default: q = 4
+        default: q = 6
         }
 
         if let origin, let last {
