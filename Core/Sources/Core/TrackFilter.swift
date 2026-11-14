@@ -51,11 +51,18 @@ public struct TrackFilter: Sendable {
             let k0 = p00 * sInv, k1 = p01 * sInv
             x += k0 * ex; y += k0 * ey; vx += k1 * ex; vy += k1 * ey
             p11 -= k1 * p01; p01 *= 1 - k0; p00 *= 1 - k0
-            if s.speed >= 0, s.course >= 0, s.hAcc <= 20 {   // Doppler velocity, sigma 0.7 m/s
+            let vNorm = (vx * vx + vy * vy).squareRoot()
+            if s.speed >= 0, s.hAcc <= 20, s.course >= 0 || vNorm > 0.3 {   // Doppler velocity: speed sigma 0.7 m/s plus heading error * speed
                 let c = s.course * .pi / 180
-                let vInv = 1 / (p11 + 0.49)
+                let heading = (activity == .cycling || activity == .automotive ? 3.0 : 10.0) * .pi / 180
+                let rv = 0.49 + pow(s.speed * heading, 2)
+                let zE = s.course >= 0 ? s.speed * sin(c) : s.speed * vx / vNorm
+                let zN = s.course >= 0 ? s.speed * cos(c) : s.speed * vy / vNorm
+                let evx = zE - vx, evy = zN - vy
+                let vSigma = (p11 + rv).squareRoot()
+                let vRatio = (evx * evx + evy * evy).squareRoot() / (Self.gate * vSigma)   // same Huber gate as the position
+                let vInv = 1 / (p11 + rv * max(vRatio, 1))
                 let g0 = p01 * vInv, g1 = p11 * vInv
-                let evx = s.speed * sin(c) - vx, evy = s.speed * cos(c) - vy
                 x += g0 * evx; y += g0 * evy; vx += g1 * evx; vy += g1 * evy
                 p00 -= g0 * p01; p01 -= g0 * p11; p11 -= g1 * p11
             }
