@@ -153,6 +153,19 @@ Rules (spec "Ways of moving"):
 - [ ] **Step 1: Failing tests** — `testRunMedianErrorAtMost8m` (same block as the walk test at 3.5 m/s, σ 12 m, seed 11); `testWanderInsideFenceReturnsToStillAfter60s`; `testWanderStepThresholdRises` (15 → 50 → 150); `testLeavingFenceResetsThreshold`; `testWalkAwayFromVisitStillWakes` (after two wander-returns, a fix 300 m away wakes immediately).
 - [ ] **Step 2: Push, RED.** **Step 3: Implement, push, GREEN.** Commit `Core: running filter noise, wander backoff`.
 
+### Task 3c: Bad-signal hardening
+
+**Files:** Modify `Core/Sources/Core/TrackFilter.swift`, `Core/Sources/Core/MotionEngine.swift`; Test `TrackFilterTests.swift`, `MotionEngineTests.swift`, `Synthetic.swift` (multipath helper)
+
+**Interfaces (Produces):** `TrackFilter.dropCounts: [String: Int]` (reasons `accuracy`, `stale`, `future`, `order`, `teleport`; `takeDropCounts() -> [String: Int]` returns and resets them). `FilteredPoint.speed` is the sample's Doppler speed when `hAcc ≤ 20`, else −1.
+
+Rules (spec "Bad signal"):
+- Robust Kalman: innovation d = distance(Kalman prediction, measurement); σ = √(P + hAcc²); if d > 2.5σ, use measurement variance hAcc² · (d / 2.5σ) for that update (Huber weight). Never drop on this rule.
+- Settling tolerates up to 10% of fixes in the window outside the fence (at least one fix inside; with fewer than 10 fixes, none may be outside).
+
+- [ ] **Step 1: Failing tests** — `testMultipathBurstBarelyMovesLine` (straight walk; 8 consecutive fixes offset 30 m sideways with hAcc 8; max output deviation from truth during the burst ≤ 12 m); `testRealTurnStillFollowed` (90° turn with clean fixes: output within 10 m of the corner, as before); `testSpeedInvalidWhenInaccurate`; `testDropCountsByReason`; `testSettlingToleratesOneOutlierInTwenty`; existing walk/run/corner tests stay green.
+- [ ] **Step 2: Push, RED.** **Step 3: Implement, push, GREEN.** Commit `Core: robust filter and outlier-tolerant settling`.
+
 ### Task 4: Status and health report
 
 **Files:** Create `Core/Sources/Core/TrackingStatus.swift`, `Core/Sources/Core/HealthReport.swift`; Test `TrackingStatusTests.swift`, `HealthReportTests.swift`
@@ -169,7 +182,7 @@ public enum HealthReport { public static func render(_ input: HealthInput, days:
 
 Status rules: authorization ≠ always → problem ("Location access isn't set to Always", hint "Settings → LifePath → Location → Always"); precise off → problem; last check-in > 60 min ago → problem (hint about swiping away); signing expiry < 24 h → problem; state still → resting ("Resting: you've been still since HH:mm"); else healthy.
 
-Health report sections, in order: header (generated time, version from settings); settings and permissions (`settings` dict, one per line); per day: GPS-on hours, wakes by reason, points moving/still; per hour (24 rows per day): % resting, wakes, points, worst thermal state in that hour (from `thermal` events, carrying the last known state into the hour); accuracy histogram of moving points (<5, 5–10, 10–20, 20–50, ≥50 m); gaps > 15 min between consecutive points with the last event before each; thermal and low-power events; the last 200 events verbatim. Event kinds used everywhere: `state`, `wake`, `gps` (on/off), `thermal`, `lowPower`, `permission`, `flush`, `launch`.
+Health report sections, in order: header (generated time, version from settings); settings and permissions (`settings` dict, one per line); per day: GPS-on hours, wakes by reason, points moving/still; per hour (24 rows per day): % resting, wakes, points, worst thermal state in that hour (from `thermal` events, carrying the last known state into the hour); accuracy histogram of moving points (<5, 5–10, 10–20, 20–50, ≥50 m); per hour also the median hAcc of moving points and dropped-fix counts by reason (from `drops` events whose detail is `reason=count,…`, written by the recorder with each flush; Task 6 writes them); gaps > 15 min between consecutive points with the last event before each; thermal and low-power events; the last 200 events verbatim. Event kinds used everywhere: `state`, `wake`, `gps` (on/off), `thermal`, `lowPower`, `permission`, `flush`, `launch`.
 
 - [ ] **Step 1: Failing tests** — `testDowngradedPermissionIsProblem`, `testStillIsResting`, `testStaleCheckInIsProblem`, `testSigningExpirySoonIsProblem`; `testReportListsGapWithLastEvent`, `testReportRestingPercentPerHour` (still from 10:00 to 10:30 → hour 10 row "50%"), `testReportAccuracyHistogram`, `testReportGpsOnHours`.
 - [ ] **Step 2: Push, RED.** **Step 3: Implement, push, GREEN.** Commit `Core: tracking status and health report`.

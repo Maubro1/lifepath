@@ -128,6 +128,23 @@ Battery targets for Balanced (from the brief, verified on device via the health 
 
 Acceptance: on synthetic tracks (straight streets, corners, stops) with 30 m-class noise added, median error of smoothed output ≤ 8 m. Corners are not cut by more than 10 m.
 
+## Bad signal
+
+Bad signal comes in distinct kinds, and each is handled where it does damage:
+
+| Kind | What the phone does | How LifePath copes |
+|---|---|---|
+| Weak fix (indoors, trees, bag) | large `hAcc` | Kalman weighting by `hAcc²`; accuracy ceiling per level; wake decisions subtract `hAcc` |
+| Confident but wrong (multipath between tall buildings) | small `hAcc`, position 20–40 m off, often for many seconds | Robust Kalman: innovation gating with a Huber weight. When a fix's innovation exceeds 2.5σ of `√(P + hAcc²)`, its variance is inflated in proportion, so a lying fix barely moves the line but a real turn still gets through over two or three fixes. Offline, the RTS smoother and HMM map matching use the whole trip, which corrects most of the rest. |
+| Source switch (GPS lost → Wi-Fi → cell) | sudden jump with `hAcc` 65–1000 m | Ceiling drops cell fixes; teleport check drops Wi-Fi jumps; Wi-Fi fixes never wake a resting phone unless they clear the fence by their full accuracy |
+| Stale or cached fix after a wake | old timestamp | Dropped when older than 10 s or out of order |
+| No fix at all (tunnel, deep indoors) | nothing | Vehicle motion keeps a trip alive through tunnels; otherwise the indoor fallback rests GPS after 5 min. On the map a gap stays a gap; only when both ends are confidently matched and the network allows a single plausible route (a train tunnel between two stations) is that route drawn, dashed and labelled as inferred |
+| Noisy speed | jumps imply false speeds | Speed only from the phone's Doppler measurement (`CLLocation.speed`), and only when `hAcc ≤ 20 m`; never from distance over time |
+| Noise while settling | fixes bounce around a stop | Settling uses filtered points and tolerates up to 10% of fixes outside the fence in the window |
+| Bad mobile data | downloads fail | Street downloads queue and retry; nothing else needs a network |
+
+The health report shows, per hour, the median accuracy and how many fixes were dropped for each reason (counted in memory and written with each batch, never logged per fix), so a bad-signal stretch is visible as such and not mistaken for a bug.
+
 ## Diary (SQLite via GRDB)
 
 One file in Application Support, `diary.sqlite`, WAL mode, versioned migrations.
