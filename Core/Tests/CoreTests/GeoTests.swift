@@ -3,8 +3,8 @@ import XCTest
 
 final class GeoTests: XCTestCase {
     func testDistanceKnownPair() {
-        // Amsterdam Centraal to Dam Square.
-        XCTAssertEqual(Geo.distance(52.3791, 4.9003, 52.3731, 4.8926), 832, accuracy: 5)
+        // Amsterdam Centraal to Dam Square. Hand check: dN = 667.2 m, dE = 522.7 m, hypot = 847.6 m.
+        XCTAssertEqual(Geo.distance(52.3791, 4.9003, 52.3731, 4.8926), 847.5, accuracy: 2)
     }
 
     func testOffsetRoundTrip() {
