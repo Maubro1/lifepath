@@ -57,6 +57,16 @@ final class HealthReportTests: XCTestCase {
         XCTAssertTrue(r10.contains("acc -") && r10.contains("drops -"), r10)
     }
 
+    func testReportCountsSpotChecksAndSkipsReturns() {
+        let out = render(events: [ev(at(15, 9, 0), "gps", "on spotcheck"), ev(at(15, 9, 10), "gps", "off spotcheck"),
+                                  ev(at(15, 9, 20), "gps", "on spotcheck"), ev(at(15, 9, 40), "gps", "off spotcheck"),
+                                  ev(at(15, 9, 45), "wake", "steps"), ev(at(15, 9, 50), "wake", "wander-return"),
+                                  ev(at(15, 9, 55), "wake", "indoor-nofix")])
+        XCTAssertTrue(row(out, "09:00").hasPrefix("09:00  0%  1  2  0  acc"), row(out, "09:00"))
+        XCTAssertTrue(out.contains("Wakes by reason: steps=1\n"), out)
+        XCTAssertTrue(out.contains("GPS on: 0.5 h"), out)
+    }
+
     func testReportThermalCarriesIntoHour() {
         let out = render(events: [ev(at(15, 9, 10), "thermal", "serious"), ev(at(15, 10, 20), "thermal", "nominal")])
         XCTAssertTrue(row(out, "10:00").contains("serious"), row(out, "10:00"))

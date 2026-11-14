@@ -5,9 +5,10 @@ final class TrackingStatusTests: XCTestCase {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     func eval(auth: Authorization = .always, precise: Bool = true, state: MotionState = .moving,
-              lastPoint: Date? = nil, stillSince: Date? = nil, checkIn: Date? = nil, expiry: Date? = nil) -> TrackingStatus {
-        TrackingStatus.evaluate(authorization: auth, preciseLocation: precise, state: state, lastPoint: lastPoint, stillSince: stillSince,
-                                lastCheckIn: checkIn ?? now.addingTimeInterval(-60),
+              stillSince: Date? = nil, checkIn: Date? = nil, expiry: Date? = nil,
+              deepSleep: Bool = false) -> TrackingStatus {
+        TrackingStatus.evaluate(authorization: auth, preciseLocation: precise, state: state, stillSince: stillSince,
+                                lastCheckIn: checkIn ?? now.addingTimeInterval(-60), deepSleep: deepSleep,
                                 signingExpiry: expiry ?? now.addingTimeInterval(86400 * 5), now: now)
     }
 
@@ -25,8 +26,7 @@ final class TrackingStatusTests: XCTestCase {
 
     func testStillIsResting() {
         let since = Calendar.current.date(from: DateComponents(year: 2027, month: 1, day: 15, hour: 9, minute: 5))!
-        // The last still point refreshes every 5 min; the headline must use the still transition.
-        let s = eval(state: .still, lastPoint: since.addingTimeInterval(1800), stillSince: since)
+        let s = eval(state: .still, stillSince: since)
         XCTAssertEqual(s.level, .resting)
         XCTAssertEqual(s.headline, "Resting: you've been still since 09:05")
     }
@@ -38,8 +38,14 @@ final class TrackingStatusTests: XCTestCase {
         XCTAssertEqual(eval(checkIn: now.addingTimeInterval(-59 * 60)).level, .healthy)
     }
 
+    func testDeepSleepSkipsCheckInRule() {
+        // Deep sleep stops the keep-alive, so hours without a check-in are expected.
+        XCTAssertEqual(eval(state: .still, checkIn: now.addingTimeInterval(-3 * 3600), deepSleep: true).level, .resting)
+    }
+
     func testSigningExpirySoonIsProblem() {
         XCTAssertEqual(eval(expiry: now.addingTimeInterval(23 * 3600)).level, .problem)
+        XCTAssertEqual(eval(expiry: now.addingTimeInterval(23 * 3600)).hint, "Open SideStore and tap Refresh All.")
         XCTAssertEqual(eval(expiry: now.addingTimeInterval(25 * 3600)).level, .healthy)
     }
 }

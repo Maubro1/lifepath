@@ -8,11 +8,18 @@ public enum Backfill {
         return stride(from: every, through: to.timeIntervalSince(from), by: every).map { fence.stillPoint(at: from.addingTimeInterval($0)) }
     }
 
-    /// Earliest of the first moving activity and the first step burst (>= 15 steps within 60 s) since `stillSince`.
-    /// `activities` must already be limited to confident ones; `stepTimes` holds one timestamp per step.
+    /// Earliest of the first moving activity and the first step burst (>= 15 steps within 60 s) after the last rest:
+    /// the latest confident `.stationary` start with evidence after it (so a 02:00 bathroom trip or a wait at the tram
+    /// stop is skipped), else `stillSince`. `activities` must already be limited to confident ones; `stepTimes` holds one
+    /// timestamp per step.
     public static func departure(stillSince: Date, activities: [(Date, Activity)], stepTimes: [Date]) -> Date? {
-        let moved = activities.filter { $0.0 >= stillSince && $0.1.isMoving }.map { $0.0 }.min()
-        let steps = stepTimes.filter { $0 >= stillSince }.sorted()
+        let rests = activities.filter { $0.0 >= stillSince && $0.1 == .stationary }.map { $0.0 }.sorted(by: >)
+        return (rests + [stillSince]).lazy.compactMap { departure(after: $0, activities, stepTimes) }.first
+    }
+
+    private static func departure(after start: Date, _ activities: [(Date, Activity)], _ stepTimes: [Date]) -> Date? {
+        let moved = activities.filter { $0.0 >= start && $0.1.isMoving }.map { $0.0 }.min()
+        let steps = stepTimes.filter { $0 >= start }.sorted()
         let burst = steps.indices.dropLast(14).first { steps[$0 + 14].timeIntervalSince(steps[$0]) <= 60 }.map { steps[$0] }
         return [moved, burst].compactMap { $0 }.min()
     }

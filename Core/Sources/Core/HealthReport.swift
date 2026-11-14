@@ -25,6 +25,8 @@ public enum HealthReport {
         let today = cal.startOfDay(for: input.now)
         let first = cal.date(byAdding: .day, value: -(max(days, 1) - 1), to: today)!
         let thermalRank = ["nominal": 0, "fair": 1, "serious": 2, "critical": 3]
+        // Returns to Still are logged as `wake` too; they are no wakes.
+        func isWake(_ e: LoggedEvent) -> Bool { e.kind == "wake" && e.detail != "wander-return" && e.detail != "indoor-nofix" }
 
         /// Seconds within [a, b) (clipped to now) that the last `kind` event's detail satisfied `want`,
         /// carrying the last known value in from before a.
@@ -51,14 +53,14 @@ public enum HealthReport {
             let next = cal.date(byAdding: .day, value: 1, to: start)!
             let dayEvents = events.filter { $0.t >= start && $0.t < next }
             let dayPoints = points.filter { $0.t >= start && $0.t < next }
-            let wakes = Dictionary(grouping: dayEvents.filter { $0.kind == "wake" }, by: \.detail)
+            let wakes = Dictionary(grouping: dayEvents.filter(isWake), by: \.detail)
                 .sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.count)" }
-            let gps = seconds("gps", start, next) { $0 == "on" } / 3600
+            let gps = seconds("gps", start, next) { $0.hasPrefix("on") } / 3600
             out += ["", "== \(day.string(from: start)) ==",
                     "GPS on: \(String(format: "%.1f", gps)) h",
                     "Wakes by reason: \(wakes.isEmpty ? "none" : wakes.joined(separator: ", "))",
                     "Points: \(dayPoints.filter { $0.kind == .moving }.count) moving, \(dayPoints.filter { $0.kind == .still }.count) still",
-                    "hour  resting  wakes  points  median hAcc  drops  thermal"]
+                    "hour  resting  wakes  spot checks  points  median hAcc  drops  thermal"]
             for h in 0..<24 {
                 let a = cal.date(byAdding: .hour, value: h, to: start)!, b = cal.date(byAdding: .hour, value: 1, to: a)!
                 let elapsed = min(b, input.now).timeIntervalSince(a)
@@ -80,7 +82,8 @@ public enum HealthReport {
                 }
                 let dropText = ["accuracy", "stale", "future", "order", "teleport"]
                     .compactMap { r in drops[r].flatMap { $0 > 0 ? "\(r)=\($0)" : nil } }.joined(separator: ",")
-                out.append("\(hm.string(from: a))  \(pct)%  \(inHour.filter { $0.kind == "wake" }.count)  "
+                let spots = inHour.filter { $0.kind == "gps" && $0.detail == "on spotcheck" }.count
+                out.append("\(hm.string(from: a))  \(pct)%  \(inHour.filter(isWake).count)  \(spots)  "
                            + "\(hourPoints.count)  acc \(median)  drops \(dropText.isEmpty ? "-" : dropText)  \(name)")
             }
         }

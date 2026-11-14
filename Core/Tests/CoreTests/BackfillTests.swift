@@ -30,6 +30,17 @@ final class BackfillTests: XCTestCase {
         XCTAssertEqual(Backfill.departure(stillSince: t0, activities: activities, stepTimes: scattered + burst), at(1000))
     }
 
+    func testDepartureAfterLastRest() {
+        // Still from 23:00 (t0); a 02:00 bathroom trip, stationary from 02:05, then out the door at 08:30.
+        let h: TimeInterval = 3600
+        let steps = Array(repeating: at(3 * h), count: 20) + Array(repeating: at(9.5 * h), count: 40)
+        var activities: [(Date, Activity)] = [(at(3 * h), .walking), (at(3 * h + 300), .stationary), (at(9.5 * h), .walking)]
+        XCTAssertEqual(Backfill.departure(stillSince: t0, activities: activities, stepTimes: steps), at(9.5 * h))
+        // Standing at the tram stop after the walk does not hide it.
+        activities.append((at(9.5 * h + 600), .stationary))
+        XCTAssertEqual(Backfill.departure(stillSince: t0, activities: activities, stepTimes: steps), at(9.5 * h))
+    }
+
     func testDepartureNilWithoutEvidence() {
         let fourteen = (0..<14).map { at(500 + Double($0)) }                     // one short of a burst
         let spread = (0..<15).map { at(2000 + Double($0) * 5) }                  // 15 steps over 70 s

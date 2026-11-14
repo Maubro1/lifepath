@@ -9,7 +9,7 @@ public struct TrackingStatus: Sendable, Equatable {
     public var hint: String?
 
     public static func evaluate(authorization: Authorization, preciseLocation: Bool, state: MotionState,
-                                lastPoint: Date?, stillSince: Date?, lastCheckIn: Date?, signingExpiry: Date?, now: Date) -> TrackingStatus {
+                                stillSince: Date?, lastCheckIn: Date?, deepSleep: Bool, signingExpiry: Date?, now: Date) -> TrackingStatus {
         func problem(_ headline: String, _ hint: String) -> TrackingStatus {
             TrackingStatus(level: .problem, headline: headline, hint: hint)
         }
@@ -19,11 +19,11 @@ public struct TrackingStatus: Sendable, Equatable {
         if !preciseLocation {
             return problem("Precise Location is off", "Settings → LifePath → Location → Precise Location")
         }
-        if let c = lastCheckIn, now.timeIntervalSince(c) > 60 * 60 {
+        if !deepSleep, let c = lastCheckIn, now.timeIntervalSince(c) > 60 * 60 {   // deep sleep stops the keep-alive check-ins
             return problem("No check-in for over an hour", "Did you swipe LifePath away? Open it once to restart tracking.")
         }
         if let e = signingExpiry, e.timeIntervalSince(now) < 24 * 3600 {
-            return problem("The app's signing expires soon", "Reinstall LifePath within a day to keep tracking.")
+            return problem("The app's signing expires soon", "Open SideStore and tap Refresh All.")
         }
         if state == .still {
             let f = DateFormatter()
