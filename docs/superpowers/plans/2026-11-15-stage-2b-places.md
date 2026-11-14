@@ -18,7 +18,7 @@
 
 ## Review Focus
 
-1. A first visit somewhere new must not be treated as a known place (candidates need 3 visits or 3 h).
+1. A first visit somewhere new must not be treated as a known place (candidates need visits on 3 different days).
 2. Leaving a known place must be caught as fast as before (fix outside the shape allowing for accuracy, geofence, vehicle motion).
 3. Two different places 60 m apart (neighbour's house, shop across the street) must stay separate; one place with a garden must stay one place.
 4. The shape and pin must follow a change (moved desk, new home) within weeks through decay, and an old home must fade, not vanish.
@@ -44,10 +44,10 @@ public struct Visit: Sendable, Equatable, Codable { public var start: Date; publ
 public enum Places {
     public static func visits(from points: [FilteredPoint], minDuration: TimeInterval = 600) -> [(start: Date, end: Date, points: [FilteredPoint])]   // runs of still points ≥ 10 min (plus the settling fixes just before them within the still hAcc)
     public static func learn(_ places: [Place], visit: (start: Date, end: Date, points: [FilteredPoint]), now: Date, nextId: Int64) -> (places: [Place], visit: Visit)
-    // learn: decay all weights by 0.5^(Δt/60 days) since updatedAt; splat each point's duration (time to next point, capped 300 s) into cells with a Gaussian kernel of σ = max(hAcc, 5 m) truncated at 2σ, weight 1/max(hAcc,5)²; join the place whose region widened by 20 m contains the majority of the visit's points, else create a candidate; candidate → place when visits ≥ 3 or totalSeconds ≥ 3 h; merge places whose regions touch; pin = cell with the highest 3×3-smoothed weight, ties broken by weight added in the last 30 days.
+    // learn: decay all weights by 0.5^(Δt/60 days) since updatedAt; splat each point's duration (time to next point, capped 300 s) into cells with a Gaussian kernel of σ = max(hAcc, 5 m) truncated at 2σ, weight 1/max(hAcc,5)²; join the place whose region widened by 20 m contains the majority of the visit's points, else create a candidate; candidate → place when it has visits on ≥ 3 distinct local calendar days (track `visitDays: Set<Int>` of day numbers, kept to the last 60 days); merge places whose regions touch; pin = cell with the highest 3×3-smoothed weight, ties broken by weight added in the last 30 days.
 }
 ```
-- [ ] Failing tests: `testCellSizeIs5m`, `testRegionHolds90PercentAndFillsHoles`, `testPinIsDensityPeakNotMean` (L-shaped region: pin inside the L, mean outside), `testContainsAllowsAccuracy`, `testFirstVisitIsCandidate`, `testThreeVisitsPromote`, `testThreeHoursPromote`, `testNeighbourSixtyMetresStaysSeparate`, `testGardenJoinsHouse`, `testDecayFollowsMove` (8 weeks at desk A then 8 weeks at desk B → pin at B), `testOldHomeFadesNotDeleted`, `testLearnIsIdempotentPerVisit` (same visit twice via a processed-until guard in the caller is fine; document), `testVisitsNeedTenMinutes`. RED → GREEN; commit `Core: learned places`.
+- [ ] Failing tests: `testCellSizeIs5m`, `testRegionHolds90PercentAndFillsHoles`, `testPinIsDensityPeakNotMean` (L-shaped region: pin inside the L, mean outside), `testContainsAllowsAccuracy`, `testFirstVisitIsCandidate`, `testThreeDaysPromote`, `testOneLongStayStaysCandidate` (6 h on one day → still a candidate), `testThreeVisitsSameDayStaysCandidate`, `testNeighbourSixtyMetresStaysSeparate`, `testGardenJoinsHouse`, `testDecayFollowsMove` (8 weeks at desk A then 8 weeks at desk B → pin at B), `testOldHomeFadesNotDeleted`, `testLearnIsIdempotentPerVisit` (same visit twice via a processed-until guard in the caller is fine; document), `testVisitsNeedTenMinutes`. RED → GREEN; commit `Core: learned places`.
 
 ### Task 2: Diary v4
 
