@@ -8,14 +8,15 @@ public struct Place: Sendable, Equatable, Codable {
     public var recent: [PlaceCell: Double]    // same weight with a 30-day half-life, only to break pin ties
     public var visitDays: Set<Int>            // local day numbers of visit starts, last 60 days
     public var updatedAt: Date
+    public var lastVisit: Date                // end of the latest visit joined
     public var totalSeconds: Double
     public var visits: Int
     public var isCandidate: Bool
 
     public init(id: Int64, name: String?, cells: [PlaceCell: Double], recent: [PlaceCell: Double] = [:], visitDays: Set<Int> = [],
-                updatedAt: Date, totalSeconds: Double, visits: Int, isCandidate: Bool) {
+                updatedAt: Date, lastVisit: Date, totalSeconds: Double, visits: Int, isCandidate: Bool) {
         self.id = id; self.name = name; self.cells = cells; self.recent = recent; self.visitDays = visitDays
-        self.updatedAt = updatedAt; self.totalSeconds = totalSeconds; self.visits = visits; self.isCandidate = isCandidate
+        self.updatedAt = updatedAt; self.lastVisit = lastVisit; self.totalSeconds = totalSeconds; self.visits = visits; self.isCandidate = isCandidate
     }
 
     /// Density peak: the cell with the most 3×3-smoothed weight; peaks within 10% of it go to the one with more recent weight.
@@ -106,7 +107,7 @@ public enum Places {
         if let best = hits.indices.max(by: { hits[$0] < hits[$1] }), 2 * hits[best] > pts.count {
             k = best
         } else {
-            places.append(Place(id: nextId, name: nil, cells: [:], updatedAt: now, totalSeconds: 0, visits: 0, isCandidate: true))
+            places.append(Place(id: nextId, name: nil, cells: [:], updatedAt: now, lastVisit: visit.end, totalSeconds: 0, visits: 0, isCandidate: true))
             k = places.count - 1
         }
         let added = PlaceGrid.splat(pts)
@@ -115,6 +116,7 @@ public enum Places {
         places[k].visits += 1
         places[k].totalSeconds += visit.end.timeIntervalSince(visit.start)
         places[k].visitDays.insert(day(visit.start))
+        places[k].lastVisit = max(places[k].lastVisit, visit.end)
         places[k].updatedAt = max(places[k].updatedAt, now)
 
         // Merge every place whose region touches this one into whichever has more time.
@@ -126,6 +128,7 @@ public enum Places {
             places[keep].recent.merge(g.recent, uniquingKeysWith: +)
             places[keep].visitDays.formUnion(g.visitDays)
             places[keep].visits += g.visits
+            places[keep].lastVisit = max(places[keep].lastVisit, g.lastVisit)
             places[keep].totalSeconds += g.totalSeconds
             places[keep].name = places[keep].name ?? g.name
             places[keep].isCandidate = places[keep].isCandidate && g.isCandidate
@@ -136,7 +139,10 @@ public enum Places {
 
         let today = day(now)
         places[k].visitDays = places[k].visitDays.filter { $0 > today - 60 }
-        if places[k].visitDays.count >= 3 { places[k].isCandidate = false }   // a place forms over ≥ 3 different days, never from one long stay
+        // A place forms over about a week: ≥ 5 different days, first and last ≥ 7 days apart; never from one long stay.
+        if let lo = places[k].visitDays.min(), let hi = places[k].visitDays.max(), places[k].visitDays.count >= 5, hi - lo >= 7 {
+            places[k].isCandidate = false
+        }
         return (places, Visit(start: visit.start, end: visit.end, placeId: places[k].id))
     }
 }

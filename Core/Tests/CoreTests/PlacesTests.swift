@@ -29,12 +29,25 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(p.totalSeconds, 1800)
     }
 
-    func testThreeDaysPromote() {
-        let two = fold([], [visit(at: day0), visit(at: day0 + day)])
-        XCTAssertEqual(two.map(\.isCandidate), [true])
-        let three = fold(two, [visit(at: day0 + 2 * day)])
-        XCTAssertEqual(three.map(\.isCandidate), [false])
-        XCTAssertEqual(three.first?.visits, 3)
+    /// Visits on day offsets `days` (several per day allowed).
+    func onDays(_ days: [Double], east: Double = 0, hAcc: Double = 5) -> [V] {
+        days.enumerated().map { i, d in visit(at: day0 + d * day + Double(i % 3) * 3600, east: east, hAcc: hAcc) }
+    }
+    let week: [Double] = [0, 2, 4, 6, 8]   // 5 days, first and last 8 days apart
+
+    func testFiveDaysOverAWeekPromote() throws {
+        let four = fold([], onDays(Array(week.prefix(4))))
+        XCTAssertEqual(four.map(\.isCandidate), [true])
+        let five = fold(four, onDays([8]))
+        XCTAssertEqual(five.map(\.isCandidate), [false])
+        XCTAssertEqual(five.first?.visits, 5)
+        XCTAssertEqual(five.first?.lastVisit, onDays([8])[0].end)
+    }
+
+    func testFiveVisitsOnFourDaysStaysCandidate() {
+        let ps = fold([], onDays([0, 3, 3, 6, 9]))
+        XCTAssertEqual(ps.map(\.isCandidate), [true])
+        XCTAssertEqual(ps.first?.visits, 5)
     }
 
     func testOneLongStayStaysCandidate() {
@@ -42,26 +55,25 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(ps.map(\.isCandidate), [true])
     }
 
-    func testThreeVisitsSameDayStaysCandidate() {
-        let ps = fold([], [visit(at: day0 - 3600), visit(at: day0 + 3600), visit(at: day0 + 3 * 3600)])
+    func testSevenDaysApartButOnlyThreeDaysStaysCandidate() {
+        let ps = fold([], onDays([0, 0, 4, 7, 7, 7]))
         XCTAssertEqual(ps.map(\.isCandidate), [true])
-        XCTAssertEqual(ps.first?.visits, 3)
     }
 
     func testNeighbourSixtyMetresStaysSeparate() {
-        let home = fold([], (0..<3).map { visit(at: day0 + Double($0) * day, hAcc: 10) })
-        let ps = fold(home, (3..<6).map { visit(at: day0 + Double($0) * day, east: 60, hAcc: 10) })
+        let home = fold([], onDays(week, hAcc: 10))
+        let ps = fold(home, onDays(week.map { $0 + 10 }, east: 60, hAcc: 10))
         XCTAssertEqual(ps.count, 2)
         XCTAssertEqual(ps.map(\.isCandidate), [false, false])
-        XCTAssertEqual(ps.map(\.visits), [3, 3])
+        XCTAssertEqual(ps.map(\.visits), [5, 5])
     }
 
     func testGardenJoinsHouse() throws {
-        let house = fold([], (0..<3).map { visit(at: day0 + Double($0) * day, hAcc: 8) })
-        let r = Places.learn(house, visit: visit(at: day0 + 3 * day, north: 20, hAcc: 8), now: day0 + 3 * day + 1800, nextId: 99)
+        let house = fold([], onDays(week, hAcc: 8))
+        let r = Places.learn(house, visit: visit(at: day0 + 9 * day, north: 20, hAcc: 8), now: day0 + 9 * day + 1800, nextId: 99)
         let p = try XCTUnwrap(r.places.first)
         XCTAssertEqual(r.places.count, 1)
-        XCTAssertEqual(r.visit.placeId, p.id); XCTAssertEqual(p.visits, 4)
+        XCTAssertEqual(r.visit.placeId, p.id); XCTAssertEqual(p.visits, 6)
         let garden = pt(day0, north: 20, east: 0)
         XCTAssertTrue(p.region().contains(PlaceGrid.cell(lat: garden.lat, lon: garden.lon)))
     }
@@ -79,14 +91,15 @@ final class PlacesTests: XCTestCase {
     }
 
     func testOldHomeFadesNotDeleted() throws {
-        let home = fold([], (0..<3).map { visit(at: day0 + Double($0) * day) })
+        let home = fold([], onDays(week))
         let before = try XCTUnwrap(home.first).cells.values.reduce(0, +)
         let later = day0 + 365 * day
         let ps = Places.learn(home, visit: visit(at: later, north: 2000), now: later + 1800, nextId: 2).places
         XCTAssertEqual(ps.count, 2)
         let old = try XCTUnwrap(ps.first { $0.id == home[0].id })
         XCTAssertFalse(old.isCandidate)
-        XCTAssertEqual(old.visits, 3)
+        XCTAssertEqual(old.visits, 5)
+        XCTAssertEqual(old.lastVisit, home[0].lastVisit)
         XCTAssertLessThan(old.cells.values.reduce(0, +), 0.02 * before)   // 0.5^(365/60) ≈ 1.5%
         XCTAssertEqual(old.region(), home[0].region())   // fading keeps the shape
     }

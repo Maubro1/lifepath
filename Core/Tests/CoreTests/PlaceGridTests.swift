@@ -5,7 +5,7 @@ final class PlaceGridTests: XCTestCase {
     let base = PlaceGrid.cell(lat: 52.0, lon: 5.0)
     func c(_ dx: Int, _ dy: Int) -> PlaceCell { PlaceCell(x: base.x + dx, y: base.y + dy) }
     func place(_ cells: [PlaceCell: Double]) -> Place {
-        Place(id: 1, name: nil, cells: cells, updatedAt: Date(timeIntervalSince1970: 0), totalSeconds: 0, visits: 1, isCandidate: false)
+        Place(id: 1, name: nil, cells: cells, updatedAt: Date(timeIntervalSince1970: 0), lastVisit: Date(timeIntervalSince1970: 0), totalSeconds: 0, visits: 1, isCandidate: false)
     }
 
     func testCellSizeIs5m() {
