@@ -21,4 +21,17 @@ final class SimplifyTests: XCTestCase {
         // Closed loop: first == last, interior point far away is kept.
         XCTAssertEqual(Simplify.douglasPeucker([(50, 4), (50.01, 4), (50, 4)], tolerance: 5), [0, 1, 2])
     }
+
+    func testFitRaisesToleranceNeverDropsLines() {
+        // Three 1 km zigzags (±20 m) of 101 points each.
+        let zig = (0...100).map { i in Geo.offset(lat: 50, lon: 4, north: Double(i) * 10, east: i % 2 == 0 ? 20 : -20) }
+        let lines = [zig, zig, zig]
+        XCTAssertEqual(Simplify.fit(lines, tolerance: 5, budget: 10_000), lines.map { Simplify.douglasPeucker($0, tolerance: 5) })
+        let fitted = Simplify.fit(lines, tolerance: 5, budget: 60)
+        XCTAssertEqual(fitted.count, 3)
+        XCTAssertLessThanOrEqual(fitted.reduce(0) { $0 + $1.count }, 60)
+        XCTAssertTrue(fitted.allSatisfy { $0.first == 0 && $0.last == 100 })
+        // A budget below two vertices per line still keeps every line, each at its endpoints.
+        XCTAssertEqual(Simplify.fit(lines, tolerance: 0, budget: 1), [[0, 100], [0, 100], [0, 100]])
+    }
 }

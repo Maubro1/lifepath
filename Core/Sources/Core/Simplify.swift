@@ -23,4 +23,14 @@ public enum Simplify {
         }
         return keep.sorted()
     }
+
+    /// Indices kept per line at `tolerance`, doubled until the total fits `budget`: a coarser picture, never fewer lines (each keeps its endpoints).
+    public static func fit(_ lines: [[(lat: Double, lon: Double)]], tolerance: Double, budget: Int) -> [[Int]] {
+        var tol = tolerance
+        while true {
+            let kept = lines.map { douglasPeucker($0, tolerance: tol) }
+            if kept.reduce(0, { $0 + $1.count }) <= budget || kept.allSatisfy({ $0.count <= 2 }) { return kept }
+            tol = max(1, tol * 2)
+        }
+    }
 }

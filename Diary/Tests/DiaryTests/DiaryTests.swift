@@ -105,6 +105,14 @@ final class DiaryTests: XCTestCase {
                        Array(pts.suffix(3)))   // newest three in the box, ascending; the out-of-box point never counts
     }
 
+    func testPointsInBoxEveryBucketSpansWholeRange() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.append((0..<100).map { FilteredPoint(t: d(Double($0)), lat: 52.0, lon: 4.0, rawLat: 52.0, rawLon: 4.0, hAcc: 5, speed: 0, kind: .moving) })
+        let got = try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(1000), every: 10, limit: 1000)
+        XCTAssertEqual(got.count, 10)   // one per 10 s bucket, oldest and newest buckets both present
+        XCTAssertEqual(got.map { Int($0.t.timeIntervalSince1970) / 10 }, Array(0..<10))
+    }
+
     func testSmoothedReplace() throws {
         let diary = try Diary(path: tempPath())
         XCTAssertNil(try diary.smoothedUntil())

@@ -83,6 +83,16 @@ public final class Diary: Sendable {
         }
     }
 
+    /// One point per `every`-second bucket in the box, at most `limit`, in ascending time order: an even, coarser sample of the whole range.
+    public func points(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date, every: TimeInterval, limit: Int) throws -> [FilteredPoint] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT * FROM point WHERE lat >= ? AND lat <= ? AND lon >= ? AND lon <= ? AND t >= ? AND t <= ?
+                GROUP BY CAST(t / ? AS INTEGER) ORDER BY t LIMIT ?
+                """, arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970, every, limit]).map(Self.point)
+        }
+    }
+
     public func smoothed(from: Date, to: Date) throws -> [(t: Date, lat: Double, lon: Double)] {
         try pool.read { db in
             try Row.fetchAll(db, sql: "SELECT * FROM smoothedPoint WHERE t >= ? AND t <= ? ORDER BY t",
