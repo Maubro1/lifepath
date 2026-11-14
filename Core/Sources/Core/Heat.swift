@@ -1,0 +1,30 @@
+import Foundation
+
+public struct HeatCell: Sendable, Hashable { public var x: Int; public var y: Int }
+
+public enum Heat {
+    // Cells are 25 Web-Mercator metres; on the ground that shrinks with latitude (~15 m at 52 N).
+    public static let cellSize: Double = 25
+    private static let R = 6_378_137.0
+
+    public static func cell(lat: Double, lon: Double) -> HeatCell {
+        let x = R * lon * .pi / 180
+        let y = R * log(tan(.pi / 4 + lat * .pi / 360))
+        return HeatCell(x: Int((x / cellSize).rounded(.down)), y: Int((y / cellSize).rounded(.down)))
+    }
+
+    public static func center(of c: HeatCell) -> (lat: Double, lon: Double) {
+        let x = (Double(c.x) + 0.5) * cellSize, y = (Double(c.y) + 0.5) * cellSize
+        return (lat: (2 * atan(exp(y / R)) - .pi / 2) * 180 / .pi, lon: x / R * 180 / .pi)
+    }
+
+    /// Each point counts for the time until the next one, capped by its own kind; the last point gets 0.
+    public static func grid(_ points: [FilteredPoint]) -> [HeatCell: TimeInterval] {
+        let p = points.sorted { $0.t < $1.t }
+        var g: [HeatCell: TimeInterval] = [:]
+        for (a, b) in zip(p, p.dropFirst()) {
+            g[cell(lat: a.lat, lon: a.lon), default: 0] += min(b.t.timeIntervalSince(a.t), a.kind == .still ? 300 : 60)
+        }
+        return g
+    }
+}
