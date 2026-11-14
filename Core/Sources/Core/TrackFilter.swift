@@ -135,7 +135,7 @@ public struct TrackFilter: Sendable {
             }
             var like = [0.0, 0.0]
             for j in 0..<2 {
-                like[j] = models[j].update(zx: zx, zy: zy, hAcc: s.hAcc, inflate: j == 0 ? Double(1 + unexplained) : 1)
+                like[j] = models[j].update(zx: zx, zy: zy, hAcc: s.hAcc, inflate: j == 0 ? Double(max(unexplained, 1)) : 1)
                 if s.speed >= 0, s.hAcc <= 20 { like[j] *= models[j].doppler(speed: s.speed, course: s.course, rv: rv) }
             }
             let total = like[0] * c[0] + like[1] * c[1]
