@@ -45,21 +45,25 @@ final class TrackFilterTests: XCTestCase {
         XCTAssertNotNil(feed(&f, sample(2, north: 1)))
     }
 
-    private func blockWalk() -> (path: [(north: Double, east: Double)], truth: [(Date, Double, Double)], out: [FilteredPoint]) {
+    private func blockWalk(speed: Double = 1.4, seed: UInt64 = 7, activity: Activity = .walking) -> (path: [(north: Double, east: Double)], truth: [(Date, Double, Double)], out: [FilteredPoint]) {
         let path: [(north: Double, east: Double)] = [(0, 0), (300, 0), (300, 400), (0, 400), (0, 0)]
-        let w = walk(path: path, speed: 1.4, every: 1, noise: 12, seed: 7, start: t0)
+        let w = walk(path: path, speed: speed, every: 1, noise: 12, seed: seed, start: t0)
         var f = TrackFilter(quality: .balanced)
-        let out = w.samples.compactMap { f.process($0, receivedAt: $0.t, activity: .walking) }
+        let out = w.samples.compactMap { f.process($0, receivedAt: $0.t, activity: activity) }
         return (path, w.truth, out)
     }
 
-    func testWalkMedianErrorAtMost8m() {
-        let r = blockWalk()
+    func testWalkMedianErrorAtMost8m() { assertMedianAtMost8m(blockWalk()) }
+
+    func testRunMedianErrorAtMost8m() { assertMedianAtMost8m(blockWalk(speed: 3.5, seed: 11, activity: .running)) }
+
+    private func assertMedianAtMost8m(_ r: (path: [(north: Double, east: Double)], truth: [(Date, Double, Double)], out: [FilteredPoint]),
+                                      line: UInt = #line) {
         let truthAt = Dictionary(uniqueKeysWithValues: r.truth.map { ($0.0, ($0.1, $0.2)) })
         let errs = r.out.compactMap { p in truthAt[p.t].map { Geo.distance(p.lat, p.lon, $0.0, $0.1) } }.sorted()
         guard !errs.isEmpty else { return XCTFail("no outputs") }
         let median = errs[errs.count / 2]
-        XCTAssertLessThanOrEqual(median, 8, "median error \(median) m over \(errs.count) of \(r.truth.count) points")
+        XCTAssertLessThanOrEqual(median, 8, "median error \(median) m over \(errs.count) of \(r.truth.count) points", line: line)
     }
 
     func testCornerNotCutMoreThan10m() {
