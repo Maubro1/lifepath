@@ -47,4 +47,15 @@ public enum Trips {
         flush()
         return trips
     }
+
+    /// `split` over time-ordered chunks: trips that may run on past the chunk stay in `carry` for the next call; `split(carry)` finishes.
+    public static func split(chunk: [FilteredPoint], carry: inout [FilteredPoint], maxGap: TimeInterval = 600, maxJump: Double = 500) -> [Trip] {
+        let all = carry + chunk
+        var trips = split(all, maxGap: maxGap, maxJump: maxJump)
+        carry = []
+        guard let last = all.last, last.kind == .moving else { return trips }
+        // The open run starts fresh after a flush, so re-splitting it with the next chunk gives the same trips as one pass.
+        if let open = trips.last, open.end == last.t { carry = open.points; trips.removeLast() } else { carry = [last] }
+        return trips
+    }
 }

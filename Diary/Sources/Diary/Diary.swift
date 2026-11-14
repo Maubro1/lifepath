@@ -75,21 +75,24 @@ public final class Diary: Sendable {
         }
     }
 
-    /// The newest `limit` points in the box, in ascending time order.
-    public func points(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date, limit: Int) throws -> [FilteredPoint] {
+    /// Up to `limit` points in the box with `after < t <= to`, in ascending time order: read in chunks with the last `t` as cursor.
+    public func points(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, after: Date, to: Date, limit: Int) throws -> [FilteredPoint] {
         try pool.read { db in
-            try Row.fetchAll(db, sql: "SELECT * FROM point WHERE lat >= ? AND lat <= ? AND lon >= ? AND lon <= ? AND t >= ? AND t <= ? ORDER BY t DESC LIMIT ?",
-                             arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970, limit]).reversed().map(Self.point)
+            try Row.fetchAll(db, sql: "SELECT * FROM point WHERE lat >= ? AND lat <= ? AND lon >= ? AND lon <= ? AND t > ? AND t <= ? ORDER BY t LIMIT ?",
+                             arguments: [minLat, maxLat, minLon, maxLon, after.timeIntervalSince1970, to.timeIntervalSince1970, limit]).map(Self.point)
         }
     }
 
-    /// One point per `every`-second bucket in the box, at most `limit`, in ascending time order: an even, coarser sample of the whole range.
-    public func points(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date, every: TimeInterval, limit: Int) throws -> [FilteredPoint] {
+    /// One recorded still point per `cell`-degree grid cell (lon cells widened by `lonCell`) in the box and time range.
+    public func stillPoints(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date,
+                            cell: Double, lonCell: Double) throws -> [(lat: Double, lon: Double)] {
         try pool.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT * FROM point WHERE lat >= ? AND lat <= ? AND lon >= ? AND lon <= ? AND t >= ? AND t <= ?
-                GROUP BY CAST(t / ? AS INTEGER) ORDER BY t LIMIT ?
-                """, arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970, every, limit]).map(Self.point)
+                SELECT lat, lon FROM point WHERE kind = 'still' AND lat >= ? AND lat <= ? AND lon >= ? AND lon <= ? AND t >= ? AND t <= ?
+                GROUP BY CAST(ROUND(lat / ?) AS INTEGER), CAST(ROUND(lon / ?) AS INTEGER)
+                """, arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970, cell, lonCell]).map {
+                ($0["lat"], $0["lon"])
+            }
         }
     }
 
@@ -119,6 +122,7 @@ public final class Diary: Sendable {
     }
 
     /// Derived cache: replaced freely, never the stored points.
+    /// Assumes points only ever arrive newer than the cache: any future backup merge/import must clear tripLine, or older points stay uncached.
     public func saveTripLines(_ lines: [TripLine], replacingFrom: Date) throws {
         try pool.write { db in
             try db.execute(sql: "DELETE FROM tripLine WHERE end >= ?", arguments: [replacingFrom.timeIntervalSince1970])

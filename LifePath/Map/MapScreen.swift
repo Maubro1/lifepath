@@ -59,7 +59,7 @@ struct MapOptions: Equatable {
         var heat, recorded, street, zoomedOut: Bool
     }
 
-    private nonisolated static let budget = 400_000   // points and vertices per load: a memory guard that coarsens, never drops a trip
+    private nonisolated static let budget = 400_000   // vertices per load and points per read chunk: memory guards that coarsen, never drop a trip
 
     func setActive(_ on: Bool) {
         active = on
@@ -81,7 +81,7 @@ struct MapOptions: Equatable {
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
                       tolerance: max(3, 2 * metresPerPoint),
                       from: range.from, to: range.to, heat: options.heat, recorded: options.recorded,
-                      street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 2)
+                      street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5)   // half the cache's 15 m tolerance per screen point
         generation += 1
         let gen = generation
         task = Task {
@@ -96,53 +96,45 @@ struct MapOptions: Equatable {
 
     private nonisolated static func load(_ diary: Diary, _ q: Query, generation: Int) throws -> MapData {
         var out = MapData(generation: generation)
-        func fetch(_ from: Date) throws -> [FilteredPoint] {
-            try diary.points(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: from, to: q.to, limit: budget + 1)
-        }
-        // Over budget: an even time sample of the whole range (never only the newest), coarsened until it fits.
-        func even(_ from: Date, _ newest: [FilteredPoint]) throws -> (pts: [FilteredPoint], stride: TimeInterval) {
-            guard newest.count > budget else { return (newest, 0) }
-            var stride = max(1, newest[budget].t.timeIntervalSince(newest[0].t) / Double(budget)), pts: [FilteredPoint]
-            repeat {
-                try Task.checkCancellation()
-                stride *= 2
-                pts = try diary.points(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: from, to: q.to, every: stride, limit: budget + 1)
-            } while pts.count > budget
-            return (pts, stride)
-        }
-        let until = q.recorded ? nil : try diary.tripLinesUntil()   // the cache holds smoothed lines only
-        // Trips up to `cacheTo` come from the trip-line cache, the rest from full points.
-        var cacheTo = q.zoomedOut ? until : nil
-        let from = max(q.from, cacheTo ?? q.from)
-        var pts = try fetch(from), stride: TimeInterval = 0
-        if pts.count > budget, let u = until, u >= pts[1].t {
-            pts.removeFirst()
-            cacheTo = pts[0].t   // older trips drawn from the cache: every one still shown
-        } else {
-            (pts, stride) = try even(from, pts)   // only while the cache has not caught up
-        }
-        try Task.checkCancellation()
-        if q.heat { out.heat = try Heat.grid(from == q.from && cacheTo == nil ? pts : even(q.from, fetch(q.from)).pts) }   // dwell over the whole range
-        if q.street {
-            var seen = Set<HeatCell>()   // one dot per ~25 m cell, not one per check-in
-            out.still = pts.filter { $0.kind == .still && seen.insert(Heat.cell(lat: $0.lat, lon: $0.lon)).inserted }.map { ($0.lat, $0.lon) }
-        }
         var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], start: Date)] = []
-        if let c = cacheTo {
-            trips = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: c).map {
-                (coords: $0.coords.map { (lat: $0.lat, lon: $0.lon) }, speeds: MapColors.filledSpeeds($0.coords.map(\.speed)), start: $0.start)
+        var after = q.from.addingTimeInterval(-0.001)   // reads are `t > after`: keep a point exactly at `from`
+        // Zoomed out, trips up to the cache's end come from the trip-line cache (smoothed lines only); points resume where those trips end, never mid-trip.
+        if q.zoomedOut, !q.recorded, let until = try diary.tripLinesUntil() {
+            let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: min(until, q.to))
+            trips = cached.map { (coords: $0.coords.map { (lat: $0.lat, lon: $0.lon) }, speeds: MapColors.filledSpeeds($0.coords.map(\.speed)), start: $0.start) }
+            after = max(after, min(until, q.to), cached.map(\.end).max() ?? after)
+        }
+        let tripsAfter = after
+        if q.heat { after = q.from.addingTimeInterval(-0.001) }   // dwell over the whole range
+        func add(_ split: [Trip]) throws {
+            for trip in split {
+                try Task.checkCancellation()
+                var coords = trip.points.map { (lat: $0.lat, lon: $0.lon) }
+                if !q.recorded {
+                    let smooth = try diary.smoothed(from: trip.start, to: trip.end)
+                    let byT = Dictionary(smooth.map { ($0.t, (lat: $0.lat, lon: $0.lon)) }, uniquingKeysWith: { a, _ in a })
+                    for (i, p) in trip.points.enumerated() { if let s = byT[p.t] { coords[i] = s } }
+                }
+                let speeds = MapColors.filledSpeeds(trip.points.map(\.speed))
+                let keep = Simplify.douglasPeucker(coords, tolerance: q.tolerance)   // keep only the drawn shape: memory follows the output
+                trips.append((coords: keep.map { coords[$0] }, speeds: keep.map { speeds[$0] }, start: trip.start))
             }
         }
-        // A coarse sample spaces fixes `stride` apart, so gap and jump limits widen with it (straighter lines, no lost trips).
-        for trip in Trips.split(cacheTo.map { c in pts.filter { $0.t > c } } ?? pts, maxGap: max(600, 2 * stride), maxJump: max(500, 50 * stride)) {
+        // Every point in range, oldest first, one chunk at a time; the open trip carries across chunk edges.
+        var carry: [FilteredPoint] = [], previous: FilteredPoint?
+        while true {
             try Task.checkCancellation()
-            var coords = trip.points.map { (lat: $0.lat, lon: $0.lon) }
-            if !q.recorded {
-                let smooth = try diary.smoothed(from: trip.start, to: trip.end)
-                let byT = Dictionary(smooth.map { ($0.t, (lat: $0.lat, lon: $0.lon)) }, uniquingKeysWith: { a, _ in a })
-                for (i, p) in trip.points.enumerated() { if let s = byT[p.t] { coords[i] = s } }
-            }
-            trips.append((coords: coords, speeds: MapColors.filledSpeeds(trip.points.map(\.speed)), start: trip.start))
+            let chunk = try diary.points(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, after: after, to: q.to, limit: budget)
+            if q.heat { out.heat.merge(Heat.grid(chunk, previous: previous), uniquingKeysWith: +); previous = chunk.last ?? previous }
+            try add(Trips.split(chunk: chunk.filter { $0.t > tripsAfter }, carry: &carry))
+            guard chunk.count == budget, let last = chunk.last else { break }
+            after = last.t
+        }
+        try add(Trips.split(carry))
+        if q.street {
+            let cell = 0.000225   // ~25 m of latitude: one dot per place, not one per check-in
+            out.still = try diary.stillPoints(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: q.to,
+                                              cell: cell, lonCell: cell / cos((q.minLat + q.maxLat) / 2 * .pi / 180))
         }
         let lo = q.from == .distantPast ? (trips.map(\.start).min() ?? q.to) : q.from
         let span = max(1, q.to.timeIntervalSince(lo))
@@ -182,6 +174,7 @@ struct MapScreen: View {
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
         .onChange(of: loader.options) { loader.reload() }
+        .onReceive(NotificationCenter.default.publisher(for: SmoothingService.linesChanged)) { _ in loader.reload() }   // no-op unless visible
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
     }

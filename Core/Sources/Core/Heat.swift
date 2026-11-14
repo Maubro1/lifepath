@@ -27,4 +27,9 @@ public enum Heat {
         }
         return g
     }
+
+    /// `grid` of one time-ordered chunk, counting the pair across the edge from the previous chunk's last point.
+    public static func grid(_ points: [FilteredPoint], previous: FilteredPoint?) -> [HeatCell: TimeInterval] {
+        grid(previous.map { [$0] + points } ?? points)
+    }
 }

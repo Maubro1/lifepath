@@ -32,4 +32,11 @@ final class HeatTests: XCTestCase {
         XCTAssertEqual(Geo.distance(a.lat, a.lon, e.lat, e.lon), 25, accuracy: 2)
         XCTAssertEqual(Geo.distance(a.lat, a.lon, n.lat, n.lon), 25, accuracy: 2)
     }
+
+    func testGridAcrossChunksMatchesWhole() {
+        let pts = (0..<10).map { pt(Double($0) * 40, lat: 52 + Double($0) * 0.001, $0 % 3 == 0 ? .still : .moving) }
+        var g = Heat.grid(Array(pts[..<4]), previous: nil)
+        g.merge(Heat.grid(Array(pts[4...]), previous: pts[3]), uniquingKeysWith: +)
+        XCTAssertEqual(g, Heat.grid(pts))
+    }
 }

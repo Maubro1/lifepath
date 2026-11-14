@@ -68,4 +68,20 @@ final class TripsTests: XCTestCase {
         XCTAssertEqual(t.start, pts[0].t)
         XCTAssertEqual(t.end, pts[3].t)
     }
+
+    func testChunkedSplitMatchesWhole() {
+        // Moving runs, a gap, a jump, still points and a lone fix, cut at every chunk size.
+        var pts = (0..<8).map { pt($0) } + [pt(8, kind: .still), pt(9, kind: .still)] + (10..<15).map { pt($0) }
+        pts += (15..<20).map { pt($0, dt: 2000 + Double($0) * 10) } + (20..<24).map { pt($0, dLat: 0.1 + Double($0) * 0.0001) }
+        pts += [pt(24, kind: .still), pt(25), pt(26, kind: .still)] + (27..<31).map { pt($0) }
+        let whole = Trips.split(pts)
+        for size in 1...pts.count {
+            var carry: [FilteredPoint] = [], got: [Trip] = []
+            for start in stride(from: 0, to: pts.count, by: size) {
+                got += Trips.split(chunk: Array(pts[start..<min(pts.count, start + size)]), carry: &carry)
+            }
+            got += Trips.split(carry)
+            XCTAssertEqual(got, whole, "chunk size \(size)")
+        }
+    }
 }

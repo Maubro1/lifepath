@@ -94,23 +94,31 @@ final class DiaryTests: XCTestCase {
         }
         let inside = at(100, 52.0, 4.0), late = at(500, 52.0, 4.0)
         try diary.append([inside, at(200, 53.0, 4.0), at(300, 52.0, 5.0), late])
-        XCTAssertEqual(try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(400), limit: 10), [inside])
+        XCTAssertEqual(try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, after: d(0), to: d(400), limit: 10), [inside])
     }
 
-    func testPointsInBoxKeepsNewestUpToLimit() throws {
+    func testPointsInBoxChunksByCursor() throws {
         let diary = try Diary(path: tempPath())
         let pts = (1...5).map { FilteredPoint(t: d(Double($0) * 100), lat: 52.0, lon: 4.0, rawLat: 52.0, rawLon: 4.0, hAcc: 5, speed: 0, kind: .moving) }
-        try diary.append(pts + [FilteredPoint(t: d(600), lat: 53.0, lon: 4.0, rawLat: 53.0, rawLon: 4.0, hAcc: 5, speed: 0, kind: .moving)])
-        XCTAssertEqual(try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(1000), limit: 3),
-                       Array(pts.suffix(3)))   // newest three in the box, ascending; the out-of-box point never counts
+        try diary.append(pts + [FilteredPoint(t: d(250), lat: 53.0, lon: 4.0, rawLat: 53.0, rawLon: 4.0, hAcc: 5, speed: 0, kind: .moving)])
+        func chunk(_ after: Double) throws -> [FilteredPoint] {
+            try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, after: d(after), to: d(1000), limit: 2)
+        }
+        XCTAssertEqual(try chunk(0), Array(pts[0..<2]))     // oldest first; the out-of-box point never counts
+        XCTAssertEqual(try chunk(200), Array(pts[2..<4]))   // cursor is exclusive
+        XCTAssertEqual(try chunk(400), [pts[4]])
     }
 
-    func testPointsInBoxEveryBucketSpansWholeRange() throws {
+    func testStillPointsOnePerCell() throws {
         let diary = try Diary(path: tempPath())
-        try diary.append((0..<100).map { FilteredPoint(t: d(Double($0)), lat: 52.0, lon: 4.0, rawLat: 52.0, rawLon: 4.0, hAcc: 5, speed: 0, kind: .moving) })
-        let got = try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(1000), every: 10, limit: 1000)
-        XCTAssertEqual(got.count, 10)   // one per 10 s bucket, oldest and newest buckets both present
-        XCTAssertEqual(got.map { Int($0.t.timeIntervalSince1970) / 10 }, Array(0..<10))
+        func at(_ t: Double, _ lat: Double, _ kind: PointKind) -> FilteredPoint {
+            FilteredPoint(t: d(t), lat: lat, lon: 4.0, rawLat: lat, rawLon: 4.0, hAcc: 5, speed: 0, kind: kind)
+        }
+        // Three check-ins at one place (within a few metres), one 100 m away, one moving fix, one outside the time range.
+        try diary.append([at(100, 52.0, .still), at(200, 52.00002, .still), at(300, 52.00001, .still),
+                          at(400, 52.0009, .still), at(500, 52.0005, .moving), at(5000, 52.002, .still)])
+        let got = try diary.stillPoints(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(1000), cell: 0.000225, lonCell: 0.000365)
+        XCTAssertEqual(got.map { ($0.lat * 1000).rounded() }.sorted(), [52000, 52001])
     }
 
     func testSmoothedReplace() throws {
