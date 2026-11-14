@@ -247,6 +247,9 @@ import UIKit
 
     // MARK: Diary
 
+    /// The open diary (nil before first unlock) for the read-mostly smoothing service.
+    var readDiary: Diary? { diary }
+
     private func openDiary() {
         do { diary = try Diary(path: Diary.defaultPath()) } catch {
             Self.log.error("diary open failed: \(error.localizedDescription, privacy: .public)")
