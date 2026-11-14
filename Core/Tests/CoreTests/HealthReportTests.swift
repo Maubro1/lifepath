@@ -72,4 +72,12 @@ final class HealthReportTests: XCTestCase {
         XCTAssertTrue(row(out, "10:00").contains("serious"), row(out, "10:00"))
         XCTAssertTrue(row(out, "11:00").contains("nominal"), row(out, "11:00"))
     }
+
+    func testReportChargingShareCarriesIntoHour() {
+        let out = render(events: [ev(at(15, 9, 10), "charging", "on"), ev(at(15, 10, 30), "charging", "off")])
+        XCTAssertTrue(row(out, "08:00").hasSuffix("chg -"), row(out, "08:00"))
+        XCTAssertTrue(row(out, "09:00").hasSuffix("chg 83%"), row(out, "09:00"))
+        XCTAssertTrue(row(out, "10:00").hasSuffix("chg 50%"), row(out, "10:00"))
+        XCTAssertTrue(row(out, "11:00").hasSuffix("chg 0%"), row(out, "11:00"))
+    }
 }

@@ -16,7 +16,7 @@ import UIKit
     private(set) var lastCheckIn: Date?
     private(set) var authorization: Authorization = .notDetermined
     private(set) var preciseLocation = false
-    /// Effective deep sleep: the manual setting or thermal/low power/battery.
+    /// Effective deep sleep: the manual setting or thermal (fair counts only off the charger)/low power/battery.
     private(set) var deepSleep = false
 
     @ObservationIgnored let settings = AppSettings()
@@ -37,6 +37,7 @@ import UIKit
     @ObservationIgnored private var deepSleepReason = ""
     @ObservationIgnored private var thermal: String?
     @ObservationIgnored private var lowPower: Bool?
+    @ObservationIgnored private var charging: Bool?
     @ObservationIgnored private var flushFailedAt: Date?     // nil while writes succeed
     @ObservationIgnored private var lastWakeReason = ""
 
@@ -65,7 +66,7 @@ import UIKit
         buffer.add(LoggedEvent(t: now, kind: "launch", detail: Self.version))
         buffer.add(LoggedEvent(t: now, kind: "state", detail: "moving"))   // the engine starts in Moving
         for name in [ProcessInfo.thermalStateDidChangeNotification, .NSProcessInfoPowerStateDidChange,
-                     UIDevice.batteryLevelDidChangeNotification, UserDefaults.didChangeNotification] {
+                     UIDevice.batteryLevelDidChangeNotification, UIDevice.batteryStateDidChangeNotification, UserDefaults.didChangeNotification] {
             _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { self.refreshConditions() }
             }
@@ -227,9 +228,12 @@ import UIKit
         }
         if name != thermal { thermal = name; buffer.add(LoggedEvent(t: now, kind: "thermal", detail: name)) }
         if low != lowPower { lowPower = low; buffer.add(LoggedEvent(t: now, kind: "lowPower", detail: low ? "on" : "off")) }
+        let state = UIDevice.current.batteryState
+        let onCharge = state == .charging || state == .full
+        if onCharge != charging { charging = onCharge; buffer.add(LoggedEvent(t: now, kind: "charging", detail: onCharge ? "on" : "off")) }
         let battery = UIDevice.current.batteryLevel   // -1 when unknown
         let reason: String? = settings.deepSleep ? "manual"
-            : t.rawValue >= ProcessInfo.ThermalState.fair.rawValue ? "thermal"
+            : t.rawValue >= ProcessInfo.ThermalState.serious.rawValue || (t == .fair && !onCharge) ? "thermal"
             : low ? "lowPower"
             : battery >= 0 && battery < 0.2 ? "battery" : nil
         deepSleepReason = reason ?? ""

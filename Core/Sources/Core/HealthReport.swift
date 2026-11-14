@@ -60,7 +60,7 @@ public enum HealthReport {
                     "GPS on: \(String(format: "%.1f", gps)) h",
                     "Wakes by reason: \(wakes.isEmpty ? "none" : wakes.joined(separator: ", "))",
                     "Points: \(dayPoints.filter { $0.kind == .moving }.count) moving, \(dayPoints.filter { $0.kind == .still }.count) still",
-                    "hour  resting  wakes  spot checks  points  median hAcc  drops  thermal"]
+                    "hour  resting  wakes  spot checks  points  median hAcc  drops  thermal  charging"]
             for h in 0..<24 {
                 let a = cal.date(byAdding: .hour, value: h, to: start)!, b = cal.date(byAdding: .hour, value: 1, to: a)!
                 let elapsed = min(b, input.now).timeIntervalSince(a)
@@ -69,6 +69,8 @@ public enum HealthReport {
                 var worst = events.last { $0.kind == "thermal" && $0.t < a }.flatMap { thermalRank[$0.detail] }
                 for e in inHour where e.kind == "thermal" { if let r = thermalRank[e.detail] { worst = max(worst ?? 0, r) } }
                 let name = worst.map { w in thermalRank.first { $0.value == w }!.key } ?? "-"
+                let chg = elapsed > 0 && events.contains { $0.kind == "charging" && $0.t < b }
+                    ? "chg \(Int((seconds("charging", a, b) { $0 == "on" } / elapsed * 100).rounded()))%" : "chg -"
                 let hourPoints = dayPoints.filter { $0.t >= a && $0.t < b }
                 let accs = hourPoints.filter { $0.kind == .moving }.map(\.hAcc).sorted()
                 let median = accs.isEmpty ? "-" : String(format: "%.1f", accs.count % 2 == 1
@@ -84,7 +86,7 @@ public enum HealthReport {
                     .compactMap { r in drops[r].flatMap { $0 > 0 ? "\(r)=\($0)" : nil } }.joined(separator: ",")
                 let spots = inHour.filter { $0.kind == "gps" && $0.detail == "on spotcheck" }.count
                 out.append("\(hm.string(from: a))  \(pct)%  \(inHour.filter(isWake).count)  \(spots)  "
-                           + "\(hourPoints.count)  acc \(median)  drops \(dropText.isEmpty ? "-" : dropText)  \(name)")
+                           + "\(hourPoints.count)  acc \(median)  drops \(dropText.isEmpty ? "-" : dropText)  \(name)  \(chg)")
             }
         }
 

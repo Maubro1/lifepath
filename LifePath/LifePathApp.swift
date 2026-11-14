@@ -13,8 +13,8 @@ struct LifePathApp: App {
     var body: some Scene {
         WindowGroup { Root() }
             .onChange(of: scenePhase, initial: true) { _, phase in   // initial: a cold launch is already .active
-                if phase == .background { Recorder.shared.flush() }
-                if phase == .active { SigningReminder.schedule() }
+                if phase == .background { Recorder.shared.log("app", "closed"); Recorder.shared.flush() }
+                if phase == .active { Recorder.shared.log("app", "open"); SigningReminder.schedule() }
             }
     }
 }
