@@ -14,6 +14,20 @@ Changes from the original brief, forced by iOS:
 - Your recorded line is never changed. On the map, trips are shown snapped to the streets you most likely took; a toggle shows the raw recorded line, and spots where the match is unsure show the recorded line instead of a guess.
 - Steps and stairs come from the motion chip (CoreMotion), not Apple Health.
 
+## Principles (every decision is checked against these)
+
+Every design choice, shortcut, limit and ruling is measured against these before it's made. When a shortcut would break one, it's the wrong shortcut.
+
+1. **Life-long and complete.** LifePath is a map of a whole life. Nothing recorded is ever hidden by a limit: performance comes from showing less *detail* (simplified lines, coarser cells) when zoomed out, never from showing fewer *trips or places*. Time filters exist to choose a period, not to make the app cope.
+2. **Honest.** Nothing is invented: unknown stretches stay gaps, guesses are marked as guesses, stored points are never modified.
+3. **Precise.** The street actually taken, the place actually visited.
+4. **Private.** Everything stays on the phone; the only network use is street-map downloads, which send a map rectangle and nothing else.
+5. **Free.** €0 to build, install and run.
+6. **Out of the way.** Install once, then forget it; no chores beyond the weekly SideStore refresh.
+7. **Cool and light.** No warmth, little battery; heavy work only while open or charging.
+8. **Smart but lightweight.** The strongest proven method that stays cheap to run.
+9. **Smallest complete code** (ponytail): no speculative features, never cutting what protects data.
+
 ## Where LifePath aims past existing apps
 
 Existing diary apps are the floor: LifePath borrows their proven battery mechanics and is held to stricter, checkable bars. The bars are realistic about what a phone can do, and the work pushes as hard as possible on every one of them.
