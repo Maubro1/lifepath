@@ -15,10 +15,11 @@ Changes from the original brief, forced by iOS:
 
 ## Where LifePath aims past existing apps
 
-Existing diary apps are the floor: LifePath borrows their proven battery mechanics and is held to stricter, checkable bars.
+Existing diary apps are the floor: LifePath borrows their proven battery mechanics and is held to stricter, checkable bars. The bars are realistic about what a phone can do, and the work pushes as hard as possible on every one of them.
 
-- **Departures caught fast, cheaply.** Arc checks for departure with GPS every 6–60 s. LifePath uses the motion chip (steps, activity) as the first signal and GPS spot checks only as a backup with a 5-minute cap. Bar: trip start dated within 30 s of the first step (via CoreMotion history), and fewer than 15 GPS spot checks per hour of rest.
-- **Accuracy proven, not claimed.** No app in this category publishes accuracy measurements. LifePath's CI measures the filter on every change. Bar: median ≤ 8 m on noisy synthetic walks, no corner cut by more than 10 m, zero false stops at red lights in test drives, zero false trips from a phone lying still.
+- **Departures caught fast, cheaply.** Arc checks for departure with GPS every 6–60 s. LifePath uses the motion chip (steps, activity) as the first signal and GPS spot checks only as a backup with a 5-minute cap. Bars: fewer than 15 GPS spot checks per hour of rest, and the trip's start *time* dated within 30 s of the first step, from CoreMotion/pedometer history. After deep sleep, the stretch walked before the relaunch (about 200 m) has no GPS points; it is shown as a gap, never invented.
+- **Accuracy proven, not claimed.** No app in this category publishes accuracy measurements. LifePath's CI measures the filter on every change. Bars: median ≤ 8 m on ordinary walks (open streets); among tall buildings and under dense trees raw GPS can be off by 15–20 m and filtering can only partly fix that. No corner cut by more than 10 m in the test fixtures.
+- **Stops and trips right.** In the CI test fixtures: zero false stops at red lights and zero false trips from a phone lying still. In real use the target is "very rare", and every case the health report reveals becomes a new fixture.
 - **No silent gaps.** Every gap over 15 minutes in the diary has a recorded reason (permission, swipe-away, signing expiry, iOS relaunch delay), shown in the health report and the status box.
 - **Battery visible.** The health report shows hours of GPS-on time per day and wake counts, so a battery problem points at a cause.
 - **Map that stays fast.** The map opens instantly at any history size and costs nothing when off screen.
