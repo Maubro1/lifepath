@@ -33,7 +33,9 @@ On the iPhone:
 5. In iloader: sign in with your Apple ID, pick the iPhone, click **Install SideStore (Stable)**.
 6. Settings → General → VPN & Device Management → trust your Apple ID. Settings → Privacy & Security → **Developer Mode** on (the phone restarts).
 7. Connect LocalDevVPN, open SideStore, sign in, tap the **7 DAYS** button next to SideStore once.
-8. Install LifePath as above, then restore your latest backup from inside LifePath.
+8. Install LifePath as above. (Restoring a backup from inside LifePath arrives in a later stage.)
+
+**Always use the same Apple ID in SideStore.** SideStore ties LifePath's identity to the Apple ID that signs it. Signing with a different Apple ID installs it as a separate app with an empty diary, and the old data can't be reached from it.
 
 If SideStore says its pairing file is invalid (this can happen after an iOS update), reconnect the cable and use iloader → **Manage Pairing File** → **Place** next to SideStore.
 

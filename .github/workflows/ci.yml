@@ -49,6 +49,8 @@ jobs:
           for k in UIBackgroundModes NSLocationWhenInUseUsageDescription NSLocationAlwaysAndWhenInUseUsageDescription NSMotionUsageDescription; do
             /usr/libexec/PlistBuddy -c "Print :$k" "$plist" >/dev/null || { echo "::error::Missing $k"; exit 1; }
           done
+          # Background recording silently stops if `location` disappears from this array.
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$plist" | grep -qx "[[:space:]]*location" || { echo "::error::UIBackgroundModes lacks location"; exit 1; }
           id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist")
           [ "$id" = "app.lifepath.LifePath" ] || { echo "::error::Bundle ID is $id"; exit 1; }
       - uses: actions/upload-artifact@v4
