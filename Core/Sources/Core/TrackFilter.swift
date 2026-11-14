@@ -10,6 +10,8 @@ public struct TrackFilter: Sendable {
     // Two-model IMM: calm (qa) and manoeuvre (qa × manoeuvre); each a CV Kalman filter, mixed per fix.
     private var models = [CV(), CV()]
     private var mu = [0.9, 0.1]         // model probabilities
+    private var unexplained = 0         // consecutive gated fixes the calm model's Doppler does not explain (cap 8)
+    private var gatedRun: [(x: Double, y: Double)] = []   // raw positions of the current run of gated fixes (last 10)
 
     public private(set) var dropCounts: [String: Int] = [:]
     public mutating func takeDropCounts() -> [String: Int] { defer { dropCounts = [:] }; return dropCounts }
@@ -35,15 +37,19 @@ public struct TrackFilter: Sendable {
 
         /// Robust update: an innovation beyond the gate (2-D 95%) inflates the measurement variance linearly; never dropped.
         /// Returns the 2-D Gaussian likelihood of the innovation under the gated variance.
-        mutating func update(zx: Double, zy: Double, hAcc: Double) -> Double {
+        func gateRatio(zx: Double, zy: Double, hAcc: Double) -> Double {
+            ((zx - x) * (zx - x) + (zy - y) * (zy - y)).squareRoot() / (TrackFilter.gate * (p00 + hAcc * hAcc).squareRoot())
+        }
+
+        mutating func update(zx: Double, zy: Double, hAcc: Double, inflate: Double = 1) -> Double {
             let ex = zx - x, ey = zy - y
             let d2 = ex * ex + ey * ey
-            let ratio = d2.squareRoot() / (TrackFilter.gate * (p00 + hAcc * hAcc).squareRoot())
-            let s = p00 + hAcc * hAcc * max(ratio, 1)
+            let sGated = p00 + hAcc * hAcc * max(gateRatio(zx: zx, zy: zy, hAcc: hAcc), 1)
+            let s = sGated + hAcc * hAcc * max(gateRatio(zx: zx, zy: zy, hAcc: hAcc), 1) * (inflate - 1)
             let k0 = p00 / s, k1 = p01 / s
             x += k0 * ex; y += k0 * ey; vx += k1 * ex; vy += k1 * ey
             p11 -= k1 * p01; p01 *= 1 - k0; p00 *= 1 - k0
-            return exp(-0.5 * d2 / s) / (2 * .pi * s)
+            return exp(-0.5 * d2 / sGated) / (2 * .pi * sGated)   // likelihood under the gated R only, so the inflation cannot make the calm model look more likely
         }
 
         /// Doppler velocity with the same Huber gate; course -1 uses the speed along the filter's own heading.
@@ -55,12 +61,16 @@ public struct TrackFilter: Sendable {
             let zE = course >= 0 ? speed * sin(c) : speed * vx / vNorm
             let zN = course >= 0 ? speed * cos(c) : speed * vy / vNorm
             let evx = zE - vx, evy = zN - vy
-            let vRatio = (evx * evx + evy * evy).squareRoot() / (TrackFilter.gate * (p11 + rv).squareRoot())
+            let vRatio = velocityRatio(zE: zE, zN: zN, rv: rv)
             let vInv = 1 / (p11 + rv * max(vRatio, 1))
             let g0 = p01 * vInv, g1 = p11 * vInv
             x += g0 * evx; y += g0 * evy; vx += g1 * evx; vy += g1 * evy
             p00 -= g0 * p01; p01 -= g0 * p11; p11 -= g1 * p11
             return exp(-0.5 * (evx * evx + evy * evy) * vInv) * vInv / (2 * .pi)
+        }
+
+        func velocityRatio(zE: Double, zN: Double, rv: Double) -> Double {
+            ((zE - vx) * (zE - vx) + (zN - vy) * (zN - vy)).squareRoot() / (TrackFilter.gate * (p11 + rv).squareRoot())
         }
     }
 
@@ -104,10 +114,28 @@ public struct TrackFilter: Sendable {
             }
             let heading = (activity == .cycling || activity == .automotive ? 3.0 : 10.0) * .pi / 180
             let rv = 0.49 + pow(s.speed * heading, 2)   // Doppler speed sigma 0.7 m/s plus heading error * speed
+            for j in 0..<2 { models[j].predict(dt, qa: j == 0 ? qa : qa * Self.manoeuvre) }
+            // A gated fix whose offset the calm model's (valid-course) Doppler does not explain is multipath-like:
+            // inflate the calm model's R by the run length. Course -1 never counts as agreeing.
+            let gated = models[0].gateRatio(zx: zx, zy: zy, hAcc: s.hAcc) > 1
+            let course = s.course * .pi / 180
+            let agrees = s.speed >= 0 && s.hAcc <= 20 && s.course >= 0
+                && models[0].velocityRatio(zE: s.speed * sin(course), zN: s.speed * cos(course), rv: rv) < 1
+            unexplained = gated && agrees ? min(unexplained + 1, 8) : 0
+            gatedRun = gated ? Array((gatedRun + [(zx, zy)]).suffix(10)) : []
+            // Divergence guard: 10 gated fixes that agree with each other are a real shift; re-seed from their mean.
+            let mx = gatedRun.map(\.x).reduce(0, +) / 10, my = gatedRun.map(\.y).reduce(0, +) / 10
+            if gatedRun.count == 10, gatedRun.allSatisfy({ hypot($0.x - mx, $0.y - my) <= 2 * s.hAcc }) {
+                let valid = s.speed >= 0 && s.hAcc <= 20 && s.course >= 0
+                for j in 0..<2 {
+                    models[j].x = mx; models[j].y = my; models[j].p00 = s.hAcc * s.hAcc; models[j].p01 = 0
+                    if valid { models[j].vx = s.speed * sin(course); models[j].vy = s.speed * cos(course); models[j].p11 = rv }
+                }
+                gatedRun = []; unexplained = 0
+            }
             var like = [0.0, 0.0]
             for j in 0..<2 {
-                models[j].predict(dt, qa: j == 0 ? qa : qa * Self.manoeuvre)
-                like[j] = models[j].update(zx: zx, zy: zy, hAcc: s.hAcc)
+                like[j] = models[j].update(zx: zx, zy: zy, hAcc: s.hAcc, inflate: j == 0 ? Double(1 + unexplained) : 1)
                 if s.speed >= 0, s.hAcc <= 20 { like[j] *= models[j].doppler(speed: s.speed, course: s.course, rv: rv) }
             }
             let total = like[0] * c[0] + like[1] * c[1]
@@ -115,7 +143,7 @@ public struct TrackFilter: Sendable {
         } else {
             origin = Fix(t: s.t, lat: s.lat, lon: s.lon, hAcc: s.hAcc)
             let m = CV(p00: s.hAcc * s.hAcc, p11: 25)
-            models = [m, m]; mu = [0.9, 0.1]
+            models = [m, m]; mu = [0.9, 0.1]; unexplained = 0; gatedRun = []
         }
         last = Fix(t: s.t, lat: s.lat, lon: s.lon, hAcc: s.hAcc)
 
@@ -127,6 +155,6 @@ public struct TrackFilter: Sendable {
     }
 
     public mutating func reset() {
-        origin = nil; last = nil; models = [CV(), CV()]; mu = [0.9, 0.1]
+        origin = nil; last = nil; models = [CV(), CV()]; mu = [0.9, 0.1]; unexplained = 0; gatedRun = []
     }
 }
