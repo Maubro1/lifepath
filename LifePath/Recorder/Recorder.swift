@@ -146,10 +146,12 @@ import UIKit
             guard let still = lastStill else { break }
             let fence = Fence(lat: still.lat, lon: still.lon, radius: still.hAcc)
             Task {
+                // Starts after this batch, so the engine's wake log has set the reason; read it before the await,
+                // where a later wake could overwrite it.
+                let reason = lastWakeReason
                 let departure = await motion.departure(stillSince: since, until: now)
-                // Runs after this batch, so the engine's wake log has set the reason. Unknown departure after a
-                // position-based wake: the walked stretch stays a gap rather than becoming still points.
-                if departure == nil, ["geofence", "slc"].contains(lastWakeReason) { return }
+                // Unknown departure after a position-based wake: the walked stretch stays a gap, not still points.
+                if departure == nil, ["geofence", "slc"].contains(reason) { return }
                 for p in Backfill.stillPoints(fence: fence, from: still.t, to: departure ?? now) { buffer.add(p, at: Date()) }
             }
         case .log(var e):
