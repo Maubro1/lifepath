@@ -7,22 +7,68 @@ public struct TrackFilter: Sendable {
     private struct Fix { var t: Date; var lat, lon, hAcc: Double }
     private var origin: Fix?            // first accepted sample; Kalman state is metres from here
     private var last: Fix?              // last accepted raw sample
-    // Constant-velocity Kalman state per axis; both axes see the same hAcc and q, so they share one covariance.
-    private var x = 0.0, y = 0.0, vx = 0.0, vy = 0.0
-    private var p00 = 0.0, p01 = 0.0, p11 = 0.0
+    // Two-model IMM: calm (qa) and manoeuvre (qa × manoeuvre); each a CV Kalman filter, mixed per fix.
+    private var models = [CV(), CV()]
+    private var mu = [0.9, 0.1]         // model probabilities
 
     public private(set) var dropCounts: [String: Int] = [:]
     public mutating func takeDropCounts() -> [String: Int] { defer { dropCounts = [:] }; return dropCounts }
     private mutating func drop(_ reason: String) -> FilteredPoint? { dropCounts[reason, default: 0] += 1; return nil }
 
     private static let gate = 2.45   // 2-D 95% innovation gate, in sigmas
+    private static let manoeuvre = 8.0   // qa multiplier of the manoeuvre model
+    private static let switchRate = 0.2 // model switches per second
     private static let metresPerDegree = 6_371_008.8 * Double.pi / 180
+
+    /// Constant-velocity Kalman state per axis; both axes see the same hAcc and q, so they share one covariance.
+    private struct CV: Sendable {
+        var x = 0.0, y = 0.0, vx = 0.0, vy = 0.0
+        var p00 = 0.0, p01 = 0.0, p11 = 0.0
+
+        mutating func predict(_ dt: Double, qa: Double) {
+            x += vx * dt; y += vy * dt
+            let q2 = qa * qa
+            p00 += dt * (2 * p01 + dt * p11) + q2 * dt * dt * dt / 3
+            p01 += dt * p11 + q2 * dt * dt / 2
+            p11 += q2 * dt
+        }
+
+        /// Robust update: an innovation beyond the gate (2-D 95%) inflates the measurement variance linearly; never dropped.
+        /// Returns the 2-D Gaussian likelihood of the innovation under the gated variance.
+        mutating func update(zx: Double, zy: Double, hAcc: Double) -> Double {
+            let ex = zx - x, ey = zy - y
+            let d2 = ex * ex + ey * ey
+            let ratio = d2.squareRoot() / (TrackFilter.gate * (p00 + hAcc * hAcc).squareRoot())
+            let s = p00 + hAcc * hAcc * max(ratio, 1)
+            let k0 = p00 / s, k1 = p01 / s
+            x += k0 * ex; y += k0 * ey; vx += k1 * ex; vy += k1 * ey
+            p11 -= k1 * p01; p01 *= 1 - k0; p00 *= 1 - k0
+            return exp(-0.5 * d2 / s) / (2 * .pi * s)
+        }
+
+        /// Doppler velocity with the same Huber gate; course -1 uses the speed along the filter's own heading.
+        /// Returns the likelihood of the velocity innovation (1 when no update is made).
+        mutating func doppler(speed: Double, course: Double, rv: Double) -> Double {
+            let vNorm = (vx * vx + vy * vy).squareRoot()
+            guard course >= 0 || vNorm > 0.3 else { return 1 }
+            let c = course * .pi / 180
+            let zE = course >= 0 ? speed * sin(c) : speed * vx / vNorm
+            let zN = course >= 0 ? speed * cos(c) : speed * vy / vNorm
+            let evx = zE - vx, evy = zN - vy
+            let vRatio = (evx * evx + evy * evy).squareRoot() / (TrackFilter.gate * (p11 + rv).squareRoot())
+            let vInv = 1 / (p11 + rv * max(vRatio, 1))
+            let g0 = p01 * vInv, g1 = p11 * vInv
+            x += g0 * evx; y += g0 * evy; vx += g1 * evx; vy += g1 * evy
+            p00 -= g0 * p01; p01 -= g0 * p11; p11 -= g1 * p11
+            return exp(-0.5 * (evx * evx + evy * evy) * vInv) * vInv / (2 * .pi)
+        }
+    }
 
     public mutating func process(_ s: Sample, receivedAt: Date, activity: Activity) -> FilteredPoint? {
         guard s.hAcc >= 0, s.hAcc <= quality.accuracyCeiling else { return drop("accuracy") }
         guard receivedAt.timeIntervalSince(s.t) <= 10 else { return drop("stale") }
         guard s.t.timeIntervalSince(receivedAt) <= 2 else { return drop("future") }
-        let qa: Double   // acceleration noise, m/s^2
+        let qa: Double   // acceleration noise of the calm model, m/s^2
         switch activity {
         case .running, .cycling: qa = 2
         case .automotive: qa = 4
@@ -38,47 +84,49 @@ public struct TrackFilter: Sendable {
             let cosLat = cos(origin.lat * .pi / 180)
             let zx = (s.lon - origin.lon) * Self.metresPerDegree * cosLat
             let zy = (s.lat - origin.lat) * Self.metresPerDegree
-            x += vx * dt; y += vy * dt
-            let q2 = qa * qa
-            p00 += dt * (2 * p01 + dt * p11) + q2 * dt * dt * dt / 3
-            p01 += dt * p11 + q2 * dt * dt / 2
-            p11 += q2 * dt
-            // Robust update: an innovation beyond the gate (2-D 95%) inflates the measurement variance linearly; never dropped.
-            let ex = zx - x, ey = zy - y
-            let sigma = (p00 + s.hAcc * s.hAcc).squareRoot()
-            let ratio = (ex * ex + ey * ey).squareRoot() / (Self.gate * sigma)
-            let sInv = 1 / (p00 + s.hAcc * s.hAcc * max(ratio, 1))
-            let k0 = p00 * sInv, k1 = p01 * sInv
-            x += k0 * ex; y += k0 * ey; vx += k1 * ex; vy += k1 * ey
-            p11 -= k1 * p01; p01 *= 1 - k0; p00 *= 1 - k0
-            let vNorm = (vx * vx + vy * vy).squareRoot()
-            if s.speed >= 0, s.hAcc <= 20, s.course >= 0 || vNorm > 0.3 {   // Doppler velocity: speed sigma 0.7 m/s plus heading error * speed
-                let c = s.course * .pi / 180
-                let heading = (activity == .cycling || activity == .automotive ? 3.0 : 10.0) * .pi / 180
-                let rv = 0.49 + pow(s.speed * heading, 2)
-                let zE = s.course >= 0 ? s.speed * sin(c) : s.speed * vx / vNorm
-                let zN = s.course >= 0 ? s.speed * cos(c) : s.speed * vy / vNorm
-                let evx = zE - vx, evy = zN - vy
-                let vSigma = (p11 + rv).squareRoot()
-                let vRatio = (evx * evx + evy * evy).squareRoot() / (Self.gate * vSigma)   // same Huber gate as the position
-                let vInv = 1 / (p11 + rv * max(vRatio, 1))
-                let g0 = p01 * vInv, g1 = p11 * vInv
-                x += g0 * evx; y += g0 * evy; vx += g1 * evx; vy += g1 * evy
-                p00 -= g0 * p01; p01 -= g0 * p11; p11 -= g1 * p11
+            // Mixing: model j starts from the blend of both models, weighted by P(was i | now j).
+            let stay = exp(-Self.switchRate * dt)
+            let c = [stay * mu[0] + (1 - stay) * mu[1], (1 - stay) * mu[0] + stay * mu[1]]
+            let prior = models
+            for j in 0..<2 {
+                let w = (0..<2).map { i in (i == j ? stay : 1 - stay) * mu[i] / c[j] }
+                var m = CV()
+                for i in 0..<2 {
+                    m.x += w[i] * prior[i].x; m.y += w[i] * prior[i].y; m.vx += w[i] * prior[i].vx; m.vy += w[i] * prior[i].vy
+                }
+                for i in 0..<2 {   // spread terms averaged over the two axes to keep one shared covariance
+                    let dx = prior[i].x - m.x, dy = prior[i].y - m.y, dvx = prior[i].vx - m.vx, dvy = prior[i].vy - m.vy
+                    m.p00 += w[i] * (prior[i].p00 + (dx * dx + dy * dy) / 2)
+                    m.p01 += w[i] * (prior[i].p01 + (dx * dvx + dy * dvy) / 2)
+                    m.p11 += w[i] * (prior[i].p11 + (dvx * dvx + dvy * dvy) / 2)
+                }
+                models[j] = m
             }
+            let heading = (activity == .cycling || activity == .automotive ? 3.0 : 10.0) * .pi / 180
+            let rv = 0.49 + pow(s.speed * heading, 2)   // Doppler speed sigma 0.7 m/s plus heading error * speed
+            var like = [0.0, 0.0]
+            for j in 0..<2 {
+                models[j].predict(dt, qa: j == 0 ? qa : qa * Self.manoeuvre)
+                like[j] = models[j].update(zx: zx, zy: zy, hAcc: s.hAcc)
+                if s.speed >= 0, s.hAcc <= 20 { like[j] *= models[j].doppler(speed: s.speed, course: s.course, rv: rv) }
+            }
+            let total = like[0] * c[0] + like[1] * c[1]
+            if total > 0 { mu = [like[0] * c[0] / total, like[1] * c[1] / total] } else { mu = c }
         } else {
             origin = Fix(t: s.t, lat: s.lat, lon: s.lon, hAcc: s.hAcc)
-            x = 0; y = 0; vx = 0; vy = 0; p00 = s.hAcc * s.hAcc; p01 = 0; p11 = 25
+            let m = CV(p00: s.hAcc * s.hAcc, p11: 25)
+            models = [m, m]; mu = [0.9, 0.1]
         }
         last = Fix(t: s.t, lat: s.lat, lon: s.lon, hAcc: s.hAcc)
 
         let o = origin!
-        let out = Geo.offset(lat: o.lat, lon: o.lon, north: y, east: x)
+        let out = Geo.offset(lat: o.lat, lon: o.lon, north: mu[0] * models[0].y + mu[1] * models[1].y,
+                             east: mu[0] * models[0].x + mu[1] * models[1].x)
         return FilteredPoint(t: s.t, lat: out.lat, lon: out.lon, rawLat: s.lat, rawLon: s.lon,
                              hAcc: s.hAcc, speed: s.speed >= 0 && s.hAcc <= 20 ? s.speed : -1, kind: .moving)
     }
 
     public mutating func reset() {
-        origin = nil; last = nil; x = 0; y = 0; vx = 0; vy = 0; p00 = 0; p01 = 0; p11 = 0
+        origin = nil; last = nil; models = [CV(), CV()]; mu = [0.9, 0.1]
     }
 }
