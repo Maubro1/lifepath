@@ -92,6 +92,7 @@ The design follows Arc Timeline's open-source engine (LocoKit2), the best-docume
 The owner walks, runs, wanders, cycles and rides cars, buses, trams, trains and waterbuses. The engine judges confinement in space, never "steps happened", so each case falls out of one rule set:
 - **Walking and running:** Moving while fixes leave the fence. Running gets its own filter noise (q = 8 m/s, like cycling) so the line keeps up at 3–5 m/s.
 - **Wandering** (a market, a shop, a museum, pottering in the garden): staying inside a small area is a visit, drawn as a place, even while you shuffle around in it. If you wander beyond the fence (a big park), it's a trip and the path is drawn. Each steps-wake inside a visit is checked against the fence: if the fixes stay inside, the engine returns to Still after 60 s and the steps needed for the next wake rise (15 → 50 → 150, reset when you leave). Pottering about can't keep GPS on, while leaving the fence still wakes it at once through fixes, spot checks or the 200 m geofence.
+- **Fidgeting** (phone in a pocket while sitting, swivelling in a chair): CoreMotion can briefly report walking and count a few steps. A walking activity only wakes a resting phone when at least 8 new steps back it up within 20 s; vehicle activity and the step threshold still wake on their own.
 - **Waiting** (bus stop, platform, pier): a walk that ends in a wait becomes a visit; the vehicle ride after it is a new trip.
 - **Vehicles:** stops at lights, bus/tram stops, stations and piers don't end a trip (vehicle rule); tunnels with confident vehicle motion keep it going.
 
@@ -155,6 +156,15 @@ One file in Application Support, `diary.sqlite`, WAL mode, versioned migrations.
 - `event(t, kind, detail)` for wake reasons, state changes, thermal, permission changes. Rolled to the last 14 days.
 - Settings in `UserDefaults`.
 
+## Places (learned automatically)
+
+LifePath remembers the places where you spend time, so it can rest smarter there and show them on the map. Places add memory on top of the motion engine; they never switch departure detection off.
+
+- **Learning (Core.Places):** every finished rest of ≥ 10 minutes is a visit with a centre (accuracy-weighted) and a spread (P90 distance of its fixes from the centre). A visit within max(50 m, place radius) of a known place's centre joins it: the centre becomes the time-weighted mean of all its visits, the radius the P90 spread clamped to 25–150 m, and total time and visit count grow. Otherwise it starts a candidate. A candidate becomes a place after 3 visits or 3 hours in total. Places closer than 50 m merge. O(number of places) per visit, run when a rest ends.
+- **Resting at a known place:** the rest fence is the place (its learned centre and radius), so the dot sits on the same spot every night and normal indoor GPS wander there no longer looks like leaving (the per-place drift item the recording engine deferred). Still points use the place centre. The spot-check cap rises from 5 to 15 minutes after 30 minutes at a known place; steps, motion, the 200 m geofence and fixes clearly outside the place still wake LifePath at once.
+- **Map and timeline:** places appear as pins sized by time spent, with total time and visit count. The timeline reads "At Home 22:10–08:05" for a rest at a named place. Pins can be renamed (Home, Work, …); unnamed ones show the street from the downloaded street data. Stats gain "Where you spend your time".
+- **Storage:** `place(id, lat, lon, radius, totalSeconds, visits, name)` and `visit(start, end, placeId, lat, lon, spread)`; both recomputable from stored points.
+
 ## Screens
 
 Tabs: **Map · Timeline · Stats · Settings**. Visual direction is decided with the owner at stage 6 (impeccable skill, mockups). Stages 2–5 use plain system styling that the design stage then restyles.
@@ -202,7 +212,7 @@ The app reads `ExpirationDate` from its own `embedded.mobileprovision` and sched
 
 0. **Pipeline**: repo, XcodeGen, CI, Release, near-empty app on the phone via SideStore, one refresh done. Proves the €0 route.
 1. **Recorder**: Core filter + motion state, recorder, diary, status box, health report, onboarding (plain).
-2. **Map**: offline trip smoothing (RTS), tracks, filters, colouring, heat, locate.
+2. **Map**: offline trip smoothing (RTS), tracks, filters, colouring, heat, locate, learned places (pins, and resting at known places).
 3. **Streets**: OSM download (manual + automatic), map matching, matched display, Streets walked coverage.
 4. **Timeline + Stats + steps**.
 5. **Export / backup / import / restore prompt**.
