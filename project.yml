@@ -1,0 +1,45 @@
+name: LifePath
+options:
+  bundleIdPrefix: app.lifepath
+  deploymentTarget:
+    iOS: "26.0"
+packages:
+  Core:
+    path: Core
+targets:
+  LifePath:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources: [LifePath]
+    dependencies:
+      - package: Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.lifepath.LifePath
+        PRODUCT_NAME: LifePath
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: 0.0.1
+        CURRENT_PROJECT_VERSION: 1
+        TARGETED_DEVICE_FAMILY: 1
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: LifePath/Info.plist
+      properties:
+        CFBundleDisplayName: LifePath
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIBackgroundModes: [location]
+        NSLocationWhenInUseUsageDescription: "LifePath draws a private map of where you go. Your location never leaves this iPhone."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "LifePath records in the background so your map stays complete, even when the app is closed. Nothing leaves this iPhone."
+        NSMotionUsageDescription: "LifePath uses your steps and motion to notice when you set off and to save battery while you're still."
+schemes:
+  LifePath:
+    build:
+      targets:
+        LifePath: all
