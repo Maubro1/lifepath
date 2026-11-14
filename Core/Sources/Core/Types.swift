@@ -44,6 +44,6 @@ public enum Quality: String, CaseIterable, Sendable, Codable {
         switch self { case .saver: 100; case .balanced: 10; case .precise: 5; case .max: 2 }
     }
     public var lower: Quality {
-        self  // STUB for RED
+        switch self { case .max: .precise; case .precise: .balanced; case .balanced, .saver: .saver }
     }
 }

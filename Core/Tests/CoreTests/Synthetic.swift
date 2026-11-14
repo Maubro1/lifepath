@@ -37,7 +37,6 @@ func walk(path: [(north: Double, east: Double)], speed: Double, every: TimeInter
         samples.append(Sample(t: t, lat: noisy.lat, lon: noisy.lon, hAcc: noise * 1.5, speed: speed, course: course))
     }
 
-    var elapsed = 0.0       // seconds since start
     var nextSample = 0.0    // time of next sample
     var legStart = 0.0      // time at which the current leg begins
     var lastCourse = 0.0
@@ -53,9 +52,7 @@ func walk(path: [(north: Double, east: Double)], speed: Double, every: TimeInter
             nextSample += every
         }
         legStart += duration
-        elapsed = legStart
     }
     if samples.isEmpty { emit(start, first.north, first.east, course: lastCourse) }
-    _ = elapsed
     return (truth, samples)
 }
