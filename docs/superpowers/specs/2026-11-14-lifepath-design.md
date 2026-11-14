@@ -85,7 +85,7 @@ The design follows Arc Timeline's open-source engine (LocoKit2), the best-docume
   4. Relaunch nets (app terminated by iOS): `CLMonitor` circle, visits, significant change.
 
   Signals 1–3 work because the keep-alive manager keeps the app running. Fixes indoors get extra tolerance per place (learned drift) so GPS wander at night doesn't fake a departure.
-- **Deep sleep** (setting, default off): keep-alive and spot checks stop and iOS may suspend the app; only the relaunch nets wake it (about 200–500 m after leaving). Cheapest, but trip starts are found late and backfilled from CoreMotion history (`queryActivityStarting`, `queryPedometerData`), which also dates every trip start precisely after any wake.
+- **Deep sleep** (automatic mix, confirmed by the owner 2026-11-14): light rest is the default; LifePath enters deep sleep by itself while the thermal state is fair or worse, Low Power Mode is on, or the battery is below 20%, and returns to light rest when all three clear. A setting forces deep sleep always. In deep sleep, keep-alive and spot checks stop and iOS may suspend the app; only the relaunch nets wake it (about 200–500 m after leaving). Cheapest, but trip starts are found late and backfilled from CoreMotion history (`queryActivityStarting`, `queryPedometerData`), which also dates every trip start precisely after any wake.
 
 Any doubt (conflicting signals, poor accuracy, missing motion permission) resolves to Moving.
 

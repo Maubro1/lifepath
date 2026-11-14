@@ -95,7 +95,8 @@ public enum MotionEvent: Sendable {
     case activity(Activity, confident: Bool)
     case wakeFix(Sample, reason: String)    // spot check, significant change, visit
     case geofenceExit
-    case spotCheckDue, spotCheckEnded }
+    case spotCheckDue, spotCheckEnded
+    case deepSleepChanged(Bool) }          // effective deep sleep (manual setting OR thermal/low power/battery), see Task 6
 public enum Command: Sendable, Equatable {
     case startRecording, stopRecording
     case startSpotCheck, stopSpotCheck, scheduleSpotCheck(after: TimeInterval)
@@ -106,7 +107,6 @@ public enum Command: Sendable, Equatable {
     case log(LoggedEvent) }
 public struct MotionEngine {
     public init(motionAvailable: Bool, deepSleep: Bool)
-    public var deepSleep: Bool
     public private(set) var state: MotionState      // starts .moving
     public private(set) var fence: Fence?
     public mutating func handle(_ e: MotionEvent, at now: Date) -> [Command] }
@@ -136,6 +136,7 @@ Rules (spec values; record any refinement as a ruling):
   - `testIndoorNoFixFallsToStill` (fixes stop after arrival; ticks every 30 s → Still by 5 min).
   - `testNoMotionStillStopsAndWakes` (`motionAvailable: false`: stops from fixes; wakes on a spot-check `.wakeFix` 300 m away).
   - `testDeepSleepDisablesKeepAliveAndSpotChecks`.
+  - `testDeepSleepToggleWhileStill` (`.deepSleepChanged(true)` while Still → `setKeepAlive(false)`, no further spot checks; `.deepSleepChanged(false)` → `setKeepAlive(true)`, `scheduleSpotCheck(after: 30)`).
   - Backfill: `testStillPointsEveryFiveMinutes` (from 10:00 to 10:17 → 10:05, 10:10, 10:15), `testDepartureFromActivity`, `testDepartureFromStepBurst`, `testDepartureNilWithoutEvidence`.
 - [ ] **Step 2: Push, RED.** **Step 3: Implement, push, GREEN.** Commit `Core: motion engine and backfill`.
 
@@ -211,7 +212,7 @@ Decisions:
   - Holds `CLServiceSession(authorization: .always)` from launch; holds `CLBackgroundActivitySession()` while `showsIndicator`.
   - `CLMonitor("lifepath")` with one `CircularGeographicCondition` id `"stop"`; iterate `events` in a task; `.unsatisfied` → `.geofenceExit`.
 - **MotionService:** `CMPedometer.startUpdates(from: stillSince)` → `.steps`; `CMMotionActivityManager.startActivityUpdates` → `.activity(confident: confidence != .low)`; history queries for `resolveDeparture` → `Backfill.departure`. Absent permission → engine `motionAvailable: false`.
-- **Recorder** executes commands; on `resolveDeparture` writes `Backfill.stillPoints(fence, from: lastStillPoint, to: departure ?? now)`. Thermal ≥ `.serious` or Low Power Mode → filter and recording use `quality.lower`; logs `thermal`/`lowPower`. Flushes `PointBuffer` when due on each event, on every state change and on `scenePhase` background; a failed write → `putBack` and log `flush failed`. `lastCheckIn` = time of the last event of any kind. Events pruned at 14 days once per launch. `Logger` (os) for debug only, no per-fix logging.
+- **Recorder** executes commands; on `resolveDeparture` writes `Backfill.stillPoints(fence, from: lastStillPoint, to: departure ?? now)`. Thermal ≥ `.serious` or Low Power Mode → filter and recording use `quality.lower`. Effective deep sleep = manual setting OR thermal ≥ `.fair` OR Low Power Mode OR battery < 20% (`UIDevice.isBatteryMonitoringEnabled`); on change send `.deepSleepChanged` and log `deepSleep on/off <reason>`; logs `thermal`/`lowPower`. Flushes `PointBuffer` when due on each event, on every state change and on `scenePhase` background; a failed write → `putBack` and log `flush failed`. `lastCheckIn` = time of the last event of any kind. Events pruned at 14 days once per launch. `Logger` (os) for debug only, no per-fix logging.
 - `NSLocationAlwaysAndWhenInUseUsageDescription` etc. already exist; no new Info.plist keys.
 
 - [ ] **Step 1:** Implement; push; CI build green (no unit tests: hardware glue; logic is in Core).
