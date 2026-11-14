@@ -47,7 +47,7 @@ final class TrackFilterTests: XCTestCase {
 
     private func blockWalk(speed: Double = 1.4, seed: UInt64 = 7, activity: Activity = .walking) -> (path: [(north: Double, east: Double)], truth: [(Date, Double, Double)], out: [FilteredPoint]) {
         let path: [(north: Double, east: Double)] = [(0, 0), (300, 0), (300, 400), (0, 400), (0, 0)]
-        let w = walk(path: path, speed: speed, every: 1, noise: 12, seed: seed, start: t0)
+        let w = walk(path: path, speed: speed, every: 1, noise: 12, seed: seed, start: t0, doppler: .foot)
         var f = TrackFilter(quality: .balanced)
         let out = w.samples.compactMap { f.process($0, receivedAt: $0.t, activity: activity) }
         return (path, w.truth, out)
@@ -62,7 +62,7 @@ final class TrackFilterTests: XCTestCase {
         let truthAt = Dictionary(uniqueKeysWithValues: r.truth.map { ($0.0, ($0.1, $0.2)) })
         let errs = r.out.compactMap { p in truthAt[p.t].map { Geo.distance(p.lat, p.lon, $0.0, $0.1) } }.sorted()
         guard !errs.isEmpty else { return XCTFail("no outputs") }
-        let median = errs[errs.count / 2]
+        let median = errs[errs.count / 2]; print("MEAS median", median)
         XCTAssertLessThanOrEqual(median, 8, "median error \(median) m over \(errs.count) of \(r.truth.count) points", line: line)
     }
 
@@ -72,7 +72,7 @@ final class TrackFilterTests: XCTestCase {
         for c in r.path.dropFirst().dropLast() {
             let p = Geo.offset(lat: 52.37, lon: 4.90, north: c.north, east: c.east)
             let d = r.out.map { Geo.distance($0.lat, $0.lon, p.lat, p.lon) }.min() ?? .infinity
-            report.append(String(format: "%.1f", d))
+            report.append(String(format: "%.1f", d)); print("MEAS corner", d)
             XCTAssertLessThanOrEqual(d, 10, "corner (\(c.north),\(c.east)) nearest output \(d) m; all corners: \(report)")
         }
     }
@@ -82,21 +82,43 @@ final class TrackFilterTests: XCTestCase {
     /// Output error (m) at each sample time against the truth of the same index list, for the given activity.
     private func errors(_ samples: [Sample], truth: [(Date, Double, Double)], activity: Activity = .walking) -> [Double] {
         var f = TrackFilter(quality: .balanced)
-        return zip(samples, truth).map { s, t in
+        let e = zip(samples, truth).map { s, t in
             f.process(s, receivedAt: s.t, activity: activity).map { Geo.distance($0.lat, $0.lon, t.1, t.2) } ?? .nan
         }
+        XCTAssertFalse(e.contains { $0.isNaN }, "a fix was dropped, so its error is missing")
+        return e
+    }
+
+    /// 8 fixes 30 m off (hAcc 8) in a straight walk with realistic Doppler; returns max error in the burst and in the 20 fixes after.
+    private func burst(_ course: BurstCourse) -> (inBurst: Double, after: Double) {
+        let w = walk(path: [(0, 0), (400, 0)], speed: 1.4, every: 1, noise: 3, seed: 5, start: t0, doppler: .foot)
+        let e = errors(multipath(w.samples, range: 100..<108, east: 30, hAcc: 8, course: course), truth: w.truth)
+        return (e[100..<108].max()!, e[108..<128].max()!)
     }
 
     func testMultipathBurstBarelyMovesLine() {
-        let w = walk(path: [(0, 0), (400, 0)], speed: 1.4, every: 1, noise: 3, seed: 5, start: t0)
-        let e = errors(multipath(w.samples, range: 100..<108, east: 30, hAcc: 8), truth: w.truth)
-        let inBurst = e[100..<108].max()!, after = e[108..<128].max()!
-        XCTAssertLessThanOrEqual(inBurst, 12, "max deviation during burst \(inBurst) m")
-        XCTAssertLessThanOrEqual(after, 12, "max deviation in the 20 fixes after the burst \(after) m")
+        let r = burst(.keep)
+        print("MEAS burst keep", r)
+        XCTAssertLessThanOrEqual(r.inBurst, 12, "max deviation during burst \(r.inBurst) m")
+        XCTAssertLessThanOrEqual(r.after, 12, "max deviation in the 20 fixes after the burst \(r.after) m")
+    }
+
+    func testMultipathBurstWithInvalidCourse() {
+        let r = burst(.invalid)
+        print("MEAS burst invalid course", r)
+        XCTAssertLessThanOrEqual(r.inBurst, 15, "in burst \(r.inBurst) m")
+        XCTAssertLessThanOrEqual(r.after, 15, "after burst \(r.after) m")
+    }
+
+    func testMultipathBurstWithCorruptedCourse() {
+        let r = burst(.towardFake)
+        print("MEAS burst corrupted course", r)
+        XCTAssertLessThanOrEqual(r.inBurst, 20, "in burst \(r.inBurst) m")
+        XCTAssertLessThanOrEqual(r.after, 20, "after burst \(r.after) m")
     }
 
     func testCarTurnAt15msWithin10mOfCorner() {
-        let w = walk(path: [(0, 0), (600, 0), (600, 600)], speed: 15, every: 1, noise: 3, seed: 21, start: t0)
+        let w = walk(path: [(0, 0), (600, 0), (600, 600)], speed: 15, every: 1, noise: 3, seed: 21, start: t0, doppler: .vehicle)
         var f = TrackFilter(quality: .balanced)
         let out = w.samples.compactMap { f.process($0, receivedAt: $0.t, activity: .automotive) }
         let c = Geo.offset(lat: 52.37, lon: 4.90, north: 600, east: 0)
@@ -104,28 +126,31 @@ final class TrackFilterTests: XCTestCase {
         let e = errors(w.samples, truth: w.truth, activity: .automotive)
         let turn = 40   // 600 m at 15 m/s
         let after = e[turn..<(turn + 10)].max()!
+        print("MEAS car", d, after)
         XCTAssertLessThanOrEqual(d, 10, "nearest output to the corner \(d) m")
         XCTAssertLessThanOrEqual(after, 15, "max error in the 10 s after the turn \(after) m")
     }
 
     func testGapThenDisplacementRecovers() {
-        let a = walk(path: [(0, 0), (150, 0)], speed: 1.4, every: 1, noise: 3, seed: 31, start: t0)
-        let b = walk(path: [(300, 0), (500, 0)], speed: 1.4, every: 1, noise: 3, seed: 32, start: t0.addingTimeInterval(138))
+        let a = walk(path: [(0, 0), (150, 0)], speed: 1.4, every: 1, noise: 3, seed: 31, start: t0, doppler: .foot)
+        let b = walk(path: [(300, 0), (500, 0)], speed: 1.4, every: 1, noise: 3, seed: 32, start: t0.addingTimeInterval(138), doppler: .foot)
         let e = errors(a.samples + b.samples, truth: a.truth + b.truth)[a.samples.count...]
+        print("MEAS gap", Array(e.prefix(5)))
         XCTAssertLessThanOrEqual(e[e.startIndex + 2], 10, "error at the 3rd fix after the gap: \(Array(e.prefix(5)))")
     }
 
     func testSustainedShiftRecovers() {
-        let a = walk(path: [(0, 0), (200, 0)], speed: 1.4, every: 1, noise: 3, seed: 41, start: t0)
+        let a = walk(path: [(0, 0), (200, 0)], speed: 1.4, every: 1, noise: 3, seed: 41, start: t0, doppler: .foot)
         let step = TimeInterval(a.samples.count)
-        let b = walk(path: [(200, 50), (400, 50)], speed: 1.4, every: 1, noise: 3, seed: 42, start: t0.addingTimeInterval(step))
+        let b = walk(path: [(200, 50), (400, 50)], speed: 1.4, every: 1, noise: 3, seed: 42, start: t0.addingTimeInterval(step), doppler: .foot)
         let e = errors(a.samples + b.samples, truth: a.truth + b.truth)[a.samples.count...]
+        print("MEAS shift", Array(e.prefix(20)))
         XCTAssertLessThanOrEqual(e.dropFirst(15).prefix(20).max()!, 10, "errors after the step: \(Array(e.prefix(20)))")
     }
 
     func testRealTurnStillFollowed() {
         let path: [(north: Double, east: Double)] = [(0, 0), (200, 0), (200, 200)]
-        let w = walk(path: path, speed: 1.4, every: 1, noise: 3, seed: 9, start: t0)
+        let w = walk(path: path, speed: 1.4, every: 1, noise: 3, seed: 9, start: t0, doppler: .foot)
         var f = TrackFilter(quality: .balanced)
         let out = w.samples.compactMap { f.process($0, receivedAt: $0.t, activity: .walking) }
         let c = Geo.offset(lat: 52.37, lon: 4.90, north: 200, east: 0)
