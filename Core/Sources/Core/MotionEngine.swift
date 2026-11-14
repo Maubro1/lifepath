@@ -226,10 +226,11 @@ public struct MotionEngine: Sendable {
         }
     }
 
-    /// A pocket fidget can look like confident walking: it counts only with >= 8 steps (since rest began) arriving within
-    /// 20 s of it.
+    /// A pocket fidget can look like confident walking: it counts only with >= 8 steps arriving within 20 s of it (counted
+    /// from the step updates logged since this Still began), and only at the base threshold: once a wander-return has
+    /// raised it, steps alone decide.
     private func walkCorroborated(_ now: Date) -> Bool {
-        guard let w = walkedAt, now.timeIntervalSince(w) <= 20, let last = stepLog.last,
+        guard stepsThreshold == 15, let w = walkedAt, now.timeIntervalSince(w) <= 20, let last = stepLog.last,
               last.t >= w.addingTimeInterval(-20) else { return false }
         let before = stepLog.last { $0.t < w.addingTimeInterval(-20) }?.n ?? 0
         return last.n - before >= 8

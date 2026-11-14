@@ -41,6 +41,19 @@ final class BackfillTests: XCTestCase {
         XCTAssertEqual(Backfill.departure(stillSince: t0, activities: activities, stepTimes: steps), at(9.5 * h))
     }
 
+    func testWalkWaitRideDatesTheWalk() {
+        // Walk from 08:30 (t0+1000), wait at the tram stop from 08:40, ride from 08:50: the walk is the departure.
+        let steps = (0..<40).map { at(1000 + Double($0)) }
+        let activities: [(Date, Activity)] = [(at(1000), .walking), (at(1600), .stationary), (at(2200), .automotive)]
+        XCTAssertEqual(Backfill.departure(stillSince: t0, activities: activities, stepTimes: steps), at(1000))
+    }
+
+    func testRedLightDuringWalkIsNotARest() {
+        let steps = (0..<40).map { at(1000 + Double($0)) } + (0..<40).map { at(1300 + Double($0)) }
+        let activities: [(Date, Activity)] = [(at(1000), .walking), (at(1200), .stationary), (at(1260), .walking)]
+        XCTAssertEqual(Backfill.departure(stillSince: t0, activities: activities, stepTimes: steps), at(1000))
+    }
+
     func testDepartureNilWithoutEvidence() {
         let fourteen = (0..<14).map { at(500 + Double($0)) }                     // one short of a burst
         let spread = (0..<15).map { at(2000 + Double($0) * 5) }                  // 15 steps over 70 s

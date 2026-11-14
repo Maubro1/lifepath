@@ -9,12 +9,15 @@ public enum Backfill {
     }
 
     /// Earliest of the first moving activity and the first step burst (>= 15 steps within 60 s) after the last rest:
-    /// the latest confident `.stationary` start with evidence after it (so a 02:00 bathroom trip or a wait at the tram
-    /// stop is skipped), else `stillSince`. `activities` must already be limited to confident ones; `stepTimes` holds one
-    /// timestamp per step.
+    /// the latest confident `.stationary` start with no moving activity or burst within 20 min after it (so a 02:00
+    /// bathroom trip is skipped, and so is a wait at the tram stop or a red light that the walk or ride follows), else
+    /// `stillSince`. `activities` must already be limited to confident ones; `stepTimes` holds one timestamp per step.
     public static func departure(stillSince: Date, activities: [(Date, Activity)], stepTimes: [Date]) -> Date? {
         let rests = activities.filter { $0.0 >= stillSince && $0.1 == .stationary }.map { $0.0 }.sorted(by: >)
-        return (rests + [stillSince]).lazy.compactMap { departure(after: $0, activities, stepTimes) }.first
+        return (rests + [stillSince]).lazy.compactMap { rest in
+            let d = departure(after: rest, activities, stepTimes)
+            return rest == stillSince || d.map({ $0.timeIntervalSince(rest) > 1200 }) == true ? d : nil
+        }.first
     }
 
     private static func departure(after start: Date, _ activities: [(Date, Activity)], _ stepTimes: [Date]) -> Date? {

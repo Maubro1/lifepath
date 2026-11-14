@@ -303,6 +303,16 @@ final class MotionEngineTests: XCTestCase {
         XCTAssertEqual(g.state, .still)
     }
 
+    func testRaisedThresholdIgnoresWalkingCorroboration() throws {
+        var (e, s, _) = try stillEngine()
+        var rng = SeededRandom(seed: 25)
+        _ = wander(&e, at: s + 30, steps: 15, rng: &rng)                      // threshold 50
+        let t = s + 300
+        XCTAssertEqual(send(&e, .activity(.walking, confident: true), t), [])
+        XCTAssertEqual(send(&e, .steps(10), t + 20), [])
+        XCTAssertEqual(e.state, .still)
+    }
+
     func testVehicleActivityStillWakesAlone() throws {
         var (e, s, _) = try stillEngine()
         assertWoke(send(&e, .activity(.cycling, confident: true), s + 30), e, reason: "activity", stillAt: s, when: s + 30)
