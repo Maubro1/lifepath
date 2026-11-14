@@ -10,7 +10,8 @@ It's built in seven stages. Each stage ends with something you can install and t
 
 Changes from the original brief, forced by iOS:
 - Backups must be saved to a folder outside the app (iOS deletes the app's own folder when the app is deleted). On a fresh install the app offers to restore and opens a file picker; it can't search your phone by itself.
-- Downloading street maps sends the map area's rectangle (not your track) to OpenStreetMap's free Overpass service. Nothing else ever leaves the phone.
+- To show which street you were on, LifePath downloads street maps for areas you visit, automatically (can be switched off). Each download sends only a map rectangle (not your track) to OpenStreetMap's free Overpass service. Nothing else ever leaves the phone.
+- Your recorded line is never changed. On the map, trips are shown snapped to the streets you most likely took; a toggle shows the raw recorded line, and spots where the match is unsure show the recorded line instead of a guess.
 - Steps and stairs come from the motion chip (CoreMotion), not Apple Health.
 
 ## Where LifePath aims past existing apps
@@ -19,6 +20,7 @@ Existing diary apps are the floor: LifePath borrows their proven battery mechani
 
 - **Departures caught fast, cheaply.** Arc checks for departure with GPS every 6–60 s. LifePath uses the motion chip (steps, activity) as the first signal and GPS spot checks only as a backup with a 5-minute cap. Bars: fewer than 15 GPS spot checks per hour of rest, and the trip's start *time* dated within 30 s of the first step, from CoreMotion/pedometer history. After deep sleep, the stretch walked before the relaunch (about 200 m) has no GPS points; it is shown as a gap, never invented.
 - **Accuracy proven, not claimed.** No app in this category publishes accuracy measurements. LifePath's CI measures the filter on every change. Bars: median ≤ 8 m on ordinary walks (open streets); among tall buildings and under dense trees raw GPS can be off by 15–20 m and filtering can only partly fix that. No corner cut by more than 10 m in the test fixtures.
+- **The right street, outdoors.** Trips on foot, bike or car show the street actually taken, also where raw GPS wanders 15–20 m between buildings. Bar: ≥ 95% of walked distance on the correct street in canyon-noise fixtures; in real use, unsure stretches are shown as recorded, never guessed.
 - **Stops and trips right.** In the CI test fixtures: zero false stops at red lights and zero false trips from a phone lying still. In real use the target is "very rare", and every case the health report reveals becomes a new fixture.
 - **No silent gaps.** Every gap over 15 minutes in the diary has a recorded reason (permission, swipe-away, signing expiry, iOS relaunch delay), shown in the health report and the status box.
 - **Battery visible.** The health report shows hours of GPS-on time per day and wake counts, so a battery problem points at a cause.
@@ -28,7 +30,7 @@ Existing diary apps are the floor: LifePath borrows their proven battery mechani
 ## Constraints
 
 - €0. Windows 11 only, no Mac. Target: one iPhone 15 Pro on iOS 26.6.x. Never on the App Store.
-- Fully private: no account, no server, no analytics, no network except user-started street downloads.
+- Fully private: no account, no server, no analytics, no network except OpenStreetMap street downloads (automatic around visited areas by default, switchable off; manual downloads always available).
 - Battery first while still, recording first when unsure.
 
 ## Toolchain
@@ -99,8 +101,8 @@ Any doubt (conflicting signals, poor accuracy, missing motion permission) resolv
 | Level | desiredAccuracy | Default save spacing | Notes |
 |---|---|---|---|
 | Saver | `kCLLocationAccuracyKilometer` | 100 m | Wi-Fi/cell only, neighbourhood level |
-| Balanced (default) | `kCLLocationAccuracyNearestTenMeters` | 10 m | street level |
-| Precise | `kCLLocationAccuracyBest` | 5 m | |
+| Balanced (default) | `kCLLocationAccuracyBest` | 10 m | full GPS while moving; street level |
+| Precise | `kCLLocationAccuracyBest` | 5 m | denser points |
 | Max | `kCLLocationAccuracyBestForNavigation` | 2 m | |
 
 Easing: when `ProcessInfo.thermalState` ≥ `.serious` or Low Power Mode is on, run one level lower (never below Saver, never stop). Shown in the status box.
@@ -128,22 +130,25 @@ One file in Application Support, `diary.sqlite`, WAL mode, versioned migrations.
 
 ## Screens
 
-Tabs: **Map · Timeline · Stats · Settings**. Visual direction is decided with the owner at stage 5 (impeccable skill, mockups). Stages 2–4 use plain system styling that the design stage then restyles.
+Tabs: **Map · Timeline · Stats · Settings**. Visual direction is decided with the owner at stage 6 (impeccable skill, mockups). Stages 2–5 use plain system styling that the design stage then restyles.
 
-- **Map**: `MKMapView` wrapped for SwiftUI (custom overlays need it). Track polylines coloured by date (gradient) or speed (walk/bike/drive bands). Time filter: today, week, month, year, all, custom. Standard / satellite. Heat overlay from Core.Heat (seconds spent per ~25 m cell, so a night asleep counts once per hour of presence, not per point). Streets toggle draws covered segments. Locate-me button. Trips split on gaps > 10 min or jumps > 500 m. Polylines simplified per zoom (Douglas–Peucker, tolerance in metres, 3–5 m at street zoom) and loaded per visible region. The map renders only while on screen.
+- **Map**: `MKMapView` wrapped for SwiftUI (custom overlays need it). Track polylines coloured by date (gradient) or speed (walk/bike/drive bands). Time filter: today, week, month, year, all, custom. Standard / satellite. Heat overlay from Core.Heat (seconds spent per ~25 m cell, so a night asleep counts once per hour of presence, not per point). Moving trips are drawn along their matched streets by default (Core.Streets matcher); a "Recorded line" toggle shows the stored track; low-confidence stretches always show the recorded line, styled differently. Streets toggle draws covered segments. Locate-me button. Trips split on gaps > 10 min or jumps > 500 m. Polylines simplified per zoom (Douglas–Peucker, tolerance in metres, 3–5 m at street zoom) and loaded per visible region. The map renders only while on screen.
 - **Timeline**: days newest first; card = route thumbnail (`MKMapSnapshotter`, cached on disk), distance, moving time (moving points only), steps.
 - **Stats**: Where you went (lifetime distance, days tracked, points stored); On foot (steps, walked distance, floors); Streets walked (% of downloaded streets covered, per area).
 - **Settings**: status box on top (healthy / resting / problem, last point, last check-in, signing expiry, hints for changed permissions or app swiped away), quality level, save spacing, smoothing strength, blue location bar toggle, deep sleep, step counting, export, import, health report.
 - **Onboarding**: what it does → location While Using → Always → please don't swipe it away → optional motion & fitness → start.
 - Pull to refresh on every main screen.
 
-## Streets walked (Core.Streets)
+## Streets: map matching and coverage (Core.Streets)
 
-- User taps "Download streets here" on the map; the app asks Overpass for `highway` ways (walkable classes) in the visible rectangle, capped in size.
-- Ways split into ~20 m segments.
-- Each moving point at walking/cycling speed is matched to the **single nearest** segment within max(15 m, hAcc), with heading agreement for points with a course. If the two nearest segments are within 3 m of each other's distance, the point is skipped.
-- A street (all segments of a named way, or the way itself if unnamed) is covered at ≥ 90% of its length hit (100% for streets of 10 or fewer segments), the rule CityStrides uses. Track geometry is never changed.
-- Matching runs incrementally after recording and once over history after each download.
+Phone GPS between tall buildings or under trees can be 15–20 m off; filtering alone can't put such a track on the right street. Sequence-based map matching can, because it uses the whole path, not one point at a time.
+
+- **Street data:** OSM `highway` ways from Overpass. Automatic: after a trip ends (on Wi-Fi or mobile, user setting), tiles of ~2 km covering the trip that aren't stored yet are fetched once. Manual "Download streets here" stays. Setting "Download street maps automatically" (default on) with a privacy note that each request sends a map rectangle.
+- **Matcher:** Hidden Markov Model with Viterbi decoding (Newson & Krumm 2009). Candidates: road positions within max(30 m, 2 × hAcc). Emission: Gaussian on distance, σ from the fix's accuracy (floor 4 m). Transition: exponential on |route distance − straight distance|, β ≈ 3 m, using the shortest path along the network between candidates. Heading and speed shape candidates (walking speeds allow footpaths and both directions; vehicle speeds favour drivable ways and one-way rules). Points closer than 2σ to the previous used point are thinned.
+- **Confidence:** each matched stretch gets a score from the winning path's probability margin over the runner-up and the share of points within 2σ. Below threshold, or where no road is within reach (parks, fields, indoors), the stretch is marked unmatched and the map shows the recorded line there.
+- **Storage:** stored points are never modified. Matches live in `matchedStretch(tripStart, seq, wayId, fromM, toM, confidence)`, recomputable at any time.
+- **Coverage:** ways split into ~20 m segments; a segment is hit when a confident matched stretch runs along it. A street (all segments of a named way, or the way if unnamed) is covered at ≥ 90% of its length hit (100% for 10 or fewer segments), the CityStrides rule.
+- Matching runs after each trip ends and over history after each new download.
 
 ## Export, backup, import
 
@@ -162,18 +167,18 @@ The app reads `ExpirationDate` from its own `embedded.mobileprovision` and sched
 
 ## Testing
 
-- Core: test-driven, unit tests on CI for every push. Synthetic track generators with seeded noise for filter accuracy, stop detection (red lights must not count as stops, sofa must not count as moving), trip splitting, heat weighting, street matching (parallel street and alley not lit).
+- Core: test-driven, unit tests on CI for every push. Synthetic track generators with seeded noise for filter accuracy, stop detection (red lights must not count as stops, sofa must not count as moving), trip splitting, heat weighting, map matching on a synthetic street grid with canyon-style noise (biased 15–25 m multipath bursts): ≥ 95% of walked distance on the correct street, parallel street and alley not lit, unsure stretches flagged, not guessed.
 - App: CI build must pass. On-device checks per stage using the health report. No simulator exists on Windows; screens are verified on the phone and with CI screenshots from the iOS simulator on the Mac runner where useful.
 
 ## Stages (each gets its own implementation plan)
 
 0. **Pipeline**: repo, XcodeGen, CI, Release, near-empty app on the phone via SideStore, one refresh done. Proves the €0 route.
 1. **Recorder**: Core filter + motion state, recorder, diary, status box, health report, onboarding (plain).
-2. **Map**: tracks, filters, colouring, heat, locate.
-3. **Timeline + Stats + steps**.
-4. **Export / backup / import / restore prompt**.
-5. **Design**: visual direction with the owner, restyle all screens, settings polish, onboarding copy.
-6. **Streets walked**.
+2. **Map**: tracks (recorded line), filters, colouring, heat, locate.
+3. **Streets**: OSM download (manual + automatic), map matching, matched display, Streets walked coverage.
+4. **Timeline + Stats + steps**.
+5. **Export / backup / import / restore prompt**.
+6. **Design**: visual direction with the owner, restyle all screens, settings polish, onboarding copy.
 
 Backup comes before design so the diary can be saved early in real use.
 
