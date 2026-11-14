@@ -9,7 +9,7 @@ public struct TrackingStatus: Sendable, Equatable {
     public var hint: String?
 
     public static func evaluate(authorization: Authorization, preciseLocation: Bool, state: MotionState,
-                                lastPoint: Date?, lastCheckIn: Date?, signingExpiry: Date?, now: Date) -> TrackingStatus {
+                                lastPoint: Date?, stillSince: Date?, lastCheckIn: Date?, signingExpiry: Date?, now: Date) -> TrackingStatus {
         func problem(_ headline: String, _ hint: String) -> TrackingStatus {
             TrackingStatus(level: .problem, headline: headline, hint: hint)
         }
@@ -28,7 +28,7 @@ public struct TrackingStatus: Sendable, Equatable {
         if state == .still {
             let f = DateFormatter()
             f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "HH:mm"
-            return TrackingStatus(level: .resting, headline: "Resting: you've been still since \(f.string(from: lastPoint ?? now))", hint: nil)
+            return TrackingStatus(level: .resting, headline: "Resting: you've been still since \(f.string(from: stillSince ?? now))", hint: nil)
         }
         return TrackingStatus(level: .healthy, headline: "Tracking", hint: nil)
     }

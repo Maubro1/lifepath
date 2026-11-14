@@ -44,7 +44,11 @@ jobs:
           xcodebuild archive -project LifePath.xcodeproj -scheme LifePath \
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
             -archivePath build/LifePath.xcarchive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          # Compile errors become annotations, readable via the public API without a login.
+          grep -E "error:" build.log | sort -u | head -10 | while read -r line; do echo "::error::$line"; done
+          exit $status
       - name: Package IPA
         run: bash scripts/package-ipa.sh build/LifePath.xcarchive build/LifePath.ipa
       - name: Verify IPA layout
