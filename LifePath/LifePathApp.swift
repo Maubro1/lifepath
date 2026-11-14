@@ -4,17 +4,21 @@ import SwiftUI
 struct LifePathApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
-    init() {
-        // Stage 0 proof: this count must keep rising across updates and SideStore refreshes.
-        let key = "pipeline.launchCount"
-        UserDefaults.standard.set(UserDefaults.standard.integer(forKey: key) + 1, forKey: key)
-        Recorder.shared.start()
-    }
+    init() { Recorder.shared.start() }
 
     var body: some Scene {
-        WindowGroup { PipelineView() }
+        WindowGroup { Root() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background { Recorder.shared.flush() }
+                if phase == .active { SigningReminder.schedule() }
             }
+    }
+}
+
+private struct Root: View {
+    let settings = AppSettings()
+
+    var body: some View {
+        if settings.onboarded { SettingsView() } else { OnboardingView() }
     }
 }
