@@ -4,7 +4,8 @@ import SwiftUI
 struct LifePathApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
-    init() { Recorder.shared.start() }
+    // Before onboarding finishes nothing records; the Start button calls start().
+    init() { if UserDefaults.standard.bool(forKey: "onboarded") { Recorder.shared.start() } }
 
     var body: some Scene {
         WindowGroup { Root() }

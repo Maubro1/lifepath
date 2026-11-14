@@ -22,7 +22,7 @@ struct OnboardingView: View {
                      CMMotionActivityManager().queryActivityStarting(from: .now.addingTimeInterval(-60), to: .now, to: .main) { _, _ in }
                      UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
                  })).tag(4)
-            step("Ready", "LifePath is set up.", ("Start", { settings.onboarded = true })).tag(5)
+            step("Ready", "LifePath is set up.", ("Start", { settings.onboarded = true; Recorder.shared.start() })).tag(5)
         }
         .tabViewStyle(.page)
         .indexViewStyle(.page(backgroundDisplayMode: .always))
