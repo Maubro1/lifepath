@@ -57,7 +57,7 @@ final class TrackFilterTests: XCTestCase {
         let r = blockWalk()
         let truthAt = Dictionary(uniqueKeysWithValues: r.truth.map { ($0.0, ($0.1, $0.2)) })
         let errs = r.out.compactMap { p in truthAt[p.t].map { Geo.distance(p.lat, p.lon, $0.0, $0.1) } }.sorted()
-        XCTAssertFalse(errs.isEmpty)
+        guard !errs.isEmpty else { return XCTFail("no outputs") }
         let median = errs[errs.count / 2]
         XCTAssertLessThanOrEqual(median, 8, "median error \(median) m over \(errs.count) of \(r.truth.count) points")
     }
