@@ -21,7 +21,8 @@ public enum TripSmoother {
         let valid = fixes.map(\.speed).filter { $0 >= 0 }.sorted()
         let median = valid.isEmpty ? 0 : valid[valid.count / 2]
         let qa = median < 2.5 ? 1.0 : median < 7 ? 2.0 : 4.0
-        let heading = (median < 2.5 ? 10.0 : 3.0) * .pi / 180   // σθ: on foot below 2.5 m/s, else vehicle
+        let heading = (median < 2.5 ? 10.0 : 3.0) * .pi / 180
+        // shortcut: runs (2.5–7 m/s) get the bike/vehicle 3°; R_v differs < 0.25 m²/s² at run speeds; upgrade if trips carry an activity label
         let cosLat = cos(o.lat * .pi / 180)
 
         var pred: [S] = [], filt: [S] = []
@@ -29,7 +30,7 @@ public enum TripSmoother {
         var s = S()
         var unexplained = 0   // consecutive gated fixes the Doppler does not explain (cap 8), as TrackFilter's calm model
         for (i, f) in fixes.enumerated() {
-            let r = max(f.hAcc, 1)   // guards a zero or invalid hAcc against division by zero
+            let r = f.hAcc >= 0 ? max(f.hAcc, 1) : 1e4   // negative or NaN hAcc: negligible weight (NaN fails >= 0)
             let zx = (f.lon - o.lon) * metresPerDegree * cosLat, zy = (f.lat - o.lat) * metresPerDegree
             if i == 0 {
                 s = S(x: zx, y: zy, p00: r * r, p11: 25)
@@ -47,14 +48,14 @@ public enum TripSmoother {
                 let ratio = (ex * ex + ey * ey).squareRoot() / (gate * (s.p00 + r * r).squareRoot())
                 // A gated fix whose offset valid-course Doppler does not explain is multipath-like: inflate R by the run length.
                 let c = f.course * .pi / 180, rv = 0.49 + pow(f.speed * heading, 2)
-                let agrees = f.speed >= 0 && f.hAcc <= 20 && f.course >= 0
+                let agrees = f.speed >= 0 && f.hAcc >= 0 && f.hAcc <= 20 && f.course >= 0
                     && hypot(f.speed * sin(c) - s.vx, f.speed * cos(c) - s.vy) / (gate * (s.p11 + rv).squareRoot()) < 1
                 unexplained = ratio > 1 && agrees ? min(unexplained + 1, 8) : 0
                 let sv = s.p00 + r * r * max(ratio, 1) * Double(max(unexplained, 1))
                 let k0 = s.p00 / sv, k1 = s.p01 / sv
                 s.x += k0 * ex; s.y += k0 * ey; s.vx += k1 * ex; s.vy += k1 * ey
                 s.p11 -= k1 * s.p01; s.p01 *= 1 - k0; s.p00 *= 1 - k0
-                if f.speed >= 0, f.course >= 0, f.hAcc <= 20 {
+                if f.speed >= 0, f.course >= 0, f.hAcc >= 0, f.hAcc <= 20 {
                     let evx = f.speed * sin(c) - s.vx, evy = f.speed * cos(c) - s.vy
                     let vRatio = (evx * evx + evy * evy).squareRoot() / (gate * (s.p11 + rv).squareRoot())
                     let vInv = 1 / (s.p11 + rv * max(vRatio, 1))
