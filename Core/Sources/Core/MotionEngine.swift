@@ -5,6 +5,10 @@ public enum MotionState: String, Sendable { case moving, settling, still }
 public struct Fence: Sendable, Equatable {
     public var lat, lon, radius: Double
     public init(lat: Double, lon: Double, radius: Double) { self.lat = lat; self.lon = lon; self.radius = radius }
+    func contains(_ p: FilteredPoint) -> Bool { Geo.distance(p.lat, p.lon, lat, lon) <= radius }
+    func stillPoint(at t: Date) -> FilteredPoint {
+        FilteredPoint(t: t, lat: lat, lon: lon, rawLat: lat, rawLon: lon, hAcc: radius, speed: 0, kind: .still)
+    }
 }
 
 public enum MotionEvent: Sendable {
@@ -28,9 +32,158 @@ public enum Command: Sendable, Equatable {
     case log(LoggedEvent)
 }
 
+extension Activity {
+    var isMoving: Bool { self == .walking || self == .running || isVehicle }
+}
+
+/// Decides moving / settling / still. Pure: all time comes from `now`; the app executes the returned commands.
 public struct MotionEngine: Sendable {
     public private(set) var state: MotionState = .moving
+    /// The settling fence (radius 20-100 m); while Still, wake fixes are judged against it.
     public private(set) var fence: Fence?
-    public init(motionAvailable: Bool, deepSleep: Bool) {}
-    public mutating func handle(_ e: MotionEvent, at now: Date) -> [Command] { [] }
+    private let motionAvailable: Bool
+    private var deepSleep: Bool
+    private var fixes: [FilteredPoint] = []   // last 6 min plus the newest older fix, so a full window can be proven
+    private var quietSince: Date?             // last accepted fix, or entry into Moving
+    private var lastMotion: Date?             // confident moving activity or new steps
+    private var lastVehicle: Date?            // any vehicle activity or a fix faster than 7 m/s
+    private var steps = 0
+    private var stillSince: Date?
+    private var lastStillPoint: Date?
+    private var spotDelay: TimeInterval = 30
+    private var spotChecking = false
+
+    public init(motionAvailable: Bool, deepSleep: Bool) {
+        self.motionAvailable = motionAvailable
+        self.deepSleep = deepSleep
+    }
+
+    public mutating func handle(_ e: MotionEvent, at now: Date) -> [Command] {
+        if quietSince == nil { quietSince = now }
+        if case .deepSleepChanged(let on) = e { return setDeepSleep(on, now) }
+        if state == .still { return handleStill(e, now) }
+        switch e {
+        case .fix(let p): return onFix(p, now)
+        case .tick: return onTick(now)
+        case .steps(let n):
+            if n > steps { steps = n; lastMotion = now }
+        case .activity(let a, let confident):
+            if a.isVehicle { lastVehicle = now }
+            if confident && a.isMoving { lastMotion = now }
+        case .wakeFix, .geofenceExit, .spotCheckDue, .spotCheckEnded, .deepSleepChanged: break
+        }
+        return []
+    }
+
+    private mutating func onFix(_ p: FilteredPoint, _ now: Date) -> [Command] {
+        quietSince = now
+        if p.speed > 7 { lastVehicle = now }
+        fixes.append(p)
+        while fixes.count > 1, fixes[1].t <= now.addingTimeInterval(-360) { fixes.removeFirst() }
+        let recent = fixes.filter { $0.t >= p.t.addingTimeInterval(-120) }
+        var w = 0.0, lat = 0.0, lon = 0.0, acc = 0.0
+        for f in recent {
+            let wi = 1 / pow(max(f.hAcc, 1), 2)
+            w += wi; lat += wi * f.lat; lon += wi * f.lon; acc += f.hAcc
+        }
+        let f = Fence(lat: lat / w, lon: lon / w, radius: min(max(acc / Double(recent.count), 20), 100))
+        fence = f
+        guard f.contains(p) else {
+            guard state == .settling else { return [] }
+            state = .moving
+            return [log("state", "moving", now)]
+        }
+        guard state == .moving else { return settleCheck(now) }
+        state = .settling
+        return [log("state", "settling", now)] + settleCheck(now)
+    }
+
+    /// Still once every fix of the last 2 min (6 min after a vehicle) lies in the fence.
+    private mutating func settleCheck(_ now: Date) -> [Command] {
+        guard state == .settling, let f = fence else { return [] }
+        let window: TimeInterval = lastVehicle.map { now.timeIntervalSince($0) <= 600 } == true ? 360 : 120
+        guard let start = fixes.reversed().prefix(while: { f.contains($0) }).last,
+              start.t <= now.addingTimeInterval(-window) else { return [] }
+        return goStill(f, now)
+    }
+
+    /// Settling without new fixes, or the indoor fallback: no fix (and no motion) for 5 min.
+    private mutating func onTick(_ now: Date) -> [Command] {
+        let settled = settleCheck(now)
+        if !settled.isEmpty { return settled }
+        func quiet(_ d: Date?) -> Bool { d.map { now.timeIntervalSince($0) >= 300 } ?? true }
+        guard quiet(quietSince), !motionAvailable || quiet(lastMotion), let f = fence else { return [] }
+        return goStill(f, now)
+    }
+
+    private mutating func goStill(_ f: Fence, _ now: Date) -> [Command] {
+        state = .still; fence = f; stillSince = now; lastStillPoint = now
+        steps = 0; fixes = []; spotDelay = 30
+        return [.stopRecording, .armGeofence(Fence(lat: f.lat, lon: f.lon, radius: 200)),
+                deepSleep ? .setKeepAlive(false) : .scheduleSpotCheck(after: spotDelay),
+                .writeStillPoint(f.stillPoint(at: now)), log("state", "still", now)]
+    }
+
+    private mutating func handleStill(_ e: MotionEvent, _ now: Date) -> [Command] {
+        switch e {
+        case .steps(let n):
+            steps = n
+            return n >= 15 ? wake("steps", now) : []
+        case .activity(let a, let confident):
+            return confident && a.isMoving ? wake("activity", now) : []
+        case .wakeFix(let s, let reason):
+            guard let f = fence, s.hAcc >= 0, Geo.distance(s.lat, s.lon, f.lat, f.lon) - s.hAcc > f.radius else { return [] }
+            return wake(reason, now)
+        case .geofenceExit:
+            return wake("geofence", now)
+        case .spotCheckDue:
+            guard !deepSleep, !spotChecking else { return [] }
+            spotChecking = true
+            return [.startSpotCheck]
+        case .spotCheckEnded:
+            var out: [Command] = []
+            if spotChecking {
+                spotChecking = false
+                spotDelay = min(spotDelay * 2, 300)
+                out = deepSleep ? [.stopSpotCheck] : [.stopSpotCheck, .scheduleSpotCheck(after: spotDelay)]
+            }
+            return out + stillPointIfDue(now)
+        case .tick:
+            return stillPointIfDue(now)
+        case .fix, .deepSleepChanged:
+            return []
+        }
+    }
+
+    private mutating func wake(_ reason: String, _ now: Date) -> [Command] {
+        var out: [Command] = spotChecking ? [.stopSpotCheck] : []
+        out += [.startRecording, .disarmGeofence, .setKeepAlive(true)]
+        if let s = stillSince { out.append(.resolveDeparture(stillSince: s)) }
+        state = .moving; spotChecking = false; stillSince = nil; quietSince = now
+        return out + [log("wake", reason, now), log("state", "moving", now)]
+    }
+
+    private mutating func stillPointIfDue(_ now: Date) -> [Command] {
+        guard let f = fence, let last = lastStillPoint, now.timeIntervalSince(last) >= 300 else { return [] }
+        lastStillPoint = now
+        return [.writeStillPoint(f.stillPoint(at: now))]
+    }
+
+    private mutating func setDeepSleep(_ on: Bool, _ now: Date) -> [Command] {
+        guard on != deepSleep else { return [] }
+        deepSleep = on
+        var out: [Command] = []
+        if state == .still {
+            if on {
+                if spotChecking { spotChecking = false; out.append(.stopSpotCheck) }
+                out.append(.setKeepAlive(false))
+            } else {
+                spotDelay = 30
+                out += [.setKeepAlive(true), .scheduleSpotCheck(after: spotDelay)]
+            }
+        }
+        return out + [log("deepSleep", on ? "on" : "off", now)]
+    }
+
+    private func log(_ kind: String, _ detail: String, _ t: Date) -> Command { .log(LoggedEvent(t: t, kind: kind, detail: detail)) }
 }
