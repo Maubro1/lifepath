@@ -5,8 +5,6 @@ final class TripSmootherTests: XCTestCase {
     let t0 = Date(timeIntervalSince1970: 1_800_000_000)
     let block: [(north: Double, east: Double)] = [(0, 0), (300, 0), (300, 400), (0, 400), (0, 0)]
 
-    func raw(_ s: [Sample]) -> [RawFix] { s.map { RawFix(t: $0.t, lat: $0.lat, lon: $0.lon, hAcc: $0.hAcc, speed: $0.speed, course: $0.course) } }
-
     /// Per-index error (m) of `out` against `truth`.
     func errors(_ out: [(t: Date, lat: Double, lon: Double)], _ truth: [(Date, Double, Double)]) -> [Double] {
         XCTAssertEqual(out.count, truth.count)
@@ -26,7 +24,7 @@ final class TripSmootherTests: XCTestCase {
 
     func testWalkMedianAtMost6mWithoutCourse() {
         let w = walk(path: block, speed: 1.4, every: 1, noise: 12, seed: 7, start: t0, doppler: .foot)
-        let fixes = raw(w.samples).map { var f = $0; f.course = -1; return f }
+        let fixes = w.samples.map { var f = $0; f.course = -1; return f }
         let m = median(errors(TripSmoother.smooth(fixes), w.truth))
         print("MEAS smoother no-course median", m)
         XCTAssertLessThanOrEqual(m, 6, "median \(m) m")
@@ -34,7 +32,7 @@ final class TripSmootherTests: XCTestCase {
 
     func testWalkNotWorseThanLiveFilter() {
         let w = walk(path: block, speed: 1.4, every: 1, noise: 12, seed: 7, start: t0, doppler: .foot)
-        let s = median(errors(TripSmoother.smooth(raw(w.samples)), w.truth))
+        let s = median(errors(TripSmoother.smooth(w.samples), w.truth))
         let l = median(liveErrors(w.samples, w.truth))
         print("MEAS walk median smoother", s, "live", l)
         XCTAssertLessThanOrEqual(s, l, "smoother median \(s) m, live \(l) m")
@@ -42,7 +40,7 @@ final class TripSmootherTests: XCTestCase {
 
     func testCornersWithin10m() {
         let w = walk(path: block, speed: 1.4, every: 1, noise: 12, seed: 7, start: t0, doppler: .foot)
-        let out = TripSmoother.smooth(raw(w.samples))
+        let out = TripSmoother.smooth(w.samples)
         for c in block.dropFirst().dropLast() {
             let p = Geo.offset(lat: 52.37, lon: 4.90, north: c.north, east: c.east)
             let d = out.map { Geo.distance($0.lat, $0.lon, p.lat, p.lon) }.min()!
@@ -54,7 +52,7 @@ final class TripSmootherTests: XCTestCase {
     func testMultipathBurstBetterThanLive() {
         let w = walk(path: [(0, 0), (400, 0)], speed: 1.4, every: 1, noise: 3, seed: 5, start: t0, doppler: .foot)
         let samples = multipath(w.samples, range: 100..<108, east: 30, hAcc: 8)
-        let s = errors(TripSmoother.smooth(raw(samples)), w.truth)[100..<108].max()!
+        let s = errors(TripSmoother.smooth(samples), w.truth)[100..<108].max()!
         let l = liveErrors(samples, w.truth)[100..<108].max()!
         print("MEAS burst max smoother", s, "live", l)
         XCTAssertLessThanOrEqual(s, l, "max deviation in burst: smoother \(s) m, live \(l) m")
@@ -62,7 +60,7 @@ final class TripSmootherTests: XCTestCase {
 
     func testNoCourseFallsBackToPositionOnly() {
         let w = walk(path: block, speed: 1.4, every: 1, noise: 12, seed: 3, start: t0, doppler: .foot)
-        let fixes = raw(w.samples).enumerated().map { i, f in var f = f; if i % 3 == 0 { f.course = -1 }; if i % 7 == 0 { f.speed = -1 }; return f }
+        let fixes = w.samples.enumerated().map { i, f in var f = f; if i % 3 == 0 { f.course = -1 }; if i % 7 == 0 { f.speed = -1 }; return f }
         let out = TripSmoother.smooth(fixes)
         XCTAssertEqual(out.count, fixes.count)
         XCTAssertFalse(out.contains { !$0.lat.isFinite || !$0.lon.isFinite }, "NaN or infinite output")
@@ -71,7 +69,7 @@ final class TripSmootherTests: XCTestCase {
 
     func testSmootherNeverBridgesTrips() {
         let w = walk(path: [(0, 0), (200, 0)], speed: 1.4, every: 1, noise: 5, seed: 13, start: t0, doppler: .foot)
-        let fixes = raw(w.samples)
+        let fixes = w.samples
         let out = TripSmoother.smooth(fixes)
         XCTAssertEqual(out.count, fixes.count)
         XCTAssertEqual(out.map(\.t), fixes.map(\.t))
@@ -79,12 +77,12 @@ final class TripSmootherTests: XCTestCase {
 
     func testSingleAndTwoFixTrips() {
         XCTAssertTrue(TripSmoother.smooth([]).isEmpty)
-        let a = RawFix(t: t0, lat: 52.37, lon: 4.90, hAcc: 10, speed: -1, course: -1)
+        let a = Sample(t: t0, lat: 52.37, lon: 4.90, hAcc: 10, speed: -1, course: -1)
         let one = TripSmoother.smooth([a])
         XCTAssertEqual(one.count, 1)
         XCTAssertEqual(one[0].lat, a.lat, accuracy: 1e-9); XCTAssertEqual(one[0].lon, a.lon, accuracy: 1e-9)
         let p = Geo.offset(lat: 52.37, lon: 4.90, north: 10, east: 0)
-        let b = RawFix(t: t0.addingTimeInterval(5), lat: p.lat, lon: p.lon, hAcc: 10, speed: 2, course: 0)
+        let b = Sample(t: t0.addingTimeInterval(5), lat: p.lat, lon: p.lon, hAcc: 10, speed: 2, course: 0)
         let two = TripSmoother.smooth([a, b])
         XCTAssertEqual(two.map(\.t), [a.t, b.t])
         let moved = Geo.distance(two[0].lat, two[0].lon, a.lat, a.lon)
@@ -98,7 +96,7 @@ final class TripSmootherTests: XCTestCase {
 
     func testInvalidAccuracyFixBarelyMovesLine() {
         let w = walk(path: [(0, 0), (300, 0)], speed: 1.4, every: 1, noise: 3, seed: 17, start: t0, doppler: .foot)
-        var fixes = raw(w.samples)
+        var fixes = w.samples
         let clean = TripSmoother.smooth(fixes)
         let p = Geo.offset(lat: fixes[100].lat, lon: fixes[100].lon, north: 0, east: 200)
         fixes[100].lat = p.lat; fixes[100].lon = p.lon; fixes[100].hAcc = -1
