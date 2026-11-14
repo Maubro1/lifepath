@@ -17,7 +17,7 @@ public struct TrackFilter: Sendable {
               receivedAt.timeIntervalSince(s.t) <= 10, s.t.timeIntervalSince(receivedAt) <= 2 else { return nil }
         let q: Double
         switch activity {
-        case .cycling: q = 8
+        case .cycling, .running: q = 8
         case .automotive: q = 15
         default: q = 6
         }

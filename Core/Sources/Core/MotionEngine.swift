@@ -53,6 +53,10 @@ public struct MotionEngine: Sendable {
     private var spotChecking = false
     private var stillByFallback = false       // the current/last Still came from the no-fix fallback
     private var needFixAfterWake = false      // woke from a fallback Still: no fix within 2 min returns to Still
+    private var stepsThreshold = 15           // steps that wake from Still; 15, then 50, then 150 after each wander-return
+    private var wanderFence: Fence?           // visit fence while a steps/walking wake could still be a wander
+    private var wanderSince = Date.distantPast
+    private var wanderFixed = false           // an accepted fix arrived since the wake
 
     /// `motionAvailable` is accepted for the app's sake; no rule depends on it (the fallback ignores steps).
     public init(motionAvailable: Bool, deepSleep: Bool) {
@@ -64,13 +68,17 @@ public struct MotionEngine: Sendable {
         if case .deepSleepChanged(let on) = e { return setDeepSleep(on, now) }
         if state == .still { return handleStill(e, now) }
         switch e {
-        case .fix(let p): return onFix(p, now)
-        case .tick: return onTick(now)
+        case .fix(let p):
+            wanderOutside(p.lat, p.lon)
+            wanderFixed = wanderFixed || wanderFence != nil
+            return wanderReturn(now) ?? onFix(p, now)
+        case .tick: return wanderReturn(now) ?? onTick(now)
         case .activity(let a, let confident) where a.isVehicle:
             lastVehicle = now
             if confident { lastConfidentVehicle = now }
         case .wakeFix(let s, _) where s.hAcc >= 0:
             lastKnown = Self.pin(s.lat, s.lon, s.hAcc)
+            wanderOutside(s.lat, s.lon)
         case .steps, .activity, .wakeFix, .geofenceExit, .spotCheckDue, .spotCheckEnded, .deepSleepChanged: break
         }
         return []
@@ -78,6 +86,19 @@ public struct MotionEngine: Sendable {
 
     private static func pin(_ lat: Double, _ lon: Double, _ hAcc: Double) -> Fence {
         Fence(lat: lat, lon: lon, radius: min(max(hAcc, 20), 100))
+    }
+
+    /// A position outside the wander fence ends the wander and resets the steps threshold.
+    private mutating func wanderOutside(_ lat: Double, _ lon: Double) {
+        guard let w = wanderFence, Geo.distance(lat, lon, w.lat, w.lon) > w.radius else { return }
+        wanderFence = nil; stepsThreshold = 15
+    }
+
+    /// 60 s after a steps/walking wake, with fixes and all of them inside the visit fence: back to Still, no new still point.
+    private mutating func wanderReturn(_ now: Date) -> [Command]? {
+        guard let w = wanderFence, wanderFixed, now.timeIntervalSince(wanderSince) >= 60 else { return nil }
+        stepsThreshold = stepsThreshold == 15 ? 50 : 150
+        return goStill(w, now, writePoint: false) + [log("wake", "wander-return", now)]
     }
 
     private mutating func onFix(_ p: FilteredPoint, _ now: Date) -> [Command] {
@@ -130,22 +151,24 @@ public struct MotionEngine: Sendable {
     }
 
     /// A nil fence (nothing ever known) still stops GPS; the first wake fix then pins the place.
-    private mutating func goStill(_ f: Fence?, _ now: Date, fallback: Bool = false) -> [Command] {
-        state = .still; fence = f; stillSince = now; lastStillPoint = now
+    private mutating func goStill(_ f: Fence?, _ now: Date, fallback: Bool = false, writePoint: Bool = true) -> [Command] {
+        state = .still; wanderFence = nil; fence = f; stillSince = now; lastStillPoint = now
         fixes = []; spotDelay = 30; stillByFallback = fallback; needFixAfterWake = false
         var out: [Command] = [.stopRecording]
         if let f { out.append(.armGeofence(Fence(lat: f.lat, lon: f.lon, radius: 200))) }
         out.append(deepSleep ? .setKeepAlive(false) : .scheduleSpotCheck(after: spotDelay))
-        if let f { out.append(.writeStillPoint(f.stillPoint(at: now))) }
+        if let f, writePoint { out.append(.writeStillPoint(f.stillPoint(at: now))) }
         return out + [log("state", "still", now)]
     }
 
     private mutating func handleStill(_ e: MotionEvent, _ now: Date) -> [Command] {
         switch e {
         case .steps(let n):
-            return n >= 15 ? wake("steps", now) : []
+            return n >= stepsThreshold ? wake("steps", now, wander: true) : []
         case .activity(let a, let confident):
-            return confident && a.isMoving ? wake("activity", now) : []
+            guard confident && a.isMoving else { return [] }
+            if a.isVehicle { lastVehicle = now; lastConfidentVehicle = now; stepsThreshold = 15 }  // a garage departure is no fix-less fallback
+            return wake("activity", now, wander: !a.isVehicle)
         case .wakeFix(let s, let reason):
             guard s.hAcc >= 0 else { return [] }
             let k = Self.pin(s.lat, s.lon, s.hAcc)
@@ -155,6 +178,7 @@ public struct MotionEngine: Sendable {
             }
             guard Geo.distance(s.lat, s.lon, f.lat, f.lon) - s.hAcc > f.radius else { return [] }
             lastKnown = k
+            stepsThreshold = 15
             return wake(reason, now)
         case .geofenceExit:
             return wake("geofence", now)
@@ -177,11 +201,12 @@ public struct MotionEngine: Sendable {
         }
     }
 
-    private mutating func wake(_ reason: String, _ now: Date) -> [Command] {
+    private mutating func wake(_ reason: String, _ now: Date, wander: Bool = false) -> [Command] {
         var out: [Command] = spotChecking ? [.stopSpotCheck] : []
         out += [.startRecording, .disarmGeofence, .setKeepAlive(true)]
         if let s = stillSince { out.append(.resolveDeparture(stillSince: s)) }
         state = .moving; spotChecking = false; stillSince = nil; quietSince = now; needFixAfterWake = stillByFallback
+        wanderFence = wander ? fence : nil; wanderSince = now; wanderFixed = false
         return out + [log("wake", reason, now), log("state", "moving", now)]
     }
 
