@@ -103,13 +103,8 @@ import CoreLocation
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
-        // A visit has no fix time; its latest event date stands in, so a visit delivered late is stale.
-        let t = visit.departureDate == .distantFuture ? visit.arrivalDate : visit.departureDate
-        let s = Sample(t: t, lat: visit.coordinate.latitude, lon: visit.coordinate.longitude,
-                       hAcc: visit.horizontalAccuracy, speed: -1, course: -1)
-        MainActor.assumeIsolated {
-            recorder.wakeFix(s, reason: "visit")
-        }
+        // Relaunch net only: the coordinate is a place left or reached minutes ago, not where the phone is now.
+        MainActor.assumeIsolated { recorder.send(.tick) }
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {

@@ -105,7 +105,7 @@ import UIKit
         }
     }
 
-    /// Spot-check, significant-change and visit positions; a fix older than 10 s is dropped. Returns whether it was sent.
+    /// Spot-check and significant-change positions; a fix older than 10 s is dropped. Returns whether it was sent.
     @discardableResult func wakeFix(_ s: Sample, reason: String) -> Bool {
         guard Date().timeIntervalSince(s.t) <= 10 else { return false }
         send(.wakeFix(s, reason: reason))
@@ -149,7 +149,7 @@ import UIKit
                 let departure = await motion.departure(stillSince: since, until: now)
                 // Runs after this batch, so the engine's wake log has set the reason. Unknown departure after a
                 // position-based wake: the walked stretch stays a gap rather than becoming still points.
-                if departure == nil, ["geofence", "visit", "slc"].contains(lastWakeReason) { return }
+                if departure == nil, ["geofence", "slc"].contains(lastWakeReason) { return }
                 for p in Backfill.stillPoints(fence: fence, from: still.t, to: departure ?? now) { buffer.add(p, at: Date()) }
             }
         case .log(var e):
