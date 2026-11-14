@@ -88,10 +88,11 @@ import CoreLocation
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let id = ObjectIdentifier(manager)   // the manager itself is not Sendable
         MainActor.assumeIsolated {
-            if manager === recording {
+            if id == ObjectIdentifier(recording) {
                 for l in locations { recorder.recordingFix(Self.sample(l)) }
-            } else if manager === keepAlive {
+            } else if id == ObjectIdentifier(keepAlive) {
                 recorder.send(.tick)   // location discarded
             } else if let l = locations.last {
                 recorder.send(.wakeFix(Self.sample(l), reason: "slc"))
@@ -100,23 +101,25 @@ import CoreLocation
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
+        let s = Sample(t: Date(), lat: visit.coordinate.latitude, lon: visit.coordinate.longitude,
+                       hAcc: visit.horizontalAccuracy, speed: -1, course: -1)
         MainActor.assumeIsolated {
-            let s = Sample(t: Date(), lat: visit.coordinate.latitude, lon: visit.coordinate.longitude,
-                           hAcc: visit.horizontalAccuracy, speed: -1, course: -1)
             recorder.send(.wakeFix(s, reason: "visit"))
         }
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let id = ObjectIdentifier(manager), status = manager.authorizationStatus
+        let precise = manager.accuracyAuthorization == .fullAccuracy
         MainActor.assumeIsolated {
-            guard manager === safety else { return }
-            let a: Authorization = switch manager.authorizationStatus {
+            guard id == ObjectIdentifier(safety) else { return }
+            let a: Authorization = switch status {
             case .authorizedAlways: .always
             case .authorizedWhenInUse: .whenInUse
             case .notDetermined: .notDetermined
             default: .denied
             }
-            recorder.authorizationChanged(a, precise: manager.accuracyAuthorization == .fullAccuracy)
+            recorder.authorizationChanged(a, precise: precise)
             guard a == .always || a == .whenInUse else { return }
             // Starts issued before the grant may not have taken; re-issuing is harmless.
             if gpsOn { recording.startUpdatingLocation() }
