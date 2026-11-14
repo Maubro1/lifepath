@@ -119,6 +119,7 @@ public struct MotionEngine: Sendable {
         fence = f
         guard f.contains(p) else {
             guard state == .settling else { return [] }
+            guard !tolerates(f, now) else { return settleCheck(now) }   // one outlier within the 10% allowance is no departure
             state = .moving
             return [log("state", "moving", now)]
         }
@@ -127,15 +128,25 @@ public struct MotionEngine: Sendable {
         return [log("state", "settling", now)] + settleCheck(now)
     }
 
-    /// Still once the last 2 min (6 min after a vehicle) are proven by fixes and at most 10% of them lie outside the fence
-    /// (the oldest of them inside, so a walk-in is never tolerated; with fewer than 10 fixes none outside), so one multipath outlier does not restart the clock.
+    /// The fixes of the settling window (2 min, 6 min after a vehicle), from the newest one at or before its start.
+    private func windowFixes(_ now: Date) -> ArraySlice<FilteredPoint> {
+        let window: TimeInterval = lastVehicle.map { now.timeIntervalSince($0) <= 600 } == true ? 360 : 120
+        return fixes[(fixes.lastIndex(where: { $0.t <= now.addingTimeInterval(-window) }) ?? 0)...]
+    }
+
+    /// At most 10% of the window's fixes outside the fence; with fewer than 10 fixes, none.
+    private func tolerates(_ f: Fence, _ now: Date) -> Bool {
+        let w = windowFixes(now), outside = w.filter { !f.contains($0) }.count
+        return w.count < 10 ? outside == 0 : outside * 10 <= w.count
+    }
+
+    /// Still once the window is proven by fixes (the oldest inside, so a walk-in is never tolerated) and the outlier
+    /// tolerance holds, so one multipath outlier does not restart the clock.
     private mutating func settleCheck(_ now: Date) -> [Command] {
         guard state == .settling, let f = fence else { return [] }
         let window: TimeInterval = lastVehicle.map { now.timeIntervalSince($0) <= 600 } == true ? 360 : 120
-        guard let anchor = fixes.lastIndex(where: { $0.t <= now.addingTimeInterval(-window) }) else { return [] }
-        let inWindow = fixes[anchor...]
-        let outside = inWindow.filter { !f.contains($0) }.count
-        guard f.contains(inWindow[anchor]), inWindow.count < 10 ? outside == 0 : outside * 10 <= inWindow.count else { return [] }
+        guard let oldest = windowFixes(now).first, oldest.t <= now.addingTimeInterval(-window),
+              f.contains(oldest), tolerates(f, now) else { return [] }
         return goStill(f, now)
     }
 

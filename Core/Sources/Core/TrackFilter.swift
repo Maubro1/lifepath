@@ -15,7 +15,7 @@ public struct TrackFilter: Sendable {
     public mutating func takeDropCounts() -> [String: Int] { defer { dropCounts = [:] }; return dropCounts }
     private mutating func drop(_ reason: String) -> FilteredPoint? { dropCounts[reason, default: 0] += 1; return nil }
 
-    private static let gate = 1.0   // innovation gate in sigmas; 2.5 let an 8-fix, 30 m burst drag the line 37 m (measured)
+    private static let gate = 2.45   // 2-D 95% innovation gate, in sigmas
     private static let metresPerDegree = 6_371_008.8 * Double.pi / 180
 
     public mutating func process(_ s: Sample, receivedAt: Date, activity: Activity) -> FilteredPoint? {
@@ -39,22 +39,26 @@ public struct TrackFilter: Sendable {
             let zx = (s.lon - origin.lon) * Self.metresPerDegree * cosLat
             let zy = (s.lat - origin.lat) * Self.metresPerDegree
             x += vx * dt; y += vy * dt
-            let (prior00, prior01, prior11) = (p00, p01, p11)
             let q2 = qa * qa
             p00 += dt * (2 * p01 + dt * p11) + q2 * dt * dt * dt / 3
             p01 += dt * p11 + q2 * dt * dt / 2
             p11 += q2 * dt
-            // Robust update: an innovation beyond the gate inflates the measurement variance by ratio^2 (never dropped).
+            // Robust update: an innovation beyond the gate (2-D 95%) inflates the measurement variance linearly; never dropped.
             let ex = zx - x, ey = zy - y
             let sigma = (p00 + s.hAcc * s.hAcc).squareRoot()
             let ratio = (ex * ex + ey * ey).squareRoot() / (Self.gate * sigma)
-            let gated = ratio > 1
-            let sInv = 1 / (p00 + s.hAcc * s.hAcc * (gated ? ratio * ratio : 1))
+            let sInv = 1 / (p00 + s.hAcc * s.hAcc * max(ratio, 1))
             let k0 = p00 * sInv, k1 = p01 * sInv
             x += k0 * ex; y += k0 * ey; vx += k1 * ex; vy += k1 * ey
             p11 -= k1 * p01; p01 *= 1 - k0; p00 *= 1 - k0
-            // A gated fix carries no information, so the uncertainty must not balloon and let the next outlier through.
-            if gated { (p00, p01, p11) = (prior00, prior01, prior11) }
+            if s.speed >= 0, s.course >= 0, s.hAcc <= 20 {   // Doppler velocity, sigma 0.7 m/s
+                let c = s.course * .pi / 180
+                let vInv = 1 / (p11 + 0.49)
+                let g0 = p01 * vInv, g1 = p11 * vInv
+                let evx = s.speed * sin(c) - vx, evy = s.speed * cos(c) - vy
+                x += g0 * evx; y += g0 * evy; vx += g1 * evx; vy += g1 * evy
+                p00 -= g0 * p01; p01 -= g0 * p11; p11 -= g1 * p11
+            }
         } else {
             origin = Fix(t: s.t, lat: s.lat, lon: s.lon, hAcc: s.hAcc)
             x = 0; y = 0; vx = 0; vy = 0; p00 = s.hAcc * s.hAcc; p01 = 0; p11 = 25

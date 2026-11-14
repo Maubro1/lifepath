@@ -82,19 +82,23 @@ final class MotionEngineTests: XCTestCase {
     }
 
     func testSettlingToleratesOneOutlierInTwenty() throws {
-        /// Walk 168 m east (arrival 120 s), then stand with a fix every 6 s; optionally one fix 60 m off at 200 s.
-        func stillAt(outlier: Bool) -> TimeInterval? {
+        /// Standing from the start with a fix every 6 s (about 20 per 2 min); optionally one fix 60 m off at 96 s.
+        func run(outlier: Bool) -> (stillAt: TimeInterval?, stateLogs: [Command]) {
             var rng = SeededRandom(seed: 11)
-            let stand = stride(from: 121, through: 400, by: 6).map { t -> FilteredPoint in
-                outlier && t == 199 ? standing(TimeInterval(t), north: 60, east: 168, rng: &rng)
-                                    : standing(TimeInterval(t), east: 168, rng: &rng)
-            }
             var e = MotionEngine(motionAvailable: true, deepSleep: false)
-            return feed(&e, route(to: 168, speed: 1.4, seed: 1) + stand).stillAt
+            var logs: [Command] = []
+            for t in stride(from: 0, through: 300, by: 6) {
+                let p = standing(TimeInterval(t), north: outlier && t == 96 ? 60 : 0, east: 0, rng: &rng)
+                logs += e.handle(.fix(p), at: p.t).filter { if case .log(let l) = $0 { l.kind == "state" } else { false } }
+                if e.state == .still { return (TimeInterval(t), logs) }
+            }
+            return (nil, logs)
         }
-        let base = try XCTUnwrap(stillAt(outlier: false), "baseline never went Still")
-        let with = try XCTUnwrap(stillAt(outlier: true), "never went Still with one outlier")
-        XCTAssertLessThanOrEqual(with, base + 12, "baseline \(base) s, with outlier \(with) s")
+        let base = run(outlier: false), with = run(outlier: true)
+        XCTAssertNotNil(base.stillAt, "baseline never went Still")
+        XCTAssertNotNil(with.stillAt, "never went Still with one outlier")
+        XCTAssertLessThanOrEqual(with.stillAt ?? .infinity, (base.stillAt ?? 0) + 6, "one outlier delayed Still")
+        XCTAssertEqual(with.stateLogs, base.stateLogs, "the tolerated outlier churned the state log")
     }
 
     func testRedLightNotStop() {
