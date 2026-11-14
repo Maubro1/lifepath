@@ -11,3 +11,4 @@ DerivedData/
 .superpowers/
 LifePath/Info.plist
 .claude/
+.build/
