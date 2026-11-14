@@ -28,6 +28,16 @@ final class MotionEngineTests: XCTestCase {
         }
         return (nil, [])
     }
+    /// Ticks every 30 s, calling `also` before each tick; returns when the engine first went Still and that tick's commands.
+    func tickUntilStill(_ e: inout MotionEngine, from: TimeInterval, through: TimeInterval,
+                        also: (inout MotionEngine, TimeInterval) -> Void = { _, _ in }) -> (stillAt: TimeInterval?, commands: [Command]) {
+        for t in stride(from: from, through: through, by: 30) {
+            also(&e, t)
+            let out = send(&e, .tick, t)
+            if e.state == .still { return (t, out) }
+        }
+        return (nil, [])
+    }
     /// Walks 168 m east in 2 min (arrival at 120 s), then stands there with 1 Hz fixes until 300 s.
     func walkThenStand(_ e: inout MotionEngine) -> (stillAt: TimeInterval?, commands: [Command]) {
         var rng = SeededRandom(seed: 11)
@@ -75,8 +85,8 @@ final class MotionEngineTests: XCTestCase {
         var e = MotionEngine(motionAvailable: true, deepSleep: false)
         var rng = SeededRandom(seed: 12)
         send(&e, .activity(.automotive, confident: true), 0)
-        let wait = (301...390).map { standing(TimeInterval($0), east: 4500, rng: &rng) }
-        let r = feed(&e, route(to: 4500, speed: 15, seed: 2) + wait + route(to: 9000, speed: 15, from: 391, startEast: 4500, seed: 3))
+        let wait = (301...480).map { standing(TimeInterval($0), east: 4500, rng: &rng) }   // 3 min: Still without the vehicle rule
+        let r = feed(&e, route(to: 4500, speed: 15, seed: 2) + wait + route(to: 9000, speed: 15, from: 481, startEast: 4500, seed: 3))
         XCTAssertNil(r.stillAt)
         XCTAssertEqual(e.state, .moving)
     }
@@ -93,21 +103,93 @@ final class MotionEngineTests: XCTestCase {
     func testIndoorNoFixFallsToStill() throws {
         var e = MotionEngine(motionAvailable: true, deepSleep: false)
         XCTAssertNil(feed(&e, route(to: 168, speed: 1.4, seed: 1)).stillAt)   // fixes end at 120 s
-        var walker = e                                                        // same, but keeps stepping
-        var stillAt: TimeInterval?
-        for t in stride(from: 150.0, through: 600, by: 30) {
-            let out = send(&e, .tick, t)
-            if stillAt == nil, e.state == .still {
-                stillAt = t
-                XCTAssert(out.contains(.stopRecording))
-                XCTAssert(out.contains(log(t, "state", "still")))
-            }
-            send(&walker, .steps(Int(t)), t)
-            send(&walker, .tick, t)
-        }
-        let s = try XCTUnwrap(stillAt, "never went Still")
+        let r = tickUntilStill(&e, from: 150, through: 600)
+        let s = try XCTUnwrap(r.stillAt, "never went Still")
         XCTAssert((420.0...450.0).contains(s), "Still at \(s) s; last fix at 120 s")
-        XCTAssertNotEqual(walker.state, .still)
+        XCTAssert(r.commands.contains(.stopRecording))
+        XCTAssert(r.commands.contains(log(s, "state", "still")))
+        // Pinned to where the walk ended, not to the trail's weighted centre.
+        let f = try XCTUnwrap(e.fence)
+        let end = Geo.offset(lat: 52.37, lon: 4.90, north: 0, east: 168)
+        XCTAssertLessThan(Geo.distance(f.lat, f.lon, end.lat, end.lon), 20)
+        XCTAssert(r.commands.contains(.armGeofence(Fence(lat: f.lat, lon: f.lon, radius: 200))))
+        let check = Sample(t: at(s + 30), lat: end.lat, lon: end.lon, hAcc: 20, speed: -1, course: -1)
+        XCTAssertEqual(send(&e, .wakeFix(check, reason: "spotcheck"), s + 30), [])
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testIndoorWalkingAroundStillFallsBack() throws {
+        var e = MotionEngine(motionAvailable: true, deepSleep: false)
+        XCTAssertNil(feed(&e, route(to: 168, speed: 1.4, seed: 1)).stillAt)
+        let r = tickUntilStill(&e, from: 150, through: 600) { e, t in
+            self.send(&e, .steps(Int(t)), t)
+            self.send(&e, .activity(.walking, confident: true), t)
+        }
+        let s = try XCTUnwrap(r.stillAt, "never went Still")
+        XCTAssert((420.0...450.0).contains(s), "Still at \(s) s; last fix at 120 s")
+    }
+
+    func testTunnelRideKeepsMovingWithoutFixes() throws {
+        var e = MotionEngine(motionAvailable: true, deepSleep: false)
+        XCTAssertNil(feed(&e, route(to: 4500, speed: 15, seed: 5)).stillAt)  // fixes end at 300 s
+        let riding = tickUntilStill(&e, from: 330, through: 780) { e, t in   // 8 min without fixes
+            _ = self.send(&e, .activity(.automotive, confident: true), t)
+        }
+        XCTAssertNil(riding.stillAt)
+        XCTAssertEqual(e.state, .moving)
+        XCTAssertEqual(tickUntilStill(&e, from: 810, through: 1200).stillAt, 1080)   // 5 min after the last automotive
+    }
+
+    func testColdStartNoFixFallsToStill() throws {
+        var e = MotionEngine(motionAvailable: true, deepSleep: false)
+        let r = tickUntilStill(&e, from: 0, through: 400)
+        XCTAssertEqual(r.stillAt, 300)
+        XCTAssertNil(e.fence)
+        XCTAssert(r.commands.contains(.stopRecording))
+        XCTAssert(r.commands.contains(.scheduleSpotCheck(after: 30)))
+        XCTAssert(r.commands.contains(log(300, "state", "still")))
+        XCTAssertFalse(r.commands.contains { if case .armGeofence = $0 { true } else { false } })
+        XCTAssertEqual(stillPoints(r.commands), [])
+    }
+
+    func testWakeFixSeedsFenceWhenNoneKnown() throws {
+        let here = Geo.offset(lat: 52.37, lon: 4.90, north: 1000, east: 0)
+        let away = Geo.offset(lat: here.lat, lon: here.lon, north: 200, east: 0)
+        func fix(_ p: (lat: Double, lon: Double), hAcc: Double, _ t: TimeInterval) -> MotionEvent {
+            .wakeFix(Sample(t: at(t), lat: p.lat, lon: p.lon, hAcc: hAcc, speed: -1, course: -1), reason: "spotcheck")
+        }
+        // Still with no position: the first wake fix pins the fence instead of waking.
+        var e = MotionEngine(motionAvailable: true, deepSleep: false)
+        let s = try XCTUnwrap(tickUntilStill(&e, from: 0, through: 400).stillAt)
+        let out = send(&e, fix(here, hAcc: 30, s + 30), s + 30)
+        XCTAssertEqual(e.state, .still)
+        XCTAssertFalse(out.contains(.startRecording))
+        XCTAssertEqual(e.fence, Fence(lat: here.lat, lon: here.lon, radius: 30))
+        XCTAssert(out.contains(.armGeofence(Fence(lat: here.lat, lon: here.lon, radius: 200))))
+        assertWoke(send(&e, fix(away, hAcc: 20, s + 60), s + 60), e, reason: "spotcheck", stillAt: s, when: s + 60)
+        // Moving with no fix: a wake fix seeds the position the fallback pins to.
+        var m = MotionEngine(motionAvailable: true, deepSleep: false)
+        send(&m, .tick, 0)
+        send(&m, fix(here, hAcc: 50, 10), 10)
+        XCTAssertEqual(m.state, .moving)
+        XCTAssertEqual(tickUntilStill(&m, from: 30, through: 400).stillAt, 300)
+        XCTAssertEqual(m.fence, Fence(lat: here.lat, lon: here.lon, radius: 50))
+    }
+
+    func testNoFixAfterWakeReturnsToStillIn2Min() throws {
+        var e = MotionEngine(motionAvailable: true, deepSleep: false)
+        XCTAssertNil(feed(&e, route(to: 168, speed: 1.4, seed: 1)).stillAt)
+        let s = try XCTUnwrap(tickUntilStill(&e, from: 150, through: 600).stillAt, "never went Still")
+        send(&e, .steps(15), s + 60)
+        XCTAssertEqual(e.state, .moving)
+        let back = tickUntilStill(&e, from: s + 90, through: s + 400)
+        XCTAssertEqual(back.stillAt, s + 180)
+        XCTAssert(back.commands.contains(log(s + 180, "state", "still")))
+        XCTAssert(back.commands.contains(log(s + 180, "wake", "indoor-nofix")))
+        // After a Still proven by fixes, a wake keeps the normal 5 min.
+        var (f, fs, _) = try stillEngine()
+        send(&f, .steps(15), fs + 60)
+        XCTAssertNil(tickUntilStill(&f, from: fs + 90, through: fs + 330).stillAt)
     }
 
     // MARK: staying still
