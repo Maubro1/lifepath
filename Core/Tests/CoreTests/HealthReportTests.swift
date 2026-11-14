@@ -16,7 +16,7 @@ final class HealthReportTests: XCTestCase {
         HealthReport.render(HealthInput(now: at(15, 12), events: events, points: points, settings: settings))
     }
     func row(_ out: String, _ hour: String) -> String {
-        out.split(separator: "\n").first { $0.hasPrefix(hour + " ") }.map(String.init) ?? "MISSING \(hour)\n\(out)"
+        out.split(separator: "\n").last { $0.hasPrefix(hour + " ") }   // last = today's block (3 days listed).map(String.init) ?? "MISSING \(hour)\n\(out)"
     }
 
     func testReportListsGapWithLastEvent() {
