@@ -10,6 +10,7 @@ public struct Trip: Sendable, Equatable {
 
 public enum Trips {
     /// Moving points only; a still point, a gap > maxGap or a jump > maxJump ends a trip; trips with < 2 points are dropped.
+    /// A still point first trims the run's trailing settling fixes inside its fence (hAcc) radius.
     public static func split(_ points: [FilteredPoint], maxGap: TimeInterval = 600, maxJump: Double = 500) -> [Trip] {
         var trips: [Trip] = []
         var run: [FilteredPoint] = []
@@ -24,7 +25,10 @@ public enum Trips {
             trips.append(Trip(points: run, start: run[0].t, end: run[run.count - 1].t, distance: distance, movingTime: time))
         }
         for p in points {
-            guard p.kind == .moving else { flush(); continue }
+            guard p.kind == .moving else {
+                while let last = run.last, Geo.distance(last.lat, last.lon, p.lat, p.lon) <= p.hAcc { run.removeLast() }
+                flush(); continue
+            }
             if let last = run.last,
                p.t.timeIntervalSince(last.t) > maxGap || Geo.distance(last.lat, last.lon, p.lat, p.lon) > maxJump {
                 flush()

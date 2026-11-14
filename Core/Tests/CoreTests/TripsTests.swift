@@ -25,6 +25,21 @@ final class TripsTests: XCTestCase {
         XCTAssertTrue(Trips.split([pt(0), pt(1, kind: .still), pt(2)]).isEmpty)  // single points dropped
     }
 
+    func testSettlingTailIsTrimmed() throws {
+        // Walk north toward a still point at lat 50.003, then 120 fixes wandering within ~26 m of it, then the still point (hAcc 40).
+        func at(_ t: Double, _ lat: Double, _ lon: Double, kind: PointKind = .moving, hAcc: Double = 5) -> FilteredPoint {
+            FilteredPoint(t: Date(timeIntervalSince1970: t), lat: lat, lon: lon, rawLat: lat, rawLon: lon, hAcc: hAcc, speed: 1, kind: kind)
+        }
+        let walk = (0...26).map { at(Double($0) * 10, 50 + Double($0) * 0.0001, 4) }   // last fix ~44 m short
+        let settle = (0..<120).map { k in
+            at(270 + Double(k + 1) * 10, 50.003 + 0.0002 * sin(Double(k)), 4 + 0.0002 * cos(Double(k)))
+        }
+        let still = at(1500, 50.003, 4, kind: .still, hAcc: 40)
+        let trip = try XCTUnwrap(Trips.split(walk + settle + [still]).first)
+        XCTAssertEqual(trip.points.last, walk.last)
+        XCTAssertEqual(trip.points.count, walk.count)
+    }
+
     func testDistanceAndMovingTime() throws {
         let pts = (0..<4).map { pt($0) }
         let t = try XCTUnwrap(Trips.split(pts).first)
