@@ -82,7 +82,10 @@ import UIKit
         let now = Date()
         lastCheckIn = now
         let before = engine.state
-        for c in engine.handle(e, at: now) { execute(c, now) }
+        let commands = engine.handle(e, at: now)
+        // The wake log follows resolveDeparture in the same batch; take its reason before executing.
+        for case .log(let l) in commands where l.kind == "wake" { lastWakeReason = l.detail }
+        for c in commands { execute(c, now) }
         if engine.state != before {
             state = engine.state
             if state == .still { stillSince = now; motion.startSteps(from: now) }
@@ -145,15 +148,14 @@ import UIKit
         case .resolveDeparture(let since):
             guard let still = lastStill else { break }
             let fence = Fence(lat: still.lat, lon: still.lon, radius: still.hAcc)
+            let reason = lastWakeReason
             Task {
                 let departure = await motion.departure(stillSince: since, until: now)
-                // Runs after this batch, so the engine's wake log has set the reason. Unknown departure after a
-                // position-based wake: the walked stretch stays a gap rather than becoming still points.
-                if departure == nil, ["geofence", "slc"].contains(lastWakeReason) { return }
+                // Unknown departure after a position-based wake: the walked stretch stays a gap, not still points.
+                if departure == nil, ["geofence", "slc"].contains(reason) { return }
                 for p in Backfill.stillPoints(fence: fence, from: still.t, to: departure ?? now) { buffer.add(p, at: Date()) }
             }
         case .log(var e):
-            if e.kind == "wake" { lastWakeReason = e.detail }
             if e.kind == "deepSleep", e.detail == "on" { e.detail = "on \(deepSleepReason)" }
             buffer.add(e)
         }

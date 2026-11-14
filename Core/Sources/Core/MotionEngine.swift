@@ -16,7 +16,7 @@ public enum MotionEvent: Sendable {
     case tick                               // keep-alive update or any wake; drives time-based rules
     case steps(Int)                         // cumulative since Still began
     case activity(Activity, confident: Bool)
-    case wakeFix(Sample, reason: String)    // spot check, significant change, visit
+    case wakeFix(Sample, reason: String)    // spot check, significant change
     case geofenceExit
     case spotCheckDue, spotCheckEnded
     case deepSleepChanged(Bool)             // effective deep sleep (manual setting OR thermal/low power/battery)
