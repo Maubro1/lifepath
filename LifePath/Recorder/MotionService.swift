@@ -2,7 +2,7 @@ import Core
 import CoreMotion
 
 @MainActor final class MotionService {
-    /// Absent motion permission: the engine runs with `motionAvailable: false` and no steps or activity arrive.
+    /// Absent motion permission: no steps or activity arrive; the engine runs on fixes alone.
     nonisolated static var available: Bool {
         CMMotionActivityManager.isActivityAvailable()
             && ![.denied, .restricted].contains(CMMotionActivityManager.authorizationStatus())

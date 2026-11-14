@@ -30,13 +30,16 @@ import CoreLocation
         let monitor = Task { await CLMonitor("lifepath") }
         self.monitor = monitor
         Task {
+            // A fence left from the last launch is kept: its exit may be what relaunched us. The engine starts in Moving,
+            // which ignores a stale exit, and the next Still's arm replaces it.
             let m = await monitor.value
-            await m.remove("stop")   // the engine starts in Moving; a fence left from the last launch is stale
             do {
                 for try await e in await m.events where e.identifier == "stop" && e.state == .unsatisfied {
                     recorder.send(.geofenceExit)
                 }
-            } catch {}
+            } catch {
+                recorder.log("geofence", "monitor failed")
+            }
         }
     }
 

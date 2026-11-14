@@ -16,11 +16,13 @@ import UIKit
     private(set) var lastCheckIn: Date?
     private(set) var authorization: Authorization = .notDetermined
     private(set) var preciseLocation = false
+    /// Effective deep sleep: the manual setting or thermal/low power/battery.
+    private(set) var deepSleep = false
 
     @ObservationIgnored let settings = AppSettings()
     @ObservationIgnored private var location: LocationService!
     @ObservationIgnored private var motion: MotionService!
-    @ObservationIgnored private var engine = MotionEngine(motionAvailable: MotionService.available, deepSleep: false)
+    @ObservationIgnored private var engine = MotionEngine(deepSleep: false)
     @ObservationIgnored private var filter = TrackFilter(quality: .balanced)
     @ObservationIgnored private var buffer = PointBuffer()
     @ObservationIgnored private var diary: Diary?
@@ -28,10 +30,10 @@ import UIKit
     @ObservationIgnored private var recordingWanted = true   // the engine starts in Moving without a command
     @ObservationIgnored private var spotChecking = false
     @ObservationIgnored private var gpsOn = false
+    @ObservationIgnored private var gpsSpot = false          // GPS is on for a spot check only
     @ObservationIgnored private var spotTimer: Timer?        // the only Timer in the app
     @ObservationIgnored private var lastActivity = Activity.unknown
     @ObservationIgnored private var lastStill: FilteredPoint?
-    @ObservationIgnored private var deepSleep = false
     @ObservationIgnored private var deepSleepReason = ""
     @ObservationIgnored private var thermal: String?
     @ObservationIgnored private var lowPower: Bool?
@@ -58,8 +60,10 @@ import UIKit
         let now = Date()
         openDiary()
         try? diary?.pruneEvents(olderThan: now.addingTimeInterval(-14 * 86400))
-        lastPoint = try? diary?.lastPoint()?.t
+        let last = try? diary?.lastPoint()
+        lastPoint = last?.t
         buffer.add(LoggedEvent(t: now, kind: "launch", detail: Self.version))
+        buffer.add(LoggedEvent(t: now, kind: "state", detail: "moving"))   // the engine starts in Moving
         for name in [ProcessInfo.thermalStateDidChangeNotification, .NSProcessInfoPowerStateDidChange,
                      UIDevice.batteryLevelDidChangeNotification, UserDefaults.didChangeNotification] {
             _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
@@ -71,6 +75,12 @@ import UIKit
         motion.startActivity()
         refreshConditions()
         applyGPS()
+        // Relaunched after a rest (swiped away, or a fence exit while suspended): backfill it up to the departure.
+        if let p = last, p.kind == .still {
+            lastStill = p
+            lastWakeReason = "relaunch"
+            execute(.resolveDeparture(stillSince: p.t), now)
+        }
     }
 
     func requestWhenInUse() { location.requestWhenInUse() }
@@ -93,7 +103,8 @@ import UIKit
         }
         configureRecording()
         applyGPS()
-        if engine.state != before || buffer.isDue(at: now) { flush() }
+        // Keep-alive off lets iOS suspend the app: write before that.
+        if engine.state != before || buffer.isDue(at: now) || commands.contains(.setKeepAlive(false)) { flush() }
     }
 
     func recordingFix(_ s: Sample) {
@@ -125,7 +136,10 @@ import UIKit
         authorization = a
         preciseLocation = precise
         buffer.add(LoggedEvent(t: Date(), kind: "permission", detail: precise ? a.rawValue : "\(a.rawValue) approximate"))
+        flush()   // a downgrade can end background running
     }
+
+    func log(_ kind: String, _ detail: String) { buffer.add(LoggedEvent(t: Date(), kind: kind, detail: detail)) }
 
     // MARK: Commands
 
@@ -152,7 +166,7 @@ import UIKit
             Task {
                 let departure = await motion.departure(stillSince: since, until: now)
                 // Unknown departure after a position-based wake: the walked stretch stays a gap, not still points.
-                if departure == nil, ["geofence", "slc"].contains(reason) { return }
+                if departure == nil, ["geofence", "slc", "relaunch", "spotcheck"].contains(reason) { return }
                 for p in Backfill.stillPoints(fence: fence, from: still.t, to: departure ?? now) { buffer.add(p, at: Date()) }
             }
         case .log(var e):
@@ -177,10 +191,12 @@ import UIKit
 
     private func applyGPS() {
         let on = recordingWanted || spotChecking
+        if recordingWanted { gpsSpot = false }
         guard on != gpsOn else { return }
         gpsOn = on
         location.setGPS(on)
-        buffer.add(LoggedEvent(t: Date(), kind: "gps", detail: on ? "on" : "off"))
+        if on && !recordingWanted { gpsSpot = true }
+        buffer.add(LoggedEvent(t: Date(), kind: "gps", detail: (on ? "on" : "off") + (gpsSpot ? " spotcheck" : "")))
     }
 
     // MARK: Conditions
@@ -236,6 +252,10 @@ import UIKit
     func flush() {
         if let f = flushFailedAt, Date().timeIntervalSince(f) < 30 { return }   // after a failure, retry at most every 30 s
         if diary == nil { openDiary() }   // before first unlock the protected file can't open yet
+        let drops = filter.takeDropCounts()
+        if !drops.isEmpty {
+            buffer.add(LoggedEvent(t: Date(), kind: "drops", detail: drops.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")))
+        }
         let (points, events) = buffer.take()
         guard !points.isEmpty || !events.isEmpty else { return }
         do {

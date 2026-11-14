@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var pointsToday = 0
     @State private var report = ReportDocument(text: "")
     @State private var exporting = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private var expiry: Date? { SigningReminder.expiry }
     private var version: String {
@@ -34,7 +35,7 @@ struct SettingsView: View {
     var body: some View {
         let s = TrackingStatus.evaluate(
             authorization: recorder.authorization, preciseLocation: recorder.preciseLocation, state: recorder.state,
-            lastPoint: recorder.lastPoint, stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn,
+            stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn, deepSleep: recorder.deepSleep,
             signingExpiry: expiry, now: now)
         NavigationStack {
             List {
@@ -54,7 +55,7 @@ struct SettingsView: View {
                     Toggle("Show blue location bar", isOn: settings.$showsIndicator)
                     Toggle("Deep sleep", isOn: settings.$deepSleep)
                 } footer: {
-                    Text("Deep sleep saves battery by recording less detail, until you turn it off.")
+                    Text("Rests even more deeply while you're still; the first part of a trip may be missed.")
                 }
                 Section {
                     Button("Create health report") { report = ReportDocument(text: recorder.healthReport()); exporting = true }
@@ -64,6 +65,7 @@ struct SettingsView: View {
             .navigationTitle("LifePath")
             .refreshable { refresh() }
             .onAppear { refresh() }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
             .fileExporter(isPresented: $exporting, document: report, contentType: .plainText, defaultFilename: filename) { _ in }
         }
     }
