@@ -87,9 +87,29 @@ final class TripSmootherTests: XCTestCase {
         let b = RawFix(t: t0.addingTimeInterval(5), lat: p.lat, lon: p.lon, hAcc: 10, speed: 2, course: 0)
         let two = TripSmoother.smooth([a, b])
         XCTAssertEqual(two.map(\.t), [a.t, b.t])
+        let moved = Geo.distance(two[0].lat, two[0].lon, a.lat, a.lon)
+        print("MEAS two-fix first moved", moved)
+        XCTAssertGreaterThan(moved, 0.1, "the backward pass pulls the first fix toward the second (forward-only leaves it at 0)")
         for q in two {
             XCTAssertTrue(q.lat.isFinite && q.lon.isFinite)
             XCTAssertLessThanOrEqual(Geo.distance(q.lat, q.lon, 52.37, 4.90), 15, "stays between the two fixes")
         }
+    }
+
+    func testInvalidAccuracyFixBarelyMovesLine() {
+        let w = walk(path: [(0, 0), (300, 0)], speed: 1.4, every: 1, noise: 3, seed: 17, start: t0, doppler: .foot)
+        var fixes = raw(w.samples)
+        let clean = TripSmoother.smooth(fixes)
+        let p = Geo.offset(lat: fixes[100].lat, lon: fixes[100].lon, north: 0, east: 200)
+        fixes[100].lat = p.lat; fixes[100].lon = p.lon; fixes[100].hAcc = -1
+        let out = TripSmoother.smooth(fixes)
+        XCTAssertFalse(out.contains { !$0.lat.isFinite || !$0.lon.isFinite }, "NaN or infinite output")
+        let d = zip(out, clean).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.max()!
+        print("MEAS invalid-accuracy max deviation", d)
+        XCTAssertLessThanOrEqual(d, 5, "max deviation from the clean line \(d) m")
+        fixes[100].hAcc = .nan
+        let nanOut = TripSmoother.smooth(fixes)
+        XCTAssertFalse(nanOut.contains { !$0.lat.isFinite || !$0.lon.isFinite }, "NaN hAcc leaks into the output")
+        XCTAssertLessThanOrEqual(zip(nanOut, clean).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.max()!, 5)
     }
 }
