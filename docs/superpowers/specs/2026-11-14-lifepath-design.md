@@ -23,6 +23,7 @@ Existing diary apps are the floor: LifePath borrows their proven battery mechani
 - **The right street, outdoors.** Trips on foot, bike or car show the street actually taken, also where raw GPS wanders 15–20 m between buildings. Bar: ≥ 95% of walked distance on the correct street in canyon-noise fixtures; in real use, unsure stretches are shown as recorded, never guessed.
 - **Stops and trips right.** In the CI test fixtures: zero false stops at red lights and zero false trips from a phone lying still. In real use the target is "very rare", and every case the health report reveals becomes a new fixture.
 - **No silent gaps.** Every gap over 15 minutes in the diary has a recorded reason (permission, swipe-away, signing expiry, iOS relaunch delay), shown in the health report and the status box.
+- **Cool phone.** LifePath should leave the phone as cool as if it weren't running. Heat comes from repeated waking and processing, so at rest the app does no work beyond the keep-alive and spot-check callbacks, each of which only compares timestamps or one distance; while moving, per-fix work is a few arithmetic steps and nothing renders in the background. Heavy work (map matching, history rebuilds) runs only while the app is open or the phone is charging. Bar: with LifePath the only active app, the thermal state stays nominal at rest and on walks, shown per hour in the health report next to wake counts.
 - **Battery visible.** The health report shows hours of GPS-on time per day and wake counts, so a battery problem points at a cause.
 - **Map that stays fast.** The map opens instantly at any history size and costs nothing when off screen.
 - **Yours outright.** No account, no subscription, open export formats, merge-safe backups.
@@ -148,7 +149,7 @@ Phone GPS between tall buildings or under trees can be 15–20 m off; filtering 
 - **Confidence:** each matched stretch gets a score from the winning path's probability margin over the runner-up and the share of points within 2σ. Below threshold, or where no road is within reach (parks, fields, indoors), the stretch is marked unmatched and the map shows the recorded line there.
 - **Storage:** stored points are never modified. Matches live in `matchedStretch(tripStart, seq, wayId, fromM, toM, confidence)`, recomputable at any time.
 - **Coverage:** ways split into ~20 m segments; a segment is hit when a confident matched stretch runs along it. A street (all segments of a named way, or the way if unnamed) is covered at ≥ 90% of its length hit (100% for 10 or fewer segments), the CityStrides rule.
-- Matching runs after each trip ends and over history after each new download.
+- Matching (and history re-matching after a new download) runs only while the app is open or the phone is charging, never in the background on battery. Street downloads after a trip are a single small request and may happen in the background.
 
 ## Export, backup, import
 
@@ -159,7 +160,7 @@ Phone GPS between tall buildings or under trees can be 15–20 m off; filtering 
 
 ## Health report
 
-One tap writes `LifePath-health-YYYY-MM-DD.txt` (last 3 days) via the file exporter: per hour, % resting, wake count by reason, thermal states, accuracy histogram, point counts, gaps > 15 min with the last event before each, current settings and permissions. Written as plain text for pasting into an AI.
+One tap writes `LifePath-health-YYYY-MM-DD.txt` (last 3 days) via the file exporter: per hour, % resting, wake count by reason, worst thermal state, accuracy histogram, point counts, gaps > 15 min with the last event before each, current settings and permissions. Written as plain text for pasting into an AI.
 
 ## Signing expiry reminder
 
