@@ -24,6 +24,11 @@ private struct Root: View {
     let settings = AppSettings()
 
     var body: some View {
-        if settings.onboarded { SettingsView() } else { OnboardingView() }
+        if settings.onboarded {
+            TabView {
+                Tab("Map", systemImage: "map") { MapScreen() }
+                Tab("Settings", systemImage: "gear") { SettingsView() }
+            }
+        } else { OnboardingView() }
     }
 }
