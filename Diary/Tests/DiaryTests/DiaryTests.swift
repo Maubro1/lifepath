@@ -116,4 +116,80 @@ final class DiaryTests: XCTestCase {
         XCTAssertEqual(try diary.smoothedUntil(), d(200))
         XCTAssertEqual(try diary.smoothed(from: d(150), to: d(1000)).count, 1)
     }
+
+    private func line(_ start: Double, _ end: Double, lat: ClosedRange<Double> = 52...53, lon: ClosedRange<Double> = 4...5) -> TripLine {
+        TripLine(start: d(start), end: d(end), minLat: lat.lowerBound, maxLat: lat.upperBound,
+                 minLon: lon.lowerBound, maxLon: lon.upperBound, distance: 1234.5,
+                 coords: [(lat.lowerBound, lon.lowerBound, 1.5), (lat.upperBound, lon.upperBound, -1)])
+    }
+
+    func testTripLineRoundTrip() throws {
+        let diary = try Diary(path: tempPath())
+        XCTAssertNil(try diary.tripLinesUntil())
+        let a = line(100, 200), b = line(300, 400)
+        try diary.saveTripLines([b, a], replacingFrom: d(0))
+        XCTAssertEqual(try diary.tripLines(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90, from: d(0), to: d(1000)), [a, b])
+        XCTAssertEqual(try diary.tripLinesUntil(), d(400))
+    }
+
+    func testTripLineOverlapQueries() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.saveTripLines([line(100, 200)], replacingFrom: d(0))
+        func q(_ minLat: Double, _ maxLat: Double, _ minLon: Double, _ maxLon: Double, _ from: Double, _ to: Double) throws -> Int {
+            try diary.tripLines(minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, from: d(from), to: d(to)).count
+        }
+        XCTAssertEqual(try q(53, 54, 4, 5, 0, 1000), 1)      // touches at max lat
+        XCTAssertEqual(try q(51, 52, 4, 5, 0, 1000), 1)      // touches at min lat
+        XCTAssertEqual(try q(52, 53, 5, 6, 0, 1000), 1)      // touches at max lon
+        XCTAssertEqual(try q(52, 53, 3, 4, 0, 1000), 1)      // touches at min lon
+        XCTAssertEqual(try q(53.1, 54, 4, 5, 0, 1000), 0)
+        XCTAssertEqual(try q(50, 51.9, 4, 5, 0, 1000), 0)
+        XCTAssertEqual(try q(52, 53, 5.1, 6, 0, 1000), 0)
+        XCTAssertEqual(try q(52, 53, 3, 3.9, 0, 1000), 0)
+        XCTAssertEqual(try q(52, 53, 4, 5, 200, 300), 1)     // touches at end
+        XCTAssertEqual(try q(52, 53, 4, 5, 0, 100), 1)       // touches at start
+        XCTAssertEqual(try q(52, 53, 4, 5, 201, 300), 0)
+        XCTAssertEqual(try q(52, 53, 4, 5, 0, 99), 0)
+    }
+
+    func testReplacingTripLinesLeavesNoDuplicates() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.saveTripLines([line(100, 200), line(300, 400)], replacingFrom: d(0))
+        let newer = line(300, 450)
+        try diary.saveTripLines([newer, line(500, 600)], replacingFrom: d(250))
+        let got = try diary.tripLines(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90, from: d(0), to: d(1000))
+        XCTAssertEqual(got.map(\.start), [d(100), d(300), d(500)])
+        XCTAssertEqual(got[1], newer)
+        try diary.saveTripLines([newer], replacingFrom: d(300))   // same start again: still one row
+        XCTAssertEqual(try diary.tripLines(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90, from: d(0), to: d(1000)).count, 2)
+    }
+
+    func testV2UpgradeKeepsPointsAndSmoothed() throws {
+        let path = tempPath()
+        do {   // a v2 database exactly as v2 left it
+            let q = try DatabaseQueue(path: path)
+            try q.write { db in
+                try db.execute(sql: """
+                    CREATE TABLE point(
+                        t REAL PRIMARY KEY, lat REAL, lon REAL, rawLat REAL, rawLon REAL,
+                        hAcc REAL, speed REAL, kind TEXT, course REAL);
+                    CREATE TABLE event(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, t REAL, kind TEXT, detail TEXT);
+                    CREATE INDEX event_t ON event(t);
+                    CREATE TABLE smoothedPoint(t REAL PRIMARY KEY, lat REAL, lon REAL);
+                    CREATE TABLE grdb_migrations(identifier TEXT NOT NULL PRIMARY KEY);
+                    INSERT INTO grdb_migrations VALUES ('v1');
+                    INSERT INTO grdb_migrations VALUES ('v2');
+                    INSERT INTO point VALUES (100, 1, 2, 3, 4, 5, 6, 'still', -1);
+                    INSERT INTO smoothedPoint VALUES (100, 7, 8);
+                    """)
+            }
+        }
+        let diary = try Diary(path: path)
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(100)])
+        XCTAssertEqual(try diary.smoothed(from: d(0), to: d(1000)).map(\.lat), [7])
+        XCTAssertNil(try diary.tripLinesUntil())
+        try diary.saveTripLines([line(1, 2)], replacingFrom: d(0))
+        XCTAssertEqual(try diary.tripLinesUntil(), d(2))
+    }
 }
