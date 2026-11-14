@@ -68,3 +68,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build/LifePath.ipa
+          # Tags with a suffix (v0.1.1-preview.2) are marked as pre-releases: installable, not yet tested on the phone.
+          prerelease: ${{ contains(github.ref_name, '-') }}
