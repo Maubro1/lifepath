@@ -54,7 +54,8 @@ public struct MotionEngine: Sendable {
     private var stillByFallback = false       // the current/last Still came from the no-fix fallback
     private var needFixAfterWake = false      // woke from a fallback Still: no fix within 2 min returns to Still
     private var stepsThreshold = 15           // steps that wake from Still; 15, then 50, then 150 after each wander-return
-    private var wanderFence: Fence?           // visit fence while a steps/walking wake could still be a wander
+    private var visitFence: Fence?            // the Still fence at the last wake; a Moving fix outside it resets the threshold
+    private var wanderFence: Fence?           // same fence while a steps/walking wake could still be a wander
     private var wanderSince = Date.distantPast
     private var wanderFixed = false           // an accepted fix arrived since the wake
 
@@ -70,12 +71,12 @@ public struct MotionEngine: Sendable {
         switch e {
         case .fix(let p):
             wanderOutside(p.lat, p.lon)
-            wanderFixed = wanderFixed || wanderFence != nil
+            wanderFixed = wanderFixed || (wanderFence != nil && now.timeIntervalSince(wanderSince) <= 60)
             return wanderReturn(now) ?? onFix(p, now)
         case .tick: return wanderReturn(now) ?? onTick(now)
         case .activity(let a, let confident) where a.isVehicle:
             lastVehicle = now
-            if confident { lastConfidentVehicle = now }
+            if confident { lastConfidentVehicle = now; wanderFence = nil }   // backing out slowly is no wander
         case .wakeFix(let s, _) where s.hAcc >= 0:
             lastKnown = Self.pin(s.lat, s.lon, s.hAcc)
             wanderOutside(s.lat, s.lon)
@@ -88,10 +89,10 @@ public struct MotionEngine: Sendable {
         Fence(lat: lat, lon: lon, radius: min(max(hAcc, 20), 100))
     }
 
-    /// A position outside the wander fence ends the wander and resets the steps threshold.
+    /// A position outside the visit fence ends the wander and resets the steps threshold.
     private mutating func wanderOutside(_ lat: Double, _ lon: Double) {
-        guard let w = wanderFence, Geo.distance(lat, lon, w.lat, w.lon) > w.radius else { return }
-        wanderFence = nil; stepsThreshold = 15
+        guard let v = visitFence, Geo.distance(lat, lon, v.lat, v.lon) > v.radius else { return }
+        visitFence = nil; wanderFence = nil; stepsThreshold = 15
     }
 
     /// 60 s after a steps/walking wake, with fixes and all of them inside the visit fence: back to Still, no new still point.
@@ -206,7 +207,7 @@ public struct MotionEngine: Sendable {
         out += [.startRecording, .disarmGeofence, .setKeepAlive(true)]
         if let s = stillSince { out.append(.resolveDeparture(stillSince: s)) }
         state = .moving; spotChecking = false; stillSince = nil; quietSince = now; needFixAfterWake = stillByFallback
-        wanderFence = wander ? fence : nil; wanderSince = now; wanderFixed = false
+        visitFence = fence; wanderFence = wander ? fence : nil; wanderSince = now; wanderFixed = false
         return out + [log("wake", reason, now), log("state", "moving", now)]
     }
 

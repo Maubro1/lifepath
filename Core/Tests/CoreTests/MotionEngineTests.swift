@@ -322,6 +322,39 @@ final class MotionEngineTests: XCTestCase {
         XCTAssert(out.contains(log(s + 260, "wake", "spotcheck")), "\(out)")
     }
 
+    func testGeofenceWakeThenNewVisitResetsThreshold() throws {
+        var (e, s, _) = try stillEngine()
+        var rng = SeededRandom(seed: 25)
+        _ = wander(&e, at: s + 30, steps: 15, rng: &rng)
+        _ = wander(&e, at: s + 130, steps: 50, rng: &rng)                     // threshold 150
+        send(&e, .geofenceExit, s + 200)
+        XCTAssertEqual(e.state, .moving)
+        let far = (1...150).map { standing(s + 200 + Double($0), north: 300, east: 168, rng: &rng) }
+        let still = try XCTUnwrap(feed(&e, far).stillAt, "never settled at the new place")
+        assertWoke(send(&e, .steps(15), still + 10), e, reason: "steps", stillAt: still, when: still + 10)
+    }
+
+    func testLateFirstFixIsNoWanderReturn() throws {
+        var (e, s, _) = try stillEngine()
+        var rng = SeededRandom(seed: 26)
+        send(&e, .steps(15), s + 30)
+        for t in stride(from: s + 120, through: s + 180, by: 1) {             // first fix 90 s after the wake
+            send(&e, .fix(standing(t, east: 168, rng: &rng)), t)
+            XCTAssertNotEqual(e.state, .still, "wander-return at \(t - s)")
+        }
+    }
+
+    func testVehicleDuringWanderCancelsIt() throws {
+        var (e, s, _) = try stillEngine()
+        var rng = SeededRandom(seed: 27)
+        send(&e, .steps(15), s + 30)
+        send(&e, .activity(.automotive, confident: true), s + 50)
+        for t in stride(from: s + 31, through: s + 100, by: 1) {
+            send(&e, .fix(standing(t, east: 168, rng: &rng)), t)
+            XCTAssertNotEqual(e.state, .still, "wander-return at \(t - s)")
+        }
+    }
+
     func testVehicleWakeBlocksNoFixReturn() throws {
         var e = MotionEngine(motionAvailable: true, deepSleep: false)
         XCTAssertNil(feed(&e, route(to: 168, speed: 1.4, seed: 1)).stillAt)
