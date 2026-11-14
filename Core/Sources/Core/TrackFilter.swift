@@ -151,7 +151,8 @@ public struct TrackFilter: Sendable {
         let out = Geo.offset(lat: o.lat, lon: o.lon, north: mu[0] * models[0].y + mu[1] * models[1].y,
                              east: mu[0] * models[0].x + mu[1] * models[1].x)
         return FilteredPoint(t: s.t, lat: out.lat, lon: out.lon, rawLat: s.lat, rawLon: s.lon,
-                             hAcc: s.hAcc, speed: s.speed >= 0 && s.hAcc <= 20 ? s.speed : -1, kind: .moving)
+                             hAcc: s.hAcc, speed: s.speed >= 0 && s.hAcc <= 20 ? s.speed : -1, kind: .moving,
+                             course: s.course >= 0 && s.hAcc <= 20 ? s.course : -1)
     }
 
     public mutating func reset() {

@@ -18,10 +18,11 @@ public enum PointKind: String, Sendable, Codable { case moving, still }
 public struct FilteredPoint: Sendable, Equatable, Codable {
     public var t: Date
     public var lat, lon, rawLat, rawLon, hAcc, speed: Double
+    public var course: Double   // degrees; < 0 = unknown (still points, old rows, inaccurate fixes)
     public var kind: PointKind
-    public init(t: Date, lat: Double, lon: Double, rawLat: Double, rawLon: Double, hAcc: Double, speed: Double, kind: PointKind) {
+    public init(t: Date, lat: Double, lon: Double, rawLat: Double, rawLon: Double, hAcc: Double, speed: Double, kind: PointKind, course: Double = -1) {
         self.t = t; self.lat = lat; self.lon = lon; self.rawLat = rawLat; self.rawLon = rawLon
-        self.hAcc = hAcc; self.speed = speed; self.kind = kind
+        self.hAcc = hAcc; self.speed = speed; self.kind = kind; self.course = course
     }
 }
 
