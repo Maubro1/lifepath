@@ -22,18 +22,22 @@ struct OnboardingView: View {
                      CMMotionActivityManager().queryActivityStarting(from: .now.addingTimeInterval(-60), to: .now, to: .main) { _, _ in }
                      UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
                  })).tag(4)
-            step("Ready", "LifePath is set up.", ("Start", { settings.onboarded = true; Recorder.shared.start() })).tag(5)
+            step("Ready", "LifePath is set up.", ("Start", { settings.onboarded = true; Recorder.shared.start(); SigningReminder.schedule() })).tag(5)
         }
         .tabViewStyle(.page)
         .indexViewStyle(.page(backgroundDisplayMode: .always))
     }
 
     private func step(_ title: String, _ text: String, _ action: (String, () -> Void)?) -> some View {
-        VStack(spacing: 24) {
-            Text(title).font(.title).bold().multilineTextAlignment(.center).accessibilityAddTraits(.isHeader)
-            Text(text).multilineTextAlignment(.center)
-            if let action { Button(action.0, action: action.1).buttonStyle(.borderedProminent) }
+        ScrollView {   // at accessibility sizes the page scrolls, the button included
+            VStack(spacing: 24) {
+                Text(title).font(.title).bold().multilineTextAlignment(.center).accessibilityAddTraits(.isHeader)
+                Text(text).multilineTextAlignment(.center)
+                if let action { Button(action.0, action: action.1).buttonStyle(.borderedProminent) }
+            }
+            .frame(maxWidth: .infinity)
+            .padding().padding(.bottom, 40)
         }
-        .padding().padding(.bottom, 40)
+        .scrollBounceBehavior(.basedOnSize)
     }
 }
