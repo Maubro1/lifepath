@@ -44,6 +44,18 @@ final class HealthReportTests: XCTestCase {
         XCTAssertTrue(out.contains("GPS on: 1.5 h"), out)
     }
 
+    func testReportPerHourMedianAccuracyAndDrops() {
+        let out = render(events: [ev(at(15, 9, 5), "drops", "accuracy=3,stale=1,teleport=2"),
+                                  ev(at(15, 9, 40), "drops", "accuracy=1,future=0")],
+                         points: [pt(at(15, 9, 1), acc: 4), pt(at(15, 9, 2), acc: 20), pt(at(15, 9, 3), acc: 6),
+                                  pt(at(15, 9, 4), acc: 1, kind: .still)])
+        let r9 = row(out, "09:00")
+        XCTAssertTrue(r9.contains("acc 6.0"), r9)
+        XCTAssertTrue(r9.contains("drops accuracy=4,stale=1,teleport=2"), r9)
+        let r10 = row(out, "10:00")
+        XCTAssertTrue(r10.contains("acc -") && r10.contains("drops -"), r10)
+    }
+
     func testReportThermalCarriesIntoHour() {
         let out = render(events: [ev(at(15, 9, 10), "thermal", "serious"), ev(at(15, 10, 20), "thermal", "nominal")])
         XCTAssertTrue(row(out, "10:00").contains("serious"), row(out, "10:00"))

@@ -58,7 +58,7 @@ public enum HealthReport {
                     "GPS on: \(String(format: "%.1f", gps)) h",
                     "Wakes by reason: \(wakes.isEmpty ? "none" : wakes.joined(separator: ", "))",
                     "Points: \(dayPoints.filter { $0.kind == .moving }.count) moving, \(dayPoints.filter { $0.kind == .still }.count) still",
-                    "hour  resting  wakes  points  thermal"]
+                    "hour  resting  wakes  points  median hAcc  drops  thermal"]
             for h in 0..<24 {
                 let a = cal.date(byAdding: .hour, value: h, to: start)!, b = cal.date(byAdding: .hour, value: 1, to: a)!
                 let elapsed = min(b, input.now).timeIntervalSince(a)
@@ -67,8 +67,21 @@ public enum HealthReport {
                 var worst = events.last { $0.kind == "thermal" && $0.t < a }.flatMap { thermalRank[$0.detail] }
                 for e in inHour where e.kind == "thermal" { if let r = thermalRank[e.detail] { worst = max(worst ?? 0, r) } }
                 let name = worst.map { w in thermalRank.first { $0.value == w }!.key } ?? "-"
+                let hourPoints = dayPoints.filter { $0.t >= a && $0.t < b }
+                let accs = hourPoints.filter { $0.kind == .moving }.map(\.hAcc).sorted()
+                let median = accs.isEmpty ? "-" : String(format: "%.1f", accs.count % 2 == 1
+                    ? accs[accs.count / 2] : (accs[accs.count / 2 - 1] + accs[accs.count / 2]) / 2)
+                var drops: [String: Int] = [:]
+                for e in inHour where e.kind == "drops" {
+                    for part in e.detail.split(separator: ",") {
+                        let kv = part.split(separator: "=")
+                        if kv.count == 2, let c = Int(kv[1]) { drops[String(kv[0]), default: 0] += c }
+                    }
+                }
+                let dropText = ["accuracy", "stale", "future", "order", "teleport"]
+                    .compactMap { r in drops[r].flatMap { $0 > 0 ? "\(r)=\($0)" : nil } }.joined(separator: ",")
                 out.append("\(hm.string(from: a))  \(pct)%  \(inHour.filter { $0.kind == "wake" }.count)  "
-                           + "\(dayPoints.filter { $0.t >= a && $0.t < b }.count)  \(name)")
+                           + "\(hourPoints.count)  acc \(median)  drops \(dropText.isEmpty ? "-" : dropText)  \(name)")
             }
         }
 
