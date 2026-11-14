@@ -140,6 +140,19 @@ Rules (spec values; record any refinement as a ruling):
   - Backfill: `testStillPointsEveryFiveMinutes` (from 10:00 to 10:17 → 10:05, 10:10, 10:15), `testDepartureFromActivity`, `testDepartureFromStepBurst`, `testDepartureNilWithoutEvidence`.
 - [ ] **Step 2: Push, RED.** **Step 3: Implement, push, GREEN.** Commit `Core: motion engine and backfill`.
 
+### Task 3b: Running and wandering
+
+**Files:** Modify `Core/Sources/Core/TrackFilter.swift`, `Core/Sources/Core/MotionEngine.swift`; Test `TrackFilterTests.swift`, `MotionEngineTests.swift`
+
+**Interfaces:** unchanged public API.
+
+Rules (spec "Ways of moving"):
+- TrackFilter: q = 8 m/s for `.running` (walking/stationary/unknown stay 6, cycling 8, automotive 15).
+- MotionEngine wander backoff: a wake caused by `.steps` or confident walking/running activity remembers the visit fence. If, after that wake, every accepted fix for 60 s lies inside that fence, return to Still on the same fence (log `state still`, `wake wander-return`), without a new `writeStillPoint` gap. The steps threshold for the next steps-wake in this visit becomes 50, then 150, then stays 150. It resets to 15 when a fix (or wakeFix) lands outside the fence or a vehicle activity wakes the engine.
+
+- [ ] **Step 1: Failing tests** — `testRunMedianErrorAtMost8m` (same block as the walk test at 3.5 m/s, σ 12 m, seed 11); `testWanderInsideFenceReturnsToStillAfter60s`; `testWanderStepThresholdRises` (15 → 50 → 150); `testLeavingFenceResetsThreshold`; `testWalkAwayFromVisitStillWakes` (after two wander-returns, a fix 300 m away wakes immediately).
+- [ ] **Step 2: Push, RED.** **Step 3: Implement, push, GREEN.** Commit `Core: running filter noise, wander backoff`.
+
 ### Task 4: Status and health report
 
 **Files:** Create `Core/Sources/Core/TrackingStatus.swift`, `Core/Sources/Core/HealthReport.swift`; Test `TrackingStatusTests.swift`, `HealthReportTests.swift`

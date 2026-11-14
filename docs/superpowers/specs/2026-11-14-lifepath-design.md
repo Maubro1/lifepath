@@ -87,6 +87,14 @@ The design follows Arc Timeline's open-source engine (LocoKit2), the best-docume
   Signals 1–3 work because the keep-alive manager keeps the app running. Fixes indoors get extra tolerance per place (learned drift) so GPS wander at night doesn't fake a departure.
 - **Deep sleep** (automatic mix, confirmed by the owner 2026-11-14): light rest is the default; LifePath enters deep sleep by itself while the thermal state is fair or worse, Low Power Mode is on, or the battery is below 20%, and returns to light rest when all three clear. A setting forces deep sleep always. In deep sleep, keep-alive and spot checks stop and iOS may suspend the app; only the relaunch nets wake it (about 200–500 m after leaving). Cheapest, but trip starts are found late and backfilled from CoreMotion history (`queryActivityStarting`, `queryPedometerData`), which also dates every trip start precisely after any wake.
 
+### Ways of moving
+
+The owner walks, runs, wanders, cycles and rides cars, buses, trams, trains and waterbuses. The engine judges confinement in space, never "steps happened", so each case falls out of one rule set:
+- **Walking and running:** Moving while fixes leave the fence. Running gets its own filter noise (q = 8 m/s, like cycling) so the line keeps up at 3–5 m/s.
+- **Wandering** (a market, a shop, a museum, pottering in the garden): staying inside a small area is a visit, drawn as a place, even while you shuffle around in it. If you wander beyond the fence (a big park), it's a trip and the path is drawn. Each steps-wake inside a visit is checked against the fence: if the fixes stay inside, the engine returns to Still after 60 s and the steps needed for the next wake rise (15 → 50 → 150, reset when you leave). Pottering about can't keep GPS on, while leaving the fence still wakes it at once through fixes, spot checks or the 200 m geofence.
+- **Waiting** (bus stop, platform, pier): a walk that ends in a wait becomes a visit; the vehicle ride after it is a new trip.
+- **Vehicles:** stops at lights, bus/tram stops, stations and piers don't end a trip (vehicle rule); tunnels with confident vehicle motion keep it going.
+
 Any doubt (conflicting signals, poor accuracy, missing motion permission) resolves to Moving.
 
 ### Battery rules (what made earlier attempts drain)
@@ -114,7 +122,7 @@ Battery targets for Balanced (from the brief, verified on device via the health 
 
 1. Drop: `hAcc < 0`, `hAcc` above the level's ceiling (Balanced 65 m), timestamps older than 10 s at arrival or in the future, duplicates.
 2. Drop teleports: implied speed from the last accepted point > 60 m/s after subtracting both accuracies.
-3. Smooth (LocoKit's proven design): a Kalman filter per axis in metres, no velocity term. Measurement variance = `hAcc²`, process variance grows by Δt · q² with q = 6 m/s on foot (LocoKit uses 4; 6 measured better against the 8 m bar), 8 cycling, 15 automotive, gain k = P / (P + hAcc²). Then a short accuracy-weighted moving average. While Still, output is the pinned point.
+3. Smooth (LocoKit's proven design): a Kalman filter per axis in metres, no velocity term. Measurement variance = `hAcc²`, process variance grows by Δt · q² with q = 6 m/s walking (LocoKit uses 4; 6 measured better against the 8 m bar), 8 running and cycling, 15 automotive, gain k = P / (P + hAcc²). Then a short accuracy-weighted moving average. While Still, output is the pinned point.
 4. Store both raw and smoothed coordinates for each point.
 5. **Trip smoothing (offline, best estimate):** the live filter can only use the past. Once a trip is finished, a constant-velocity Kalman filter (state: position and velocity per axis) runs forward over the trip's raw fixes, then a Rauch–Tung–Striebel pass runs backward, so every point is estimated from the fixes before *and* after it. This is the optimal linear smoother for this model, O(n) with a few dozen multiplications per point. It runs only while the app is open or charging (cool-phone rule), feeds map matching and the map's line, and is cached (`smoothedPoint(t, lat, lon)`, recomputable); stored points stay untouched. Bar: median ≤ 6 m on the same synthetic walks where the live filter must reach ≤ 8 m. Built in stage 2.
 
