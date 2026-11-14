@@ -114,7 +114,7 @@ Battery targets for Balanced (from the brief, verified on device via the health 
 
 1. Drop: `hAcc < 0`, `hAcc` above the level's ceiling (Balanced 65 m), timestamps older than 10 s at arrival or in the future, duplicates.
 2. Drop teleports: implied speed from the last accepted point > 60 m/s after subtracting both accuracies.
-3. Smooth (LocoKit's proven design): a Kalman filter per axis in metres, no velocity term. Measurement variance = `hAcc²`, process variance grows by Δt · q² with q = 4 m/s walking (higher in vehicles), gain k = P / (P + hAcc²). Then a short accuracy-weighted moving average. While Still, output is the pinned point.
+3. Smooth (LocoKit's proven design): a Kalman filter per axis in metres, no velocity term. Measurement variance = `hAcc²`, process variance grows by Δt · q² with q = 6 m/s on foot (LocoKit uses 4; 6 measured better against the 8 m bar), 8 cycling, 15 automotive, gain k = P / (P + hAcc²). Then a short accuracy-weighted moving average. While Still, output is the pinned point.
 4. Store both raw and smoothed coordinates for each point.
 
 Acceptance: on synthetic tracks (straight streets, corners, stops) with 30 m-class noise added, median error of smoothed output ≤ 8 m. Corners are not cut by more than 10 m.
