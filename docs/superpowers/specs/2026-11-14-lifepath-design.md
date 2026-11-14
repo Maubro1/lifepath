@@ -1,6 +1,6 @@
 # LifePath design spec
 
-Date: 2026-11-14 · Status: awaiting owner approval
+Date: 2026-11-14 · Status: approved by owner 2026-11-14
 
 ## In plain words (for the owner)
 
