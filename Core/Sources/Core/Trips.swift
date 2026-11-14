@@ -10,7 +10,7 @@ public struct Trip: Sendable, Equatable {
 
 public enum Trips {
     /// Moving points only; a still point, a gap > maxGap or a jump > maxJump ends a trip; trips with < 2 points are dropped.
-    /// A still point first trims the run's slow settling tail (within 30 m of it and within 5 m of the next fix), then ends the trip at its position.
+    /// A still point first trims the run's slow settling tail (within 30 m of it and within 5 m of the fix before it), then ends the trip at its position.
     public static func split(_ points: [FilteredPoint], maxGap: TimeInterval = 600, maxJump: Double = 500) -> [Trip] {
         var trips: [Trip] = []
         var run: [FilteredPoint] = []
@@ -26,14 +26,14 @@ public enum Trips {
         }
         for p in points {
             guard p.kind == .moving else {
-                var next = p  // the fix after the candidate; the first fix is never dropped
+                let lastFix = run.last  // gap/jump are judged from the real last fix, not the trimmed one
                 while run.count > 1, let last = run.last,
                       Geo.distance(last.lat, last.lon, p.lat, p.lon) <= 30,
-                      Geo.distance(last.lat, last.lon, next.lat, next.lon) <= 5 {
-                    next = last; run.removeLast()
+                      Geo.distance(last.lat, last.lon, run[run.count - 2].lat, run[run.count - 2].lon) <= 5 {
+                    run.removeLast()
                 }
                 // Kind .moving so the end fix counts as movement; skipped across a gap/jump like any other fix.
-                if let last = run.last, p.t.timeIntervalSince(last.t) <= maxGap, Geo.distance(last.lat, last.lon, p.lat, p.lon) <= maxJump {
+                if let last = lastFix, p.t.timeIntervalSince(last.t) <= maxGap, Geo.distance(last.lat, last.lon, p.lat, p.lon) <= maxJump {
                     var end = p; end.kind = .moving; run.append(end)
                 }
                 flush(); continue

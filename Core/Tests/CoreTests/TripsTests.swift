@@ -21,8 +21,9 @@ final class TripsTests: XCTestCase {
     func testStillPointsAreNotTrips() {
         XCTAssertTrue(Trips.split((0..<5).map { pt($0, kind: .still) }).isEmpty)
         let pts = [pt(0), pt(1), pt(2, kind: .still), pt(3), pt(4)]
-        XCTAssertEqual(Trips.split(pts).map(\.points.count), [2, 2])
-        XCTAssertTrue(Trips.split([pt(0), pt(1, kind: .still), pt(2)]).isEmpty)  // single points dropped
+        XCTAssertEqual(Trips.split(pts).map(\.points.count), [3, 2])  // first trip ends at the still point
+        XCTAssertEqual(Trips.split([pt(0), pt(1, kind: .still), pt(2)]).map(\.points.count), [2])  // lone point + still dot
+        XCTAssertTrue(Trips.split([pt(0, kind: .still), pt(1)]).isEmpty)  // single point dropped
     }
 
     func at(_ t: Double, _ lat: Double, _ lon: Double, kind: PointKind = .moving, hAcc: Double = 5) -> FilteredPoint {
@@ -37,7 +38,7 @@ final class TripsTests: XCTestCase {
         }
         let still = at(1500, 50.003, 4, kind: .still, hAcc: 40)
         let trip = try XCTUnwrap(Trips.split(walk + settle + [still]).first)
-        XCTAssertEqual(trip.points.count, walk.count + 1)
+        XCTAssertEqual(trip.points.count, walk.count + 2)  // walk, first settle fix (46 m jump, kept), still
         XCTAssertEqual(trip.points[walk.count - 1], walk.last)
         XCTAssertEqual(trip.points.last?.lat, still.lat)
         XCTAssertEqual(trip.points.last?.lon, still.lon)
