@@ -248,6 +248,13 @@ import UIKit
         }
     }
 
+    /// Points stored for the local day so far; read on demand, only while the screen is visible.
+    func pointsToday() -> Int {
+        flush()
+        let now = Date()
+        return (try? diary?.points(from: Calendar.current.startOfDay(for: now), to: now).count) ?? 0
+    }
+
     func healthReport() -> String {
         flush()
         let now = Date(), from = now.addingTimeInterval(-3 * 86400)
