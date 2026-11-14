@@ -81,6 +81,22 @@ final class MotionEngineTests: XCTestCase {
         XCTAssert(r.commands.contains(log(s, "state", "still")))
     }
 
+    func testSettlingToleratesOneOutlierInTwenty() throws {
+        /// Walk 168 m east (arrival 120 s), then stand with a fix every 6 s; optionally one fix 60 m off at 200 s.
+        func stillAt(outlier: Bool) -> TimeInterval? {
+            var rng = SeededRandom(seed: 11)
+            let stand = stride(from: 121, through: 400, by: 6).map { t -> FilteredPoint in
+                outlier && t == 199 ? standing(TimeInterval(t), north: 60, east: 168, rng: &rng)
+                                    : standing(TimeInterval(t), east: 168, rng: &rng)
+            }
+            var e = MotionEngine(motionAvailable: true, deepSleep: false)
+            return feed(&e, route(to: 168, speed: 1.4, seed: 1) + stand).stillAt
+        }
+        let base = try XCTUnwrap(stillAt(outlier: false), "baseline never went Still")
+        let with = try XCTUnwrap(stillAt(outlier: true), "never went Still with one outlier")
+        XCTAssertLessThanOrEqual(with, base + 12, "baseline \(base) s, with outlier \(with) s")
+    }
+
     func testRedLightNotStop() {
         var e = MotionEngine(motionAvailable: true, deepSleep: false)
         var rng = SeededRandom(seed: 12)

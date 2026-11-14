@@ -127,12 +127,15 @@ public struct MotionEngine: Sendable {
         return [log("state", "settling", now)] + settleCheck(now)
     }
 
-    /// Still once every fix of the last 2 min (6 min after a vehicle) lies in the fence.
+    /// Still once the last 2 min (6 min after a vehicle) are proven by fixes and at most 10% of them lie outside the fence
+    /// (the oldest of them inside, so a walk-in is never tolerated; with fewer than 10 fixes none outside), so one multipath outlier does not restart the clock.
     private mutating func settleCheck(_ now: Date) -> [Command] {
         guard state == .settling, let f = fence else { return [] }
         let window: TimeInterval = lastVehicle.map { now.timeIntervalSince($0) <= 600 } == true ? 360 : 120
-        guard let start = fixes.reversed().prefix(while: { f.contains($0) }).last,
-              start.t <= now.addingTimeInterval(-window) else { return [] }
+        guard let anchor = fixes.lastIndex(where: { $0.t <= now.addingTimeInterval(-window) }) else { return [] }
+        let inWindow = fixes[anchor...]
+        let outside = inWindow.filter { !f.contains($0) }.count
+        guard f.contains(inWindow[anchor]), inWindow.count < 10 ? outside == 0 : outside * 10 <= inWindow.count else { return [] }
         return goStill(f, now)
     }
 

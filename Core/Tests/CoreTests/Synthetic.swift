@@ -56,3 +56,13 @@ func walk(path: [(north: Double, east: Double)], speed: Double, every: TimeInter
     if samples.isEmpty { emit(start, first.north, first.east, course: lastCourse) }
     return (truth, samples)
 }
+
+/// Multipath: the samples in `range` all jump `east` metres sideways, with a confident-looking `hAcc`.
+func multipath(_ samples: [Sample], range: Range<Int>, east: Double, hAcc: Double) -> [Sample] {
+    var out = samples
+    for i in range {
+        let p = Geo.offset(lat: samples[i].lat, lon: samples[i].lon, north: 0, east: east)
+        out[i] = Sample(t: samples[i].t, lat: p.lat, lon: p.lon, hAcc: hAcc, speed: samples[i].speed, course: samples[i].course)
+    }
+    return out
+}

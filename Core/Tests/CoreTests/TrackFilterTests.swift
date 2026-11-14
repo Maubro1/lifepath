@@ -76,4 +76,51 @@ final class TrackFilterTests: XCTestCase {
             XCTAssertLessThanOrEqual(d, 10, "corner (\(c.north),\(c.east)) nearest output \(d) m; all corners: \(report)")
         }
     }
+
+    // MARK: bad signal
+
+    func testMultipathBurstBarelyMovesLine() {
+        let w = walk(path: [(0, 0), (400, 0)], speed: 1.4, every: 1, noise: 3, seed: 5, start: t0)
+        let samples = multipath(w.samples, range: 100..<108, east: 30, hAcc: 8)
+        var f = TrackFilter(quality: .balanced)
+        var worst = 0.0
+        for (i, s) in samples.enumerated() {
+            guard let p = f.process(s, receivedAt: s.t, activity: .walking), (100..<108).contains(i) else { continue }
+            worst = max(worst, Geo.distance(p.lat, p.lon, w.truth[i].1, w.truth[i].2))
+        }
+        XCTAssertLessThanOrEqual(worst, 12, "max deviation during burst \(worst) m")
+    }
+
+    func testRealTurnStillFollowed() {
+        let path: [(north: Double, east: Double)] = [(0, 0), (200, 0), (200, 200)]
+        let w = walk(path: path, speed: 1.4, every: 1, noise: 3, seed: 9, start: t0)
+        var f = TrackFilter(quality: .balanced)
+        let out = w.samples.compactMap { f.process($0, receivedAt: $0.t, activity: .walking) }
+        let c = Geo.offset(lat: 52.37, lon: 4.90, north: 200, east: 0)
+        let d = out.map { Geo.distance($0.lat, $0.lon, c.lat, c.lon) }.min() ?? .infinity
+        XCTAssertLessThanOrEqual(d, 10, "nearest output to the corner \(d) m")
+        let end = Geo.offset(lat: 52.37, lon: 4.90, north: 200, east: 200)
+        XCTAssertLessThanOrEqual(Geo.distance(out.last!.lat, out.last!.lon, end.lat, end.lon), 10)
+    }
+
+    func testSpeedInvalidWhenInaccurate() {
+        var f = primed()
+        XCTAssertEqual(feed(&f, sample(1, hAcc: 20))?.speed, 1)
+        XCTAssertEqual(feed(&f, sample(2, hAcc: 20.5))?.speed, -1)
+        var s = sample(3)
+        s.speed = -1
+        XCTAssertEqual(feed(&f, s)?.speed, -1)
+    }
+
+    func testDropCountsByReason() {
+        var f = primed()
+        _ = feed(&f, sample(1, hAcc: -1))
+        _ = feed(&f, sample(2, hAcc: 65.5))
+        _ = feed(&f, sample(20), at: 31)
+        _ = feed(&f, sample(33), at: 30)
+        _ = feed(&f, sample(0))
+        _ = feed(&f, sample(1, north: 1000))
+        XCTAssertEqual(f.takeDropCounts(), ["accuracy": 2, "stale": 1, "future": 1, "order": 1, "teleport": 1])
+        XCTAssertEqual(f.takeDropCounts(), [:])
+    }
 }
