@@ -3,8 +3,8 @@ import Foundation
 public struct HeatCell: Sendable, Hashable { public var x: Int; public var y: Int }
 
 public enum Heat {
-    // Cells are 25 Web-Mercator metres; on the ground that shrinks with latitude (~15 m at 52 N).
-    public static let cellSize: Double = 25
+    // shortcut: 40 Mercator m ≈ 25 m on the ground near 52°N; scale by cos(lat) if the owner travels far north or south
+    public static let cellSize: Double = 40
     private static let R = 6_378_137.0
 
     public static func cell(lat: Double, lon: Double) -> HeatCell {

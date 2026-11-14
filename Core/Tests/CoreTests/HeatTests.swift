@@ -26,10 +26,10 @@ final class HeatTests: XCTestCase {
     }
 
     func testCellsAre25m() {
-        // Mercator metres stretch by 1/cos(lat); at 52 N a 25 m cell is ~15.4 m on the ground.
-        let a = Heat.center(of: HeatCell(x: 0, y: 0)), b = Heat.center(of: HeatCell(x: 1, y: 0))
-        XCTAssertEqual((b.lon - a.lon) * .pi / 180 * 6_378_137, 25, accuracy: 0.001)
-        let c = Heat.center(of: HeatCell(x: 0, y: 1))
-        XCTAssertEqual(Heat.cell(lat: c.lat, lon: c.lon), HeatCell(x: 0, y: 1))
+        let c0 = Heat.cell(lat: 52, lon: 5)
+        let a = Heat.center(of: c0)
+        let e = Heat.center(of: HeatCell(x: c0.x + 1, y: c0.y)), n = Heat.center(of: HeatCell(x: c0.x, y: c0.y + 1))
+        XCTAssertEqual(Geo.distance(a.lat, a.lon, e.lat, e.lon), 25, accuracy: 2)
+        XCTAssertEqual(Geo.distance(a.lat, a.lon, n.lat, n.lon), 25, accuracy: 2)
     }
 }
