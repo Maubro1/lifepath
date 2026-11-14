@@ -38,12 +38,14 @@ struct TrackMapView: UIViewRepresentable {
         c.parent = self
         if map.showsUserLocation != visible { map.showsUserLocation = visible }   // location only while on screen
         if (map.preferredConfiguration is MKImageryMapConfiguration) != satellite {
-            map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : MKStandardMapConfiguration()
+            let standard = MKStandardMapConfiguration()
+            standard.pointOfInterestFilter = .excludingAll   // as makeUIView
+            map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : standard
         }
         guard let data, data.generation != c.shownGeneration || bySpeed != c.shownBySpeed else { return }
         c.shownGeneration = data.generation
         c.shownBySpeed = bySpeed
-        map.removeOverlays(map.overlays)
+        let old = map.overlays   // add the new set before removing the old one: no blank frame
         if !data.heat.isEmpty { map.addOverlay(HeatOverlay(data.heat)) }   // first, so lines draw on top
         map.addOverlays(data.lines.map { l in
             let coords = l.coords.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
@@ -52,6 +54,7 @@ struct TrackMapView: UIViewRepresentable {
             return poly
         })
         map.addOverlays(data.still.map { MKCircle(center: CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon), radius: 3) })
+        map.removeOverlays(old)
     }
 
     @MainActor final class Coordinator: NSObject, MKMapViewDelegate {

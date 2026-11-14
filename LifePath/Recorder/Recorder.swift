@@ -247,7 +247,7 @@ import UIKit
 
     // MARK: Diary
 
-    /// The open diary (nil before first unlock) for the read-mostly smoothing service.
+    /// The open diary (nil before first unlock) for the map and the smoothing service (which writes only the derived cache).
     var readDiary: Diary? { diary }
 
     private func openDiary() {
