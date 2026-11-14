@@ -50,20 +50,37 @@ Core takes plain value types (`Sample { t, lat, lon, hAcc, speed, course, source
 
 ## Recording engine
 
+The design follows Arc Timeline's open-source engine (LocoKit2), the best-documented all-day recorder (claimed 24–48 h per charge), adapted to the brief. Research: `reports/Battery efficient location tracking.md`. LocoKit2 itself (MPL-2.0) is not used as a dependency. It brings its own timeline model, database schema, activity classifier and iOS 18+ requirement, has no documented third-party API, and the brief's quality levels, step wake, deep sleep and health report all need direct control of the engine. Its settings and decision logic are reimplemented in Core and credited in the README.
+
+### Location managers (never mix roles on one manager)
+
+- **Recording manager**: runs only while Moving/Settling. Quality level's accuracy, `distanceFilter` from the save-spacing setting, `pausesLocationUpdatesAutomatically = false`, `activityType` `.fitness` or `.automotiveNavigation` from motion activity.
+- **Keep-alive manager**: runs always. `desiredAccuracy = 999` (just under 1000 m), **no distance filter**, results discarded. Since iOS 16.4, iOS suspends apps that combine low accuracy with a distance filter; this configuration is the one Apple's DTS engineer gave as compliant. Held together with `CLServiceSession(.always)`.
+- **Safety-net manager**: significant-location-change + visit monitoring, relaunch only. Plus `CLMonitor` 200 m circle around the pinned point.
+- Blue location bar setting (default ON) additionally holds a `CLBackgroundActivitySession`, which shows the indicator and is the longest-tested protection against suspension. OFF relies on the service session alone, which Arc only adopted in Sept 2026 and still marks experimental.
+
 ### States
 
-- **Moving**: `CLLocationManager.startUpdatingLocation()` with the quality level's accuracy, `allowsBackgroundLocationUpdates = true`, `pausesLocationUpdatesAutomatically = false`, `activityType` switched between `.fitness` and `.automotiveNavigation` from motion activity. A `CLBackgroundActivitySession` is held while tracking; a `CLServiceSession` keeps Always authorization alive.
-- **Settling**: still recording; Core checks whether the last readings stay inside a 40 m radius for 3 minutes (+4 minutes if automotive or cycling was seen in the last 10 minutes).
-- **Still**: GPS off. Position pinned to the accuracy-weighted mean of the settling readings. Wake signals armed:
-  1. `CMPedometer` live updates: ≥15 steps since stop → Moving.
+- **Moving**: recording manager on.
+- **Settling**: still recording. Stop is declared when the filtered position stays inside a geofence for 2 minutes (+4 minutes if automotive or cycling was seen in the last 10 minutes). The fence centre is the accuracy-weighted mean of recent fixes; radius 20–100 m, scaled by their average accuracy.
+- **Still**: recording manager off (GPS off). Position pinned to the fence centre. A still-point is written every 5 minutes. Wake signals:
+  1. `CMPedometer` live updates: ≥15 steps since stop → Moving. Works indoors.
   2. `CMMotionActivityManager`: walking/running/cycling/automotive with medium+ confidence → Moving.
-  3. Location reading > 150 m from the pinned point (beyond its accuracy) → Moving.
-  4. `CLMonitor` circular condition, 200 m around the pinned point → relaunches the app even if terminated.
-  5. Significant-location-change and visit monitoring as extra relaunch safety nets.
+  3. Spot check: the recording manager turns on for up to 20 s at growing intervals (30 s at first, doubling to a 5-minute cap the longer you're still). A fix clearly outside the fence → Moving. Catches departures without steps (car from a garage).
+  4. Relaunch nets (app terminated by iOS): `CLMonitor` circle, visits, significant change.
 
-  Signals 1–3 need the app awake. In normal rest the app keeps a low-power location request alive (`kCLLocationAccuracyThreeKilometers`, large distance filter) so iOS doesn't suspend it, and writes a still-point every 5 minutes. **Deep sleep** (setting) drops that request and lets iOS suspend the app; only 4–5 wake it. On wake, it backfills still-points for the rest interval and asks CoreMotion's history (`queryActivityStarting`, `queryPedometerData`) when you actually set off, so the start of the trip is dated correctly.
+  Signals 1–3 work because the keep-alive manager keeps the app running. Fixes indoors get extra tolerance per place (learned drift) so GPS wander at night doesn't fake a departure.
+- **Deep sleep** (setting, default off): keep-alive and spot checks stop and iOS may suspend the app; only the relaunch nets wake it (about 200–500 m after leaving). Cheapest, but trip starts are found late and backfilled from CoreMotion history (`queryActivityStarting`, `queryPedometerData`), which also dates every trip start precisely after any wake.
 
 Any doubt (conflicting signals, poor accuracy, missing motion permission) resolves to Moving.
+
+### Battery rules (what made earlier attempts drain)
+
+- GPS (recording manager) is never on while Still, except the short spot checks.
+- No map, snapshot or other rendering while in the background. Per-update work is a few arithmetic steps; points are buffered in memory and written to the diary in one transaction every 30 s or on state change.
+- No timers except the spot-check timer; no network; no per-fix logging (events only on decisions).
+- Never stop the keep-alive manager while the app should be recording.
+- Swiping the app away stops relaunching on iOS 26 (forum reports), so onboarding asks not to.
 
 ### Quality levels
 
@@ -76,13 +93,13 @@ Any doubt (conflicting signals, poor accuracy, missing motion permission) resolv
 
 Easing: when `ProcessInfo.thermalState` ≥ `.serious` or Low Power Mode is on, run one level lower (never below Saver, never stop). Shown in the status box.
 
-Battery targets for Balanced (from the brief, verified on device via the health report, not promised): about 6% per day at home, about 14% on a day with a walk.
+Battery targets for Balanced (from the brief, verified on device via the health report, not promised): about 6% per day at home, about 14% on a day with a walk. For reference, Arc claims 24–48 h of recording per charge (roughly 2–4% per hour, unmeasured), and screen-off GPS recording costs about 2–5% per hour while moving. The home-day target relies on GPS being off nearly all day.
 
 ### Filtering and smoothing (Core.Filter)
 
-1. Drop: `hAcc < 0`, `hAcc` above the level's ceiling (Balanced 65 m), timestamps older than 10 s at arrival, duplicates.
-2. Drop teleports: implied speed from the last accepted point > max(55 m/s, 3 × recent speed) after subtracting both accuracies.
-3. Smooth: constant-velocity Kalman filter in local metres (ENU), measurement noise = `hAcc²`, process noise set by activity (walking low, automotive high). While Still, output is the pinned point.
+1. Drop: `hAcc < 0`, `hAcc` above the level's ceiling (Balanced 65 m), timestamps older than 10 s at arrival or in the future, duplicates.
+2. Drop teleports: implied speed from the last accepted point > 60 m/s after subtracting both accuracies.
+3. Smooth (LocoKit's proven design): a Kalman filter per axis in metres, no velocity term. Measurement variance = `hAcc²`, process variance grows by Δt · q² with q = 4 m/s walking (higher in vehicles), gain k = P / (P + hAcc²). Then a short accuracy-weighted moving average. While Still, output is the pinned point.
 4. Store both raw and smoothed coordinates for each point.
 
 Acceptance: on synthetic tracks (straight streets, corners, stops) with 30 m-class noise added, median error of smoothed output ≤ 8 m. Corners are not cut by more than 10 m.
@@ -101,7 +118,7 @@ One file in Application Support, `diary.sqlite`, WAL mode, versioned migrations.
 
 Tabs: **Map · Timeline · Stats · Settings**. Visual direction is decided with the owner at stage 5 (impeccable skill, mockups). Stages 2–4 use plain system styling that the design stage then restyles.
 
-- **Map**: `MKMapView` wrapped for SwiftUI (custom overlays need it). Track polylines coloured by date (gradient) or speed (walk/bike/drive bands). Time filter: today, week, month, year, all, custom. Standard / satellite. Heat overlay from Core.Heat (seconds spent per ~25 m cell, so a night asleep counts once per hour of presence, not per point). Streets toggle draws covered segments. Locate-me button. Trips split on gaps > 10 min or jumps > 500 m. Polylines simplified per zoom (Douglas–Peucker) and loaded per visible region.
+- **Map**: `MKMapView` wrapped for SwiftUI (custom overlays need it). Track polylines coloured by date (gradient) or speed (walk/bike/drive bands). Time filter: today, week, month, year, all, custom. Standard / satellite. Heat overlay from Core.Heat (seconds spent per ~25 m cell, so a night asleep counts once per hour of presence, not per point). Streets toggle draws covered segments. Locate-me button. Trips split on gaps > 10 min or jumps > 500 m. Polylines simplified per zoom (Douglas–Peucker, tolerance in metres, 3–5 m at street zoom) and loaded per visible region. The map renders only while on screen.
 - **Timeline**: days newest first; card = route thumbnail (`MKMapSnapshotter`, cached on disk), distance, moving time (moving points only), steps.
 - **Stats**: Where you went (lifetime distance, days tracked, points stored); On foot (steps, walked distance, floors); Streets walked (% of downloaded streets covered, per area).
 - **Settings**: status box on top (healthy / resting / problem, last point, last check-in, signing expiry, hints for changed permissions or app swiped away), quality level, save spacing, smoothing strength, blue location bar toggle, deep sleep, step counting, export, import, health report.
@@ -113,7 +130,7 @@ Tabs: **Map · Timeline · Stats · Settings**. Visual direction is decided with
 - User taps "Download streets here" on the map; the app asks Overpass for `highway` ways (walkable classes) in the visible rectangle, capped in size.
 - Ways split into ~20 m segments.
 - Each moving point at walking/cycling speed is matched to the **single nearest** segment within max(15 m, hAcc), with heading agreement for points with a course. If the two nearest segments are within 3 m of each other's distance, the point is skipped.
-- A street (all segments of a named way, or the way itself if unnamed) is covered at ≥ 75% of its length hit. Track geometry is never changed.
+- A street (all segments of a named way, or the way itself if unnamed) is covered at ≥ 90% of its length hit (100% for streets of 10 or fewer segments), the rule CityStrides uses. Track geometry is never changed.
 - Matching runs incrementally after recording and once over history after each download.
 
 ## Export, backup, import
