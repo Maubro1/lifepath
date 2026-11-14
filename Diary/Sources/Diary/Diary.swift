@@ -21,7 +21,6 @@ public final class Diary: Sendable {
         migrator.registerMigration("v2") { db in
             try db.execute(sql: """
                 ALTER TABLE point ADD COLUMN course REAL;
-                CREATE INDEX point_lat_lon ON point(lat, lon);
                 CREATE TABLE smoothedPoint(t REAL PRIMARY KEY, lat REAL, lon REAL);
                 """)
         }
@@ -68,10 +67,11 @@ public final class Diary: Sendable {
         }
     }
 
-    public func points(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date) throws -> [FilteredPoint] {
+    /// The newest `limit` points in the box, in ascending time order.
+    public func points(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date, limit: Int) throws -> [FilteredPoint] {
         try pool.read { db in
-            try Row.fetchAll(db, sql: "SELECT * FROM point WHERE lat >= ? AND lat <= ? AND lon >= ? AND lon <= ? AND t >= ? AND t <= ? ORDER BY t",
-                             arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970]).map(Self.point)
+            try Row.fetchAll(db, sql: "SELECT * FROM point WHERE lat >= ? AND lat <= ? AND lon >= ? AND lon <= ? AND t >= ? AND t <= ? ORDER BY t DESC LIMIT ?",
+                             arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970, limit]).reversed().map(Self.point)
         }
     }
 
@@ -118,7 +118,7 @@ public final class Diary: Sendable {
     private static func point(_ r: Row) -> FilteredPoint {
         FilteredPoint(t: Date(timeIntervalSince1970: r["t"]), lat: r["lat"], lon: r["lon"],
                       rawLat: r["rawLat"], rawLon: r["rawLon"], hAcc: r["hAcc"], speed: r["speed"],
-                      kind: PointKind(rawValue: r["kind"]) ?? .moving,
-                      course: (r["course"] as Double?) ?? -1)   // unknown kind: doubt resolves to Moving
+                      kind: PointKind(rawValue: r["kind"]) ?? .moving,   // unknown kind: doubt resolves to Moving
+                      course: (r["course"] as Double?) ?? -1)
     }
 }

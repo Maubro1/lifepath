@@ -60,7 +60,6 @@ struct MapOptions: Equatable {
         var heat, recorded, street: Bool
     }
 
-    // shortcut: the cap applies after the fetch; add a LIMIT to Diary.points if all-time loads get slow
     private nonisolated static let cap = 200_000
 
     func setActive(_ on: Bool) {
@@ -96,9 +95,9 @@ struct MapOptions: Equatable {
     }
 
     private nonisolated static func load(_ diary: Diary, _ q: Query, generation: Int) throws -> MapData {
-        var pts = try diary.points(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: q.to)
+        var pts = try diary.points(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: q.to, limit: cap + 1)
         var out = MapData(generation: generation, capped: pts.count > cap)
-        if out.capped { pts = Array(pts.suffix(cap)) }   // keep the most recent
+        if out.capped { pts.removeFirst() }   // cap + 1 fetched only to detect the cap; keep the most recent
         try Task.checkCancellation()
         if q.heat { out.heat = Heat.grid(pts) }
         if q.street {

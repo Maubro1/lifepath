@@ -94,7 +94,15 @@ final class DiaryTests: XCTestCase {
         }
         let inside = at(100, 52.0, 4.0), late = at(500, 52.0, 4.0)
         try diary.append([inside, at(200, 53.0, 4.0), at(300, 52.0, 5.0), late])
-        XCTAssertEqual(try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(400)), [inside])
+        XCTAssertEqual(try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(400), limit: 10), [inside])
+    }
+
+    func testPointsInBoxKeepsNewestUpToLimit() throws {
+        let diary = try Diary(path: tempPath())
+        let pts = (1...5).map { FilteredPoint(t: d(Double($0) * 100), lat: 52.0, lon: 4.0, rawLat: 52.0, rawLon: 4.0, hAcc: 5, speed: 0, kind: .moving) }
+        try diary.append(pts + [FilteredPoint(t: d(600), lat: 53.0, lon: 4.0, rawLat: 53.0, rawLon: 4.0, hAcc: 5, speed: 0, kind: .moving)])
+        XCTAssertEqual(try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(1000), limit: 3),
+                       Array(pts.suffix(3)))   // newest three in the box, ascending; the out-of-box point never counts
     }
 
     func testSmoothedReplace() throws {
