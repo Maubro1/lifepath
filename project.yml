@@ -6,6 +6,8 @@ options:
 packages:
   Core:
     path: Core
+  Diary:
+    path: Diary
 targets:
   LifePath:
     type: application
@@ -14,6 +16,7 @@ targets:
     sources: [LifePath]
     dependencies:
       - package: Core
+      - package: Diary
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.lifepath.LifePath
