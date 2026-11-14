@@ -25,6 +25,16 @@ final class TrackFilterTests: XCTestCase {
         XCTAssertNotNil(feed(&f, sample(3, hAcc: 65)))
     }
 
+    func testCourseSetOnlyWhenAccurate() {
+        var f = TrackFilter(quality: .balanced)
+        func s(_ t: TimeInterval, hAcc: Double, course: Double) -> Sample {
+            Sample(t: t0.addingTimeInterval(t), lat: 52.37, lon: 4.90, hAcc: hAcc, speed: 1, course: course)
+        }
+        XCTAssertEqual(feed(&f, s(0, hAcc: 10, course: 90))?.course, 90)
+        XCTAssertEqual(feed(&f, s(1, hAcc: 30, course: 90))?.course, -1)
+        XCTAssertEqual(feed(&f, s(2, hAcc: 10, course: -1))?.course, -1)
+    }
+
     func testDropsStaleAndFuture() {
         var f = primed()
         XCTAssertNil(feed(&f, sample(20), at: 31))   // 11 s old

@@ -1,4 +1,5 @@
 import XCTest
+import GRDB
 import Core
 @testable import Diary
 
@@ -53,5 +54,58 @@ final class DiaryTests: XCTestCase {
         }
         let reopened = try Diary(path: path)
         XCTAssertEqual(try reopened.lastPoint(), pt(100))
+    }
+
+    func testCourseRoundTrip() throws {
+        let diary = try Diary(path: tempPath())
+        var a = pt(100); a.course = 123.5
+        let b = pt(200)   // default course -1
+        try diary.append([a, b])
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [a, b])
+    }
+
+    func testOldRowsReadCourseAsInvalid() throws {
+        let path = tempPath()
+        do {   // a v1 database exactly as v1 created it
+            let q = try DatabaseQueue(path: path)
+            try q.write { db in
+                try db.execute(sql: """
+                    CREATE TABLE point(
+                        t REAL PRIMARY KEY, lat REAL, lon REAL, rawLat REAL, rawLon REAL,
+                        hAcc REAL, speed REAL, kind TEXT);
+                    CREATE TABLE event(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, t REAL, kind TEXT, detail TEXT);
+                    CREATE INDEX event_t ON event(t);
+                    CREATE TABLE grdb_migrations(identifier TEXT NOT NULL PRIMARY KEY);
+                    INSERT INTO grdb_migrations VALUES ('v1');
+                    INSERT INTO point VALUES (100, 1, 2, 3, 4, 5, 6, 'still');
+                    """)
+            }
+        }
+        let diary = try Diary(path: path)
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(100)])
+        XCTAssertEqual(try diary.lastPoint()?.course, -1)
+    }
+
+    func testPointsInBox() throws {
+        let diary = try Diary(path: tempPath())
+        func at(_ t: Double, _ lat: Double, _ lon: Double) -> FilteredPoint {
+            FilteredPoint(t: d(t), lat: lat, lon: lon, rawLat: lat, rawLon: lon, hAcc: 5, speed: 0, kind: .moving)
+        }
+        let inside = at(100, 52.0, 4.0), late = at(500, 52.0, 4.0)
+        try diary.append([inside, at(200, 53.0, 4.0), at(300, 52.0, 5.0), late])
+        XCTAssertEqual(try diary.points(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(400)), [inside])
+    }
+
+    func testSmoothedReplace() throws {
+        let diary = try Diary(path: tempPath())
+        XCTAssertNil(try diary.smoothedUntil())
+        try diary.saveSmoothed([(d(100), 1, 2), (d(200), 3, 4)])
+        try diary.saveSmoothed([(d(200), 5, 6)])   // replaces t=200
+        let got = try diary.smoothed(from: d(0), to: d(1000))
+        XCTAssertEqual(got.map(\.t), [d(100), d(200)])
+        XCTAssertEqual(got.map(\.lat), [1, 5])
+        XCTAssertEqual(try diary.smoothedUntil(), d(200))
+        XCTAssertEqual(try diary.smoothed(from: d(150), to: d(1000)).count, 1)
     }
 }
