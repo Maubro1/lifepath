@@ -43,12 +43,14 @@ import CoreLocation
     func requestWhenInUse() { safety.requestWhenInUseAuthorization() }
     func requestAlways() { safety.requestAlwaysAuthorization() }
 
-    func configure(quality: Quality, distanceFilter: CLLocationDistance, automotive: Bool, showsIndicator: Bool) {
-        let accuracy = switch quality {
+    func configure(quality: Quality, spotCheck: Bool, distanceFilter: CLLocationDistance, automotive: Bool, showsIndicator: Bool) {
+        // Spot checks ignore quality: km accuracy can never prove a departure.
+        let byQuality = switch quality {
         case .saver: kCLLocationAccuracyKilometer
         case .balanced, .precise: kCLLocationAccuracyBest
         case .max: kCLLocationAccuracyBestForNavigation
         }
+        let accuracy = spotCheck ? kCLLocationAccuracyBest : byQuality
         let type: CLActivityType = automotive ? .automotiveNavigation : .fitness
         // Called after every event: only touch what changed.
         if recording.desiredAccuracy != accuracy { recording.desiredAccuracy = accuracy }
@@ -95,16 +97,18 @@ import CoreLocation
             } else if id == ObjectIdentifier(keepAlive) {
                 recorder.send(.tick)   // location discarded
             } else if let l = locations.last {
-                recorder.send(.wakeFix(Self.sample(l), reason: "slc"))
+                recorder.wakeFix(Self.sample(l), reason: "slc")
             }
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
-        let s = Sample(t: Date(), lat: visit.coordinate.latitude, lon: visit.coordinate.longitude,
+        // A visit has no fix time; its latest event date stands in, so a visit delivered late is stale.
+        let t = visit.departureDate == .distantFuture ? visit.arrivalDate : visit.departureDate
+        let s = Sample(t: t, lat: visit.coordinate.latitude, lon: visit.coordinate.longitude,
                        hAcc: visit.horizontalAccuracy, speed: -1, course: -1)
         MainActor.assumeIsolated {
-            recorder.send(.wakeFix(s, reason: "visit"))
+            recorder.wakeFix(s, reason: "visit")
         }
     }
 
@@ -120,7 +124,7 @@ import CoreLocation
             default: .denied
             }
             recorder.authorizationChanged(a, precise: precise)
-            guard a == .always || a == .whenInUse else { return }
+            guard serviceSession != nil, a == .always || a == .whenInUse else { return }   // nothing starts before start()
             // Starts issued before the grant may not have taken; re-issuing is harmless.
             if gpsOn { recording.startUpdatingLocation() }
             if keepAliveOn { keepAlive.startUpdatingLocation() }

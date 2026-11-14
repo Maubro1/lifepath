@@ -11,9 +11,6 @@ import CoreMotion
     private unowned let recorder: Recorder
     private let pedometer = CMPedometer(), activities = CMMotionActivityManager()
     private var counting = false, lastCount = 0
-    /// One timestamp per step since the last Still entry, for `Backfill.departure`.
-    // shortcut: an update's steps all get its end date, so a suspended rest dates them late; activity history usually wins.
-    private var stepTimes: [Date] = []
 
     init(recorder: Recorder) { self.recorder = recorder }
 
@@ -30,11 +27,11 @@ import CoreMotion
     func startSteps(from: Date) {
         guard Self.available, CMPedometer.isStepCountingAvailable() else { return }
         pedometer.stopUpdates()
-        counting = true; lastCount = 0; stepTimes = []
+        counting = true; lastCount = 0
         pedometer.startUpdates(from: from) { @Sendable data, _ in
             guard let data else { return }
-            let n = data.numberOfSteps.intValue, t = data.endDate
-            Task { @MainActor in self.steps(n, at: t) }
+            let n = data.numberOfSteps.intValue
+            Task { @MainActor in self.steps(n) }
         }
     }
 
@@ -43,23 +40,36 @@ import CoreMotion
         pedometer.stopUpdates()
     }
 
-    private func steps(_ n: Int, at t: Date) {
+    private func steps(_ n: Int) {
         guard counting, n > lastCount else { return }
-        stepTimes += Array(repeating: t, count: n - lastCount)
         lastCount = n
         recorder.send(.steps(n))
     }
 
-    /// True trip start from CoreMotion history; step times survive `stopSteps` until the next Still entry.
+    /// True trip start from CoreMotion history, which also covers a rest the app slept through.
     func departure(stillSince: Date, until now: Date) async -> Date? {
         guard Self.available else { return nil }
-        let steps = stepTimes
+        let buckets = Int((now.timeIntervalSince(stillSince) / 30).rounded(.up))
+        let steps = CMPedometer.isStepCountingAvailable() && buckets > 0 ? await stepTimes(stillSince, 0, buckets, until: now) : []
         let acts: [(Date, Activity)] = await withCheckedContinuation { c in
             activities.queryActivityStarting(from: stillSince, to: now, to: .main) { @Sendable list, _ in
                 c.resume(returning: (list ?? []).filter { $0.confidence != .low }.map { ($0.startDate, Self.activity($0)) })
             }
         }
         return Backfill.departure(stillSince: stillSince, activities: acts, stepTimes: steps)
+    }
+
+    /// Steps in 30 s buckets from `from`, each bucket's steps dated at its start. Empty stretches are skipped by
+    /// halving, so a long rest costs a few queries rather than one per bucket.
+    private func stepTimes(_ from: Date, _ lo: Int, _ hi: Int, until now: Date) async -> [Date] {
+        let a = from.addingTimeInterval(Double(lo) * 30), b = min(from.addingTimeInterval(Double(hi) * 30), now)
+        let n: Int = await withCheckedContinuation { c in
+            pedometer.queryPedometerData(from: a, to: b) { @Sendable d, _ in c.resume(returning: d?.numberOfSteps.intValue ?? 0) }
+        }
+        guard n > 0 else { return [] }
+        if hi - lo == 1 { return Array(repeating: a, count: n) }
+        let mid = (lo + hi) / 2
+        return await stepTimes(from, lo, mid, until: now) + stepTimes(from, mid, hi, until: now)
     }
 
     nonisolated static func activity(_ a: CMMotionActivity) -> Activity {

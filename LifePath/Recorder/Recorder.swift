@@ -35,7 +35,8 @@ import UIKit
     @ObservationIgnored private var deepSleepReason = ""
     @ObservationIgnored private var thermal: String?
     @ObservationIgnored private var lowPower: Bool?
-    @ObservationIgnored private var flushFailing = false
+    @ObservationIgnored private var flushFailedAt: Date?     // nil while writes succeed
+    @ObservationIgnored private var lastWakeReason = ""
 
     private static let log = Logger(subsystem: "app.lifepath.LifePath", category: "recorder")
     private static let version: String = {
@@ -49,7 +50,8 @@ import UIKit
         motion = MotionService(recorder: self)
     }
 
-    /// Called from `LifePathApp.init`, so every background relaunch re-arms everything.
+    /// Idempotent. Called from `LifePathApp.init` once onboarded (so every background relaunch re-arms everything),
+    /// otherwise from the last onboarding page; nothing prompts before it.
     func start() {
         guard !started else { return }
         started = true
@@ -93,13 +95,21 @@ import UIKit
 
     func recordingFix(_ s: Sample) {
         if spotChecking {
-            send(.wakeFix(s, reason: "spotcheck"))
+            guard wakeFix(s, reason: "spotcheck") else { return }
             if s.hAcc >= 0 && s.hAcc <= 50 { endSpotCheck() }
-        } else if recordingWanted, let p = filter.process(s, receivedAt: Date(), activity: lastActivity) {
+        } else if recordingWanted {
+            guard let p = filter.process(s, receivedAt: Date(), activity: lastActivity) else { return send(.tick) }
             buffer.add(p, at: Date())
             lastPoint = p.t
             send(.fix(p))
         }
+    }
+
+    /// Spot-check, significant-change and visit positions; a fix older than 10 s is dropped. Returns whether it was sent.
+    @discardableResult func wakeFix(_ s: Sample, reason: String) -> Bool {
+        guard Date().timeIntervalSince(s.t) <= 10 else { return false }
+        send(.wakeFix(s, reason: reason))
+        return true
     }
 
     func activityChanged(_ a: Activity, confident: Bool) {
@@ -136,10 +146,14 @@ import UIKit
             guard let still = lastStill else { break }
             let fence = Fence(lat: still.lat, lon: still.lon, radius: still.hAcc)
             Task {
-                let to = await motion.departure(stillSince: since, until: now) ?? now
-                for p in Backfill.stillPoints(fence: fence, from: still.t, to: to) { buffer.add(p, at: Date()) }
+                let departure = await motion.departure(stillSince: since, until: now)
+                // Runs after this batch, so the engine's wake log has set the reason. Unknown departure after a
+                // position-based wake: the walked stretch stays a gap rather than becoming still points.
+                if departure == nil, ["geofence", "visit", "slc"].contains(lastWakeReason) { return }
+                for p in Backfill.stillPoints(fence: fence, from: still.t, to: departure ?? now) { buffer.add(p, at: Date()) }
             }
         case .log(var e):
+            if e.kind == "wake" { lastWakeReason = e.detail }
             if e.kind == "deepSleep", e.detail == "on" { e.detail = "on \(deepSleepReason)" }
             buffer.add(e)
         }
@@ -179,7 +193,8 @@ import UIKit
         let q = quality
         filter.quality = q
         // Settling and spot checks need every fix; spacing applies only while Moving.
-        location.configure(quality: q, distanceFilter: state == .moving && !spotChecking ? q.spacing : kCLDistanceFilterNone,
+        location.configure(quality: q, spotCheck: spotChecking,
+                           distanceFilter: state == .moving && !spotChecking ? q.spacing : kCLDistanceFilterNone,
                            automotive: lastActivity == .automotive, showsIndicator: settings.showsIndicator)
     }
 
@@ -217,6 +232,7 @@ import UIKit
     }
 
     func flush() {
+        if let f = flushFailedAt, Date().timeIntervalSince(f) < 30 { return }   // after a failure, retry at most every 30 s
         if diary == nil { openDiary() }   // before first unlock the protected file can't open yet
         let (points, events) = buffer.take()
         guard !points.isEmpty || !events.isEmpty else { return }
@@ -224,10 +240,11 @@ import UIKit
             guard let diary else { throw CocoaError(.fileNoSuchFile) }
             try diary.append(points)
             try diary.log(events)
-            flushFailing = false
+            flushFailedAt = nil
         } catch {
             buffer.putBack(points: points, events: events)
-            if !flushFailing { flushFailing = true; buffer.add(LoggedEvent(t: Date(), kind: "flush", detail: "failed")) }
+            if flushFailedAt == nil { buffer.add(LoggedEvent(t: Date(), kind: "flush", detail: "failed")) }
+            flushFailedAt = Date()
         }
     }
 
