@@ -2,6 +2,15 @@
 
 Everything installed on the owner's Claude setup at the time of the handoff, grouped by how LifePath uses it. Install the same plugins on a new account where possible; if one is missing, carry on and tell the owner in one line.
 
+## The plugin files themselves
+
+The real plugin files sit on the owner's laptop in `handoff/private/plugins/` (git-ignored, because `prefskill` holds the owner's personal preferences and the repo is public):
+
+- `installed/<name>.zip`: the exact installed version of every plugin (one zip per plugin, plus `anthropic-skills.zip` with the built-in skills such as `llm-council` and `deep-research`, and the Claude Code CLI copies `superpowers-cli`, `page-check-cli`, `diagram-design`). These are the ones to install on a new account: in the Claude desktop app, upload the zip as a plugin (Customize → Plugins → upload); for Claude Code, unzip into a local marketplace folder.
+- `downloads-originals/`: the zips the owner originally downloaded (some contain more than what was installed).
+
+`bash handoff/update.sh` re-zips them (via `zip-plugins.ps1`) so they stay current.
+
 ## Used so far
 
 | Plugin / skill | How it's used |

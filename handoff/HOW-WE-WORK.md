@@ -8,6 +8,8 @@
 - Wants the strongest proven algorithms that stay lightweight ("very smart, efficient, high level").
 - Values honesty: never claim work is running unless an agent or background job really is; if you stop, say "nothing is running until you reply".
 - When away, keep building stage after stage; collect phone checks and big decisions for their return.
+- Wants speed and token efficiency: tests and reviews only at critical periodic moments (before merging a stage, before a release, for risky data or recording-engine logic), not after every change. Skip scoped re-reviews when fixes are precise.
+- The app and its data must survive crashes, updates and iOS kills; every setting needs a clear name and, where needed, a one-line description.
 - Publishes an installable pre-release on GitHub at every milestone that changes what the phone app does.
 - Their writing preferences (tone, banned phrases, structure) are in `private/preferences.md` (from the `prefskill` plugin). Follow them in every message.
 
