@@ -25,7 +25,7 @@ Life-long and complete (reduce detail, never coverage; nothing recorded is hidde
 6. `superpowers:verification-before-completion` before claiming anything works.
 7. At the end of a stage: write `docs/decisions/<stage>.md` from the ledger's rulings and deferred minors, bump `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in `project.yml`, merge to `main`, tag `vX.Y.Z-preview.N`, push the tag (CI publishes the Release with the IPA), delete merged branches and worktrees.
 
-## Skills and plugins used (install these on a new account)
+## Skills and plugins used (install these on a new account; full inventory in PLUGINS.md)
 
 | Plugin / skill | Used for |
 |---|---|
