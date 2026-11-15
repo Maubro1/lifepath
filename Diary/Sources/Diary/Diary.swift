@@ -215,7 +215,7 @@ public final class Diary: Sendable {
                     INSERT OR REPLACE INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit)
                     VALUES (?,?,?,?,?,?,?,?,?,?)
                     """, arguments: [p.id, p.name, p.updatedAt.timeIntervalSince1970, p.totalSeconds, p.visits, p.isCandidate,
-                                     pin.lat, pin.lon, p.visitDays.sorted().map(String.init).joined(separator: ","),
+                                     pin?.lat, pin?.lon, p.visitDays.sorted().map(String.init).joined(separator: ","),
                                      p.lastVisit.timeIntervalSince1970])
                 try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [p.id])
                 for c in Set(p.cells.keys).union(p.recent.keys) {
