@@ -12,3 +12,4 @@ DerivedData/
 LifePath/Info.plist
 .claude/
 .build/
+handoff/private/
