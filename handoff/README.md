@@ -4,7 +4,8 @@ This folder lets a fresh Claude session (on any account) pick up the LifePath pr
 
 1. **This README**: what the project is, where everything lives, how to resume.
 2. **[STATE.md](STATE.md)**: what is done, what was in progress at the last update, and the decisions the owner still has to make.
-3. **[HOW-WE-WORK.md](HOW-WE-WORK.md)**: the owner's working agreements, the process, the skills/plugins and the tooling on this laptop.
+3. **[HOW-WE-WORK.md](HOW-WE-WORK.md)**: the owner's working agreements, the process and the tooling on this laptop.
+   **[PLUGINS.md](PLUGINS.md)**: every installed plugin and skill: used so far, planned, possible extras, not relevant.
 4. **[ORIGINAL-BRIEF.md](ORIGINAL-BRIEF.md)**: the owner's original description of the app, word for word.
 5. **`docs/superpowers/specs/2026-11-14-lifepath-design.md`**: the full design spec. It starts with **Principles**; every decision is checked against them.
 6. **[ledger-current-stage.md](ledger-current-stage.md)**: the build ledger of the stage in progress (every task, review, fix round and ruling).
