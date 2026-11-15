@@ -499,7 +499,7 @@ final class MotionEngineTests: XCTestCase {
 
     func testDeepSleepDisablesKeepAliveAndSpotChecks() throws {
         var (e, s, entry) = try stillEngine(deepSleep: true)
-        XCTAssert(entry.contains(.setKeepAlive(false)))
+        XCTAssertFalse(entry.contains(.setKeepAlive(false)))                 // keeps the app alive for spot checks
         XCTAssertEqual(scheduled(entry), [900])                              // spot checks go on, every 15 min
         XCTAssertEqual(send(&e, .spotCheckDue, s + 900), [.startSpotCheck])
         XCTAssertEqual(scheduled(send(&e, .spotCheckEnded, s + 920)), [900])
@@ -509,7 +509,7 @@ final class MotionEngineTests: XCTestCase {
     func testDeepSleepToggleWhileStill() throws {
         var (e, s, _) = try stillEngine()
         let on = send(&e, .deepSleepChanged(true), s + 10)
-        XCTAssert(on.contains(.setKeepAlive(false)))
+        XCTAssertFalse(on.contains(.setKeepAlive(false)))
         XCTAssert(on.contains(log(s + 10, "deepSleep", "on")))
         XCTAssertEqual(scheduled(on), [900])
         let off = send(&e, .deepSleepChanged(false), s + 100)
@@ -530,10 +530,14 @@ final class MotionEngineTests: XCTestCase {
 
     func testNoConfirmationStopsStillPoints() throws {
         var (e, s, entry) = try stillEngine()
-        var points = stillPoints(entry)
-        for i in 1...90 { points += stillPoints(send(&e, .tick, s + Double(i) * 30)) }   // 45 min, no reading
+        var points = stillPoints(entry), logs: [Command] = []
+        for i in 1...90 {                                                     // 45 min, no reading
+            let out = send(&e, .tick, s + Double(i) * 30)
+            points += stillPoints(out); logs += out.filter { if case .log = $0 { true } else { false } }
+        }
         XCTAssertEqual(points.map(\.t), stride(from: 0.0, through: 1800, by: 300).map { at(s + $0) })
         XCTAssertEqual(e.state, .still)
+        XCTAssertEqual(logs.filter { $0 == log(s + 2100, "still", "unconfirmed") }.count, 1)   // logged once, at the first missed point
     }
 
     func testConfirmFixInsideAreaKeepsStillPoints() throws {

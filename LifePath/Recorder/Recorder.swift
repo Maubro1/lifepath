@@ -105,8 +105,7 @@ import UIKit
         }
         configureRecording()
         applyGPS()
-        // Keep-alive off lets iOS suspend the app: write before that.
-        if engine.state != before || buffer.isDue(at: now) || commands.contains(.setKeepAlive(false)) { flush() }
+        if engine.state != before || buffer.isDue(at: now) { flush() }
     }
 
     func recordingFix(_ s: Sample) {
