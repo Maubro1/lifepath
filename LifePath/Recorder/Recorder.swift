@@ -174,6 +174,7 @@ import UIKit
                 // Unknown departure after a position-based wake: the walked stretch stays a gap, not still points.
                 if departure == nil, ["geofence", "slc", "relaunch", "spotcheck"].contains(reason) { return }
                 for p in Backfill.stillPoints(fence: fence, from: still.t, to: min(departure ?? now, until)) { buffer.add(p, at: Date()) }
+                flush()
             }
         case .fillUnconfirmed(let from, let to):
             guard let still = lastStill else { break }
@@ -185,6 +186,7 @@ import UIKit
                 }
                 // The engine writes the point at `to` itself.
                 for p in Backfill.stillPoints(fence: fence, from: from, to: to) where p.t < to { buffer.add(p, at: Date()) }
+                flush()
             }
         case .log(var e):
             if e.kind == "deepSleep", e.detail == "on" { e.detail = "on \(deepSleepReason)" }

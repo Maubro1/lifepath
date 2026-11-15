@@ -497,7 +497,7 @@ final class MotionEngineTests: XCTestCase {
         assertWoke(out, e, reason: "spotcheck", stillAt: s, when: s + 60)
     }
 
-    func testDeepSleepDisablesKeepAliveAndSpotChecks() throws {
+    func testDeepSleepKeepsKeepAliveAndSlowsSpotChecks() throws {
         var (e, s, entry) = try stillEngine(deepSleep: true)
         XCTAssertFalse(entry.contains(.setKeepAlive(false)))                 // keeps the app alive for spot checks
         XCTAssertEqual(scheduled(entry), [900])                              // spot checks go on, every 15 min
