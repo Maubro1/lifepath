@@ -32,8 +32,8 @@ final class PlaceGridTests: XCTestCase {
         var cells: [PlaceCell: Double] = [:]
         for i in 0...9 { cells[c(i, 0)] = 1; cells[c(0, i)] = 1 }
         cells[c(8, 0)] = 10; cells[c(7, 0)] = 4; cells[c(9, 0)] = 4
-        let p = place(cells)
-        XCTAssertEqual(PlaceGrid.cell(lat: p.pin.lat, lon: p.pin.lon), c(8, 0))
+        let p = place(cells), pin = try XCTUnwrap(p.pin)
+        XCTAssertEqual(PlaceGrid.cell(lat: pin.lat, lon: pin.lon), c(8, 0))
         let total = cells.values.reduce(0, +)
         let mx = cells.reduce(0) { $0 + $1.value * Double($1.key.x - base.x) } / total
         let my = cells.reduce(0) { $0 + $1.value * Double($1.key.y - base.y) } / total

@@ -6,7 +6,7 @@ public struct Place: Sendable, Equatable, Codable {
     public var name: String?
     public var cells: [PlaceCell: Double]     // decayed weight (seconds·confidence), 60-day half-life
     public var recent: [PlaceCell: Double]    // same weight with a 30-day half-life, only to break pin ties
-    public var visitDays: Set<Int>            // local day numbers of visit starts, last 60 days
+    public var visitDays: Set<Int>            // local day numbers of visit starts
     public var updatedAt: Date
     public var lastVisit: Date                // end of the latest visit joined
     public var totalSeconds: Double
@@ -20,7 +20,7 @@ public struct Place: Sendable, Equatable, Codable {
     }
 
     /// Density peak: the cell with the most 3×3-smoothed weight; peaks within 10% of it go to the one with more recent weight.
-    public var pin: (lat: Double, lon: Double) {
+    public var pin: (lat: Double, lon: Double)? {   // nil only for a place with no cells
         func smoothed(_ m: [PlaceCell: Double], _ c: PlaceCell) -> Double {
             var s = 0.0
             for dx in -1...1 { for dy in -1...1 { s += m[PlaceCell(x: c.x + dx, y: c.y + dy)] ?? 0 } }
@@ -30,7 +30,7 @@ public struct Place: Sendable, Equatable, Codable {
         let top = scored.map(\.1).max() ?? 0
         let best = scored.filter { $0.1 >= 0.9 * top }
             .max { (smoothed(recent, $0.0), $0.1, $0.0.y, $0.0.x) < (smoothed(recent, $1.0), $1.1, $1.0.y, $1.0.x) }
-        return PlaceGrid.center(of: best?.0 ?? PlaceCell(x: 0, y: 0))
+        return best.map { PlaceGrid.center(of: $0.0) }
     }
 
     /// Smallest cell set holding `share` of the weight, with one-cell holes filled.
@@ -60,7 +60,7 @@ public struct Visit: Sendable, Equatable, Codable {
 }
 
 public enum Places {
-    /// Runs of still points lasting ≥ minDuration, plus the moving fixes just before them within the first still fix's accuracy.
+    /// Runs of still points (split where two are > 30 min apart) lasting ≥ minDuration, plus the moving fixes just before them within the first still fix's accuracy.
     /// A run still open at the end of `points` is returned too; the caller decides whether the rest has finished.
     public static func visits(from points: [FilteredPoint], minDuration: TimeInterval = 600) -> [(start: Date, end: Date, points: [FilteredPoint])] {
         var out: [(start: Date, end: Date, points: [FilteredPoint])] = []
@@ -68,7 +68,7 @@ public enum Places {
         while i < points.count {
             guard points[i].kind == .still else { i += 1; continue }
             var j = i
-            while j + 1 < points.count, points[j + 1].kind == .still { j += 1 }
+            while j + 1 < points.count, points[j + 1].kind == .still, points[j + 1].t.timeIntervalSince(points[j].t) <= 1800 { j += 1 }
             if points[j].t.timeIntervalSince(points[i].t) >= minDuration {
                 let first = points[i]
                 var s = i
@@ -102,7 +102,11 @@ public enum Places {
 
         // Join the place whose region widened by 20 m holds most of the visit's points; else start a candidate.
         let cells = pts.map { PlaceGrid.cell(lat: $0.lat, lon: $0.lon) }
-        let hits = places.map { p -> Int in let zone = PlaceGrid.dilate(p.region(), by: 4); return cells.filter(zone.contains).count }
+        let visitBox = PlaceGrid.bounds(cells)
+        let hits = places.map { p -> Int in
+            guard PlaceGrid.bounds(p.cells.keys).near(visitBox) else { return 0 }   // skip the region work for far places
+            let zone = PlaceGrid.dilate(p.region(), by: 4); return cells.filter(zone.contains).count
+        }
         var k: Int
         if let best = hits.indices.max(by: { hits[$0] < hits[$1] }), 2 * hits[best] > pts.count {
             k = best
@@ -120,8 +124,10 @@ public enum Places {
         places[k].updatedAt = max(places[k].updatedAt, now)
 
         // Merge every place whose region touches this one into whichever has more time.
-        var region = places[k].region()
-        while let o = places.indices.first(where: { $0 != k && !PlaceGrid.dilate(places[$0].region(), by: 1).isDisjoint(with: region) }) {
+        var region = places[k].region(), box = PlaceGrid.bounds(places[k].cells.keys)
+        while let o = places.indices.first(where: {
+            $0 != k && PlaceGrid.bounds(places[$0].cells.keys).near(box) && !PlaceGrid.dilate(places[$0].region(), by: 1).isDisjoint(with: region)
+        }) {
             let (keep, gone) = places[o].totalSeconds > places[k].totalSeconds ? (o, k) : (k, o)
             let g = places[gone]
             places[keep].cells.merge(g.cells, uniquingKeysWith: +)
@@ -134,11 +140,9 @@ public enum Places {
             places[keep].isCandidate = places[keep].isCandidate && g.isCandidate
             places.remove(at: gone)
             k = keep > gone ? keep - 1 : keep
-            region = places[k].region()
+            region = places[k].region(); box = PlaceGrid.bounds(places[k].cells.keys)
         }
 
-        let today = day(now)
-        places[k].visitDays = places[k].visitDays.filter { $0 > today - 60 }
         // A place forms over about a week: ≥ 5 different days, first and last ≥ 7 days apart; never from one long stay.
         if let lo = places[k].visitDays.min(), let hi = places[k].visitDays.max(), places[k].visitDays.count >= 5, hi - lo >= 7 {
             places[k].isCandidate = false

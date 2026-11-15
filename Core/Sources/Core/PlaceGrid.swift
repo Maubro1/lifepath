@@ -20,6 +20,20 @@ public enum PlaceGrid {
         ((Double(c.y) + 0.5) * cellSize / mPerLat, (Double(c.x) + 0.5) * cellSize / mPerLon)
     }
 
+    struct Bounds {
+        var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
+        /// Within 10 cells (50 m) of the other box; false when either is empty.
+        func near(_ o: Bounds) -> Bool {
+            minX <= o.maxX + 10 && o.minX <= maxX + 10 && minY <= o.maxY + 10 && o.minY <= maxY + 10
+        }
+    }
+
+    static func bounds(_ cells: some Sequence<PlaceCell>) -> Bounds {
+        cells.reduce(into: Bounds()) { b, c in
+            b.minX = min(b.minX, c.x); b.maxX = max(b.maxX, c.x); b.minY = min(b.minY, c.y); b.maxY = max(b.maxY, c.y)
+        }
+    }
+
     /// Every cell within `r` cells (Chebyshev) of the set.
     static func dilate(_ cells: Set<PlaceCell>, by r: Int) -> Set<PlaceCell> {
         var out = Set<PlaceCell>()

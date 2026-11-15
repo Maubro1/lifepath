@@ -55,6 +55,29 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(ps.map(\.isCandidate), [true])
     }
 
+    func testFiveDaysInSixDaysStaysCandidate() {
+        XCTAssertEqual(fold([], onDays([0, 1, 2, 3, 6])).map(\.isCandidate), [true])
+    }
+
+    func testFiveDaysExactlySevenApartPromote() {
+        XCTAssertEqual(fold([], onDays([0, 1, 2, 3, 7])).map(\.isCandidate), [false])
+    }
+
+    func testFarCandidatesDoNotChangeResult() throws {
+        // 2 000 one-cell candidates 1 km apart, far from home, must not affect learning there.
+        let far = (0..<2000).map { i -> Place in
+            let p = Geo.offset(lat: 52.0, lon: 5.0, north: 5000 + Double(i / 50) * 1000, east: Double(i % 50) * 1000)
+            return Place(id: Int64(1000 + i), name: nil, cells: [PlaceGrid.cell(lat: p.lat, lon: p.lon): 1], updatedAt: day0, lastVisit: day0,
+                         totalSeconds: 600, visits: 1, isCandidate: true)
+        }
+        let alone = try XCTUnwrap(fold([], onDays(week)).first)
+        let crowd = fold(far, onDays(week))
+        XCTAssertEqual(crowd.count, 2001)
+        var home = try XCTUnwrap(crowd.last)
+        home.id = alone.id
+        XCTAssertEqual(home, alone)
+    }
+
     func testSevenDaysApartButOnlyThreeDaysStaysCandidate() {
         let ps = fold([], onDays([0, 0, 4, 7, 7, 7]))
         XCTAssertEqual(ps.map(\.isCandidate), [true])
@@ -79,8 +102,8 @@ final class PlacesTests: XCTestCase {
     }
 
     func testDecayFollowsMove() throws {
-        let a = (0..<56).map { visit(at: day0 + Double($0) * day, minutes: 480) }
-        let b = (56..<112).map { visit(at: day0 + Double($0) * day, east: 15, minutes: 480) }
+        let a = (0..<56).map { visit(at: day0 + Double($0) * day, minutes: 540) }   // more time at A: only decay can move the pin to B
+        let b = (56..<112).map { visit(at: day0 + Double($0) * day, east: -15, minutes: 480) }   // west, so pin ties without decay pick A
         let atA = fold([], a)
         let pinA = try XCTUnwrap(atA.first?.pin)
         XCTAssertEqual(PlaceGrid.cell(lat: pinA.lat, lon: pinA.lon), PlaceGrid.cell(lat: a[0].points[0].lat, lon: a[0].points[0].lon))
@@ -136,5 +159,14 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(v.start, settleStart)
         XCTAssertEqual(v.end, settleStart + 20 + 12 * 60)
         XCTAssertEqual(v.points.count, 15)
+    }
+
+    func testLongGapBetweenStillPointsSplitsRest() {
+        let a = visit(at: day0, minutes: 15).points, b = visit(at: day0 + 15 * 60 + 1801, minutes: 15).points
+        XCTAssertEqual(Places.visits(from: a + b).map(\.start), [day0, b[0].t])
+    }
+
+    func testEmptyPlaceHasNoPin() {
+        XCTAssertNil(Place(id: 1, name: nil, cells: [:], updatedAt: day0, lastVisit: day0, totalSeconds: 0, visits: 0, isCandidate: true).pin)
     }
 }
