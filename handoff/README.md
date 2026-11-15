@@ -8,8 +8,9 @@ This folder lets a fresh Claude session (on any account) pick up the LifePath pr
    **[PLUGINS.md](PLUGINS.md)**: every installed plugin and skill: used so far, planned, possible extras, not relevant.
 4. **[ORIGINAL-BRIEF.md](ORIGINAL-BRIEF.md)**: the owner's original description of the app, word for word.
 5. **`docs/superpowers/specs/2026-11-14-lifepath-design.md`**: the full design spec. It starts with **Principles**; every decision is checked against them.
-6. **[ledger-current-stage.md](ledger-current-stage.md)**: the build ledger of the stage in progress (every task, review, fix round and ruling).
-7. **`private/`** (only on the owner's laptop, never committed): the owner's writing preferences and Claude's memory notes about the owner. Read them; they matter as much as the spec.
+6. **[robustness-audit.md](robustness-audit.md)**: crash/update safety findings and proposed setting names; the next fixes come from here.
+7. **[ledger-current-stage.md](ledger-current-stage.md)**: the build ledger of the stage in progress (every task, review, fix round and ruling).
+8. **`private/`** (only on the owner's laptop, never committed): the owner's writing preferences and Claude's memory notes about the owner. Read them; they matter as much as the spec.
 
 ## What LifePath is
 
