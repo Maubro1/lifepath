@@ -10,4 +10,5 @@ mkdir -p handoff/private/memory
 pref=$(ls "$APPDATA"/Claude/rpm/*/*/plugin_*/skills/prefskill/references/prefbackup.md 2>/dev/null | head -1 || true)
 [ -n "$pref" ] && cp "$pref" handoff/private/preferences.md && echo "preferences: copied"
 git log --oneline -15 > handoff/private/recent-commits.txt
+pwsh -NoProfile -File handoff/zip-plugins.ps1
 echo "Now update handoff/STATE.md by hand and commit handoff/ (private/ stays local)."
