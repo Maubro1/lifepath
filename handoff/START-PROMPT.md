@@ -3,7 +3,7 @@
 Paste the text below into a new Claude Code session opened on `C:\Users\mtska\Downloads\Lifepath 2.0`.
 
 ```
-Hi! You're picking up LifePath, my private iPhone location-diary app, from another Claude session that ran out of credits. Everything you need is in this folder, so welcome aboard :)
+Hi! You're picking up LifePath, my private iPhone location-diary app, from another Claude session that ran out of credits. Everything you need is in this folder, so welcome aboard :) (The previous Claude wrote this prompt for me, which is why it sounds a bit technical.)
 
 A bit about me: I'm not a programmer, so I'd love for you to make all the technical decisions yourself (code, git, branches, merges, releases) without checking with me. Please only ask me about things on my phone, my accounts, how something should look or feel, and big product decisions. I write in Dutch or English; just answer in whichever language I used (Dutch = Netherlands Dutch).
 
