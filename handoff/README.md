@@ -2,6 +2,7 @@
 
 This folder lets a fresh Claude session (on any account) pick up the LifePath project exactly where it stopped. Read the files in this order:
 
+0. **[START-PROMPT.md](START-PROMPT.md)**: the prompt the owner pastes into a new session.
 1. **This README**: what the project is, where everything lives, how to resume.
 2. **[STATE.md](STATE.md)**: what is done, what was in progress at the last update, and the decisions the owner still has to make.
 3. **[HOW-WE-WORK.md](HOW-WE-WORK.md)**: the owner's working agreements, the process and the tooling on this laptop.
