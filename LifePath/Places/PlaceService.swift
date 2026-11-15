@@ -9,7 +9,7 @@ final class PlaceService: @unchecked Sendable {
     /// What the last run saw, for the Recorder.
     @MainActor private(set) var places: [Place] = []
 
-    private static let overlap: TimeInterval = 3600, chunk: TimeInterval = 30 * 86_400, gap: TimeInterval = 1800
+    private static let overlap: TimeInterval = 3600, chunk: TimeInterval = 30 * 86_400
 
     /// Synchronous and cancellable between visits; each chunk is saved whole (places, visits, cursor), so a cancel leaves a clean prefix.
     static func run(_ diary: Diary) throws -> (visits: Int, new: Int, merged: Int, places: [Place]) {
@@ -48,7 +48,7 @@ final class PlaceService: @unchecked Sendable {
                 visits += try diary.visits(from: .distantPast, to: .distantFuture).filter { $0.placeId.map { remap[$0] != nil } ?? false }
                     .map { Visit(start: $0.start, end: $0.end, placeId: final($0.placeId)) }
             }
-            try diary.saveLearned(places: changed, removing: Array(Set(places.map(\.id)).subtracting(changed.map(\.id))),
+            try diary.saveLearned(places: fresh.isEmpty ? [] : changed, removing: Array(Set(places.map(\.id)).subtracting(changed.map(\.id))),
                                   visits: visits, meta: "placesProcessedUntil", String(settled.next.timeIntervalSince1970))
             places = changed
             if isLast || settled.next <= cursor { break }

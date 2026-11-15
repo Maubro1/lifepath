@@ -85,7 +85,7 @@ public enum Places {
     /// Open: the run reaches the window's last point and nothing ends it yet (a later chunk, or less than 30 min before `now` in the last one).
     /// Overlapping a stored visit means it was learned already (the re-read overlap).
     /// `stalled`: the open run begins at the window's first point, so the caller must widen the window or the cursor never advances.
-    // shortcut: a re-read visit that overlaps a stored one but ends later (backfilled time) is skipped whole, not extended; no such case arises while stored visits are only finished ones.
+    // shortcut: backfilled time that extends a stored visit is skipped, not learned; extend the visit when place time looks short.
     public static func settle(visits: [(start: Date, end: Date, points: [FilteredPoint])], first: Date, lastT: Date, now: Date, isLast: Bool, stored: [Visit])
         -> (finished: [(start: Date, end: Date, points: [FilteredPoint])], next: Date, stalled: Bool) {
         var finished: [(start: Date, end: Date, points: [FilteredPoint])] = []
