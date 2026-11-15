@@ -9,6 +9,7 @@ mkdir -p handoff/private/memory
 [ -d "$mem" ] && cp "$mem"/*.md handoff/private/memory/ && echo "memory: copied"
 pref=$(ls "$APPDATA"/Claude/rpm/*/*/plugin_*/skills/prefskill/references/prefbackup.md 2>/dev/null | head -1 || true)
 [ -n "$pref" ] && cp "$pref" handoff/private/preferences.md && echo "preferences: copied"
+mkdir -p handoff/private/sdd && cp -r .superpowers/sdd/* handoff/private/sdd/ 2>/dev/null && echo "sdd workspaces: copied"
 git log --oneline -15 > handoff/private/recent-commits.txt
 pwsh -NoProfile -File handoff/zip-plugins.ps1
 echo "Now update handoff/STATE.md by hand and commit handoff/ (private/ stays local)."
