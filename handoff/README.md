@@ -10,7 +10,7 @@ This folder lets a fresh Claude session (on any account) pick up the LifePath pr
 5. **`docs/superpowers/specs/2026-11-14-lifepath-design.md`**: the full design spec. It starts with **Principles**; every decision is checked against them.
 6. **[robustness-audit.md](robustness-audit.md)**: crash/update safety findings and proposed setting names; the next fixes come from here.
 7. **[ledger-current-stage.md](ledger-current-stage.md)**: the build ledger of the stage in progress (every task, review, fix round and ruling).
-8. **`private/`** (only on the owner's laptop, never committed): the owner's writing preferences and Claude's memory notes about the owner. Read them; they matter as much as the spec.
+8. **`private/`** (only on the owner's laptop, never committed): the owner's writing preferences, Claude's memory notes about the owner, the plugin zips (`plugins/`), the full build workspaces with every task brief and subagent context (`sdd/`; copy back to `.superpowers/sdd/` to resume), and the council transcript behind the pin-hiding rule (`council/`). Read them; they matter as much as the spec.
 
 ## What LifePath is
 
@@ -43,7 +43,7 @@ A private, free, always-on location diary for the owner's iPhone 15 Pro (iOS 26)
 2. Load the skills named in HOW-WE-WORK.md (at minimum `superpowers:subagent-driven-development`, `superpowers:test-driven-development`, `ponytail:ponytail`, and `prefskill:prefskill` if installed; `dutch-native` when writing Dutch).
 3. In the repo: `git fetch --all`, check `git branch -a` and STATE.md for the active branch, then `git checkout <active branch>`.
 4. Run the local tests: `pwsh -NoProfile -File scripts/test-core.ps1` (Swift for Windows; see HOW-WE-WORK.md if it fails).
-5. Recreate the ledger for the current plan if `.superpowers/` is missing: copy `handoff/ledger-current-stage.md` to `.superpowers/sdd/<plan basename>/progress.md`. Tasks marked `complete` there are done; resume at the first one that isn't.
+5. Recreate the workspace if `.superpowers/` is missing: copy `handoff/private/sdd/*` to `.superpowers/sdd/` (or, without `private/`, copy `handoff/ledger-current-stage.md` to `.superpowers/sdd/<plan basename>/progress.md`). Tasks marked `complete` there are done; resume at the first one that isn't.
 6. Ask the owner about the open decisions in STATE.md before building anything that depends on them; keep building everything that doesn't.
 7. Tell the owner plainly what you picked up and what happens next. They are not a programmer: explain in plain words, decide technical matters yourself.
 
