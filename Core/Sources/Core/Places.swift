@@ -13,19 +13,31 @@ public struct Place: Sendable, Equatable, Codable {
     public var visits: Int
     public var isCandidate: Bool
     public var recentDurations: [Double] = []   // last 20 visit lengths in seconds, oldest first
-    public var lastRealVisit: Date = .distantPast   // end of the latest visit that was long for this place
+    public var realDays: Set<Int> = []          // local day numbers with a real visit; life-long, never trimmed
 
     public init(id: Int64, name: String?, cells: [PlaceCell: Double], recent: [PlaceCell: Double] = [:], visitDays: Set<Int> = [],
-                updatedAt: Date, lastVisit: Date, totalSeconds: Double, visits: Int, isCandidate: Bool) {
+                updatedAt: Date, lastVisit: Date, totalSeconds: Double, visits: Int, isCandidate: Bool, realDays: Set<Int> = []) {
         self.id = id; self.name = name; self.cells = cells; self.recent = recent; self.visitDays = visitDays
-        self.updatedAt = updatedAt; self.lastVisit = lastVisit; self.totalSeconds = totalSeconds; self.visits = visits; self.isCandidate = isCandidate
+        self.updatedAt = updatedAt; self.lastVisit = lastVisit; self.totalSeconds = totalSeconds; self.visits = visits; self.isCandidate = isCandidate; self.realDays = realDays
     }
 
     /// 4 per day with a visit plus 1 per hour spent; 100 makes the place a pin.
     public var points: Double { 4 * Double(visitDays.count) + totalSeconds / 3600 }
 
-    /// A pin, shown unless 6 months in a row went by without a real visit.
-    public func isVisible(at now: Date) -> Bool { !isCandidate && now.timeIntervalSince(lastRealVisit) <= 182 * 86_400 }
+    /// Days a pin outlives its last real visit: at least 6 months, or 3 × the usual gap between stays (runs of consecutive real days)
+    /// when longer, plus a month per year the place has been in the life (≤ 6), at most 2 years: a gym fades fast, a holiday home does not.
+    public var hideAfterDays: Int {
+        let days = realDays.sorted()
+        let gaps = zip(days, days.dropFirst()).map { $1 - $0 }.filter { $0 > 1 }.suffix(8).sorted()   // shortcut: re-sorts on each call; cache if the map asks per frame
+        let years = ((days.last ?? 0) - (visitDays.min() ?? 0)) / 365
+        return min(730, max(180, 3 * (gaps.isEmpty ? 0 : gaps[(gaps.count - 1) / 2])) + 30 * min(6, years))
+    }
+
+    /// A pin, shown while its last real visit is within `hideAfterDays`; no real visit yet means hidden.
+    public func isVisible(at now: Date) -> Bool {
+        guard let last = realDays.max() else { return false }
+        return !isCandidate && Places.day(now) - last <= hideAfterDays
+    }
 
     /// Density peak: the cell with the most 3×3-smoothed weight; peaks within 10% of it go to the one with more recent weight.
     public var pin: (lat: Double, lon: Double)? {   // nil only for a place with no cells
@@ -129,7 +141,7 @@ public enum Places {
         let length = visit.end.timeIntervalSince(visit.start)
         let sorted = places[k].recentDurations.sorted()
         // real: ≥ 5 h, or at least half this place's usual stay (the first visit needs the 5 h)
-        if length >= 5 * 3600 || (!sorted.isEmpty && length >= 0.5 * sorted[sorted.count / 2]) { places[k].lastRealVisit = max(places[k].lastRealVisit, visit.end) }
+        if length >= 5 * 3600 || (!sorted.isEmpty && length >= 0.5 * sorted[sorted.count / 2]) { places[k].realDays.insert(day(visit.start)) }
         places[k].recentDurations = Array((places[k].recentDurations + [length]).suffix(20))
         places[k].totalSeconds += length
         places[k].visitDays.insert(day(visit.start))
@@ -151,7 +163,7 @@ public enum Places {
             places[keep].totalSeconds += g.totalSeconds
             places[keep].name = places[keep].name ?? g.name
             places[keep].recentDurations = Array((places[keep].recentDurations + g.recentDurations).suffix(20))   // shortcut: survivor's then the other's, not by visit time; fine for a median
-            places[keep].lastRealVisit = max(places[keep].lastRealVisit, g.lastRealVisit)
+            places[keep].realDays.formUnion(g.realDays)
             places.remove(at: gone)
             k = keep > gone ? keep - 1 : keep
             region = places[k].region(); box = PlaceGrid.bounds(places[k].cells.keys)

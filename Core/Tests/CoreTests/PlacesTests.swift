@@ -67,9 +67,11 @@ final class PlacesTests: XCTestCase {
     func testHiddenAfterSixMonthsWithoutRealVisit() throws {
         let ps = homeThen([visit(at: day0 + 300 * day, north: 2000, minutes: 600)])
         let h = try XCTUnwrap(ps.first { $0.pin != nil && $0.visits == 6 })
-        let end = h.lastRealVisit
-        XCTAssertTrue(h.isVisible(at: end + 182 * day))
-        XCTAssertFalse(h.isVisible(at: end + 182 * day + 1))
+        let last = try XCTUnwrap(h.realDays.max())
+        XCTAssertEqual(h.hideAfterDays, 180)
+        XCTAssertTrue(h.isVisible(at: day0 + (5 + 180) * day))
+        XCTAssertFalse(h.isVisible(at: day0 + (5 + 181) * day))
+        XCTAssertEqual(last, Places.day(day0 + 5 * day))
         XCTAssertFalse(h.isVisible(at: day0 + 300 * day))
     }
 
@@ -80,7 +82,7 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(ps.count, 1)
         XCTAssertFalse(h.isCandidate)
         XCTAssertTrue(h.isVisible(at: back + 11 * 3600))
-        XCTAssertEqual(h.lastRealVisit, back + 600 * 60)
+        XCTAssertEqual(h.realDays.max(), Places.day(back))
     }
 
     func testShortGymVisitsKeepGymVisible() throws {
@@ -88,7 +90,7 @@ final class PlacesTests: XCTestCase {
         let gym = try XCTUnwrap(fold([], weekly).first)
         XCTAssertFalse(gym.isCandidate)   // 30 × 5.5 = 165
         XCTAssertTrue(gym.isVisible(at: weekly.last!.end + 7 * day))
-        XCTAssertEqual(gym.lastRealVisit, weekly.last!.end)
+        XCTAssertEqual(gym.realDays.max(), Places.day(weekly.last!.start))
     }
 
     func testShortDropInDoesNotCount() throws {
@@ -97,6 +99,49 @@ final class PlacesTests: XCTestCase {
         let h = try XCTUnwrap(ps.first)
         XCTAssertEqual(ps.count, 1); XCTAssertEqual(h.visits, 7)
         XCTAssertFalse(h.isVisible(at: away + 700))
+    }
+
+    // Hiding time from synthetic real-visit day sets (day numbers; visitDays = realDays).
+    func known(_ days: some Sequence<Int>, hole: Range<Int> = 0..<0) -> Place {
+        let d = Set(days).subtracting(hole)
+        return Place(id: 1, name: nil, cells: [:], visitDays: d, updatedAt: day0, lastVisit: day0, totalSeconds: 0, visits: d.count,
+                     isCandidate: false, realDays: d)
+    }
+    /// `stay`-day stays whose starts are `every` days apart, `count` of them.
+    func stays(_ count: Int, every: Int, stay: Int = 1) -> [Int] { (0..<count).flatMap { k in (0..<stay).map { k * every + $0 } } }
+
+    func testHideAfterDays() {
+        let holidays = (0..<2920).filter { $0 % 365 < 340 || $0 % 365 > 350 }   // ~11 days off a year
+        XCTAssertEqual(known(holidays).hideAfterDays, 360, "home, 8 years")
+        XCTAssertEqual(known(0..<1826).hideAfterDays, 330, "former home, 5 years")
+        let school = (0..<1465).filter { $0 % 7 < 5 }
+        XCTAssertEqual(known(school).hideAfterDays, 300, "school, weekends")
+        XCTAssertEqual(known(school, hole: 200..<249).hideAfterDays, 300, "school with a 49-day break")
+        let gym = (0..<731).filter { [0, 2, 4].contains($0 % 7) }
+        XCTAssertEqual(known(gym).hideAfterDays, 240, "gym 3 a week")
+        XCTAssertEqual(known(stays(76, every: 30, stay: 2)).hideAfterDays, 360, "parents monthly")
+        XCTAssertEqual(known(stays(11, every: 121, stay: 2)).hideAfterDays, 450, "grandparents 3 a year")
+        XCTAssertEqual(known(stays(3, every: 365, stay: 14)).hideAfterDays, 730, "holiday home, year 2+")
+        XCTAssertEqual(known(stays(74, every: 15)).hideAfterDays, 270, "café twice a month")
+        XCTAssertEqual(known(0..<92).hideAfterDays, 180, "internship")
+        XCTAssertEqual(known(0..<14).hideAfterDays, 180, "holiday home, first year")
+        XCTAssertEqual(known([]).hideAfterDays, 180)
+    }
+
+    func testBreaksDoNotHideAndARealVisitBringsItBack() {
+        let t = day0, today = Places.day(t)
+        func at(_ p: Place, after n: Int) -> Bool { p.isVisible(at: t + Double(n - today + (p.realDays.max() ?? 0)) * day) }
+        let school = known((0..<1465).filter { $0 % 7 < 5 })
+        XCTAssertTrue(at(school, after: 49)); XCTAssertTrue(at(school, after: 300)); XCTAssertFalse(at(school, after: 301))
+        let gym = known((0..<731).filter { [0, 2, 4].contains($0 % 7) })
+        XCTAssertTrue(at(gym, after: 120)); XCTAssertFalse(at(gym, after: 241))
+        let holiday = known(stays(4, every: 365, stay: 14))
+        XCTAssertTrue(at(holiday, after: 717)); XCTAssertTrue(at(holiday, after: 730)); XCTAssertFalse(at(holiday, after: 731))
+        var back = known(stays(11, every: 121, stay: 2))   // hides after 450 days
+        let late = back.realDays.max()! + 500
+        XCTAssertFalse(back.isVisible(at: t + Double(late - today) * day))
+        back.realDays.insert(late)
+        XCTAssertTrue(back.isVisible(at: t + Double(late - today) * day))
     }
 
     func testMergeReevaluatesPoints() throws {
