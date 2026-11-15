@@ -57,7 +57,7 @@ final class MotionEngineTests: XCTestCase {
                     file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(e.state, .moving, file: file, line: line)
         let expected: [Command] = [.startRecording, .disarmGeofence, .setKeepAlive(true),
-                                   .resolveDeparture(stillSince: at(stillAt)), log(t, "wake", reason), log(t, "state", "moving")]
+                                   .resolveDeparture(stillSince: at(stillAt), until: at(t)), log(t, "wake", reason), log(t, "state", "moving")]
         for c in expected { XCTAssert(out.contains(c), "missing \(c) in \(out)", file: file, line: line) }
     }
 
@@ -500,9 +500,9 @@ final class MotionEngineTests: XCTestCase {
     func testDeepSleepDisablesKeepAliveAndSpotChecks() throws {
         var (e, s, entry) = try stillEngine(deepSleep: true)
         XCTAssert(entry.contains(.setKeepAlive(false)))
-        XCTAssertEqual(scheduled(entry), [])
-        XCTAssertEqual(send(&e, .spotCheckDue, s + 30), [])
-        XCTAssertEqual(scheduled(send(&e, .spotCheckEnded, s + 50)), [])
+        XCTAssertEqual(scheduled(entry), [900])                              // spot checks go on, every 15 min
+        XCTAssertEqual(send(&e, .spotCheckDue, s + 900), [.startSpotCheck])
+        XCTAssertEqual(scheduled(send(&e, .spotCheckEnded, s + 920)), [900])
         XCTAssertEqual(e.state, .still)
     }
 
@@ -511,7 +511,7 @@ final class MotionEngineTests: XCTestCase {
         let on = send(&e, .deepSleepChanged(true), s + 10)
         XCTAssert(on.contains(.setKeepAlive(false)))
         XCTAssert(on.contains(log(s + 10, "deepSleep", "on")))
-        XCTAssertEqual(send(&e, .spotCheckDue, s + 30), [])
+        XCTAssertEqual(scheduled(on), [900])
         let off = send(&e, .deepSleepChanged(false), s + 100)
         XCTAssert(off.contains(.setKeepAlive(true)))
         XCTAssertEqual(scheduled(off), [30])
@@ -587,8 +587,8 @@ final class MotionEngineTests: XCTestCase {
         XCTAssert(out.contains(.startRecording))
         XCTAssert(out.contains(log(s + 2710, "wake", "spotcheck")))
         XCTAssert(fills(out).isEmpty)
-        // Nothing confirmed the unconfirmed stretch: no departure backfill over it either.
-        XCTAssertFalse(out.contains { if case .resolveDeparture = $0 { true } else { false } }, "\(out)")
+        // Nothing confirmed the unconfirmed stretch: the departure backfill stops at the confirmed window.
+        XCTAssert(out.contains(.resolveDeparture(stillSince: at(s), until: at(s + 1800))), "\(out)")
     }
 
     func testAirplaneModeNightIsNotAssumed() throws {
@@ -598,12 +598,26 @@ final class MotionEngineTests: XCTestCase {
         let out = send(&e, reading(f, north: 0, hAcc: 20, s + 28800), s + 28800)
         XCTAssertEqual(fills(out).map(\.0), [at(s)])
         XCTAssertEqual(fills(out).map(\.1), [at(s + 28800)])
-        // The app fills only when motion history shows no departure (no moving activity, no step burst).
-        XCTAssertNil(Backfill.departure(stillSince: at(s), activities: [(at(s + 9000), .stationary)], stepTimes: [at(s + 9000)]))
-        let burst = (0..<15).map { at(s + 9000 + Double($0) * 2) }
-        XCTAssertNotNil(Backfill.departure(stillSince: at(s), activities: [], stepTimes: burst))
-        XCTAssertNotNil(Backfill.departure(stillSince: at(s), activities: [(at(s + 9000), .walking)], stepTimes: []))
-        let filled = Backfill.stillPoints(fence: f, from: at(s), to: at(s + 28800)).filter { $0.t < at(s + 28800) }
-        XCTAssertEqual(filled.count, 95)
+    }
+
+    func testFallbackAfterWakeDoesNotConfirm() throws {
+        var (e, s, _) = try stillEngine()
+        for i in 1...90 { send(&e, .tick, s + Double(i) * 30) }               // 45 min, no reading
+        send(&e, .steps(15), s + 2730)                                        // a bathroom trip, no fix indoors
+        XCTAssertEqual(e.state, .moving)
+        var out: [Command] = []
+        for i in 1...80 { out += send(&e, .tick, s + 2730 + Double(i) * 30) }
+        XCTAssertEqual(e.state, .still)                                       // back by the no-fix fallback
+        XCTAssertEqual(stillPoints(out), [])
+    }
+
+    func testDeepSleepDuringUnconfirmedStretchWritesNothing() throws {
+        var (e, s, _) = try stillEngine()
+        for i in 1...90 { send(&e, .tick, s + Double(i) * 30) }
+        var out = send(&e, .deepSleepChanged(true), s + 2730)
+        for i in 1...80 { out += send(&e, .tick, s + 2730 + Double(i) * 30) }
+        XCTAssertEqual(stillPoints(out), [])
+        let wake = send(&e, .geofenceExit, s + 6000)
+        XCTAssert(wake.contains(.resolveDeparture(stillSince: at(s), until: at(s + 1800))), "\(wake)")
     }
 }

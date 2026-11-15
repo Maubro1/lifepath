@@ -76,11 +76,12 @@ import UIKit
         motion.startActivity()
         refreshConditions()
         applyGPS()
-        // Relaunched after a rest (swiped away, or a fence exit while suspended): backfill it up to the departure.
+        // Relaunched after a rest (swiped away, phone off, a fence exit while suspended): backfill it up to the departure,
+        // at most 30 min past the last still point, the longest any reading can have confirmed it.
         if let p = last, p.kind == .still {
             lastStill = p
             lastWakeReason = "relaunch"
-            execute(.resolveDeparture(stillSince: p.t), now)
+            execute(.resolveDeparture(stillSince: p.t, until: min(now, p.t.addingTimeInterval(1800))), now)
         }
     }
 
@@ -165,7 +166,7 @@ import UIKit
             buffer.add(p, at: now)
             lastPoint = p.t
             lastStill = p
-        case .resolveDeparture(let since):
+        case .resolveDeparture(let since, let until):
             guard let still = lastStill else { break }
             let fence = Fence(lat: still.lat, lon: still.lon, radius: still.hAcc)
             let reason = lastWakeReason
@@ -173,7 +174,7 @@ import UIKit
                 let departure = await motion.departure(stillSince: since, until: now)
                 // Unknown departure after a position-based wake: the walked stretch stays a gap, not still points.
                 if departure == nil, ["geofence", "slc", "relaunch", "spotcheck"].contains(reason) { return }
-                for p in Backfill.stillPoints(fence: fence, from: still.t, to: departure ?? now) { buffer.add(p, at: Date()) }
+                for p in Backfill.stillPoints(fence: fence, from: still.t, to: min(departure ?? now, until)) { buffer.add(p, at: Date()) }
             }
         case .fillUnconfirmed(let from, let to):
             guard let still = lastStill else { break }

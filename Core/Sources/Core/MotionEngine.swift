@@ -29,7 +29,7 @@ public enum Command: Sendable, Equatable {
     case setKeepAlive(Bool)                 // false only in deep sleep
     case armGeofence(Fence), disarmGeofence
     case writeStillPoint(FilteredPoint)
-    case resolveDeparture(stillSince: Date) // app queries CoreMotion history, then backfills
+    case resolveDeparture(stillSince: Date, until: Date) // app queries CoreMotion history, then backfills up to `until` at most
     case fillUnconfirmed(from: Date, to: Date) // app backfills still points over (from, to) only if motion history is clean
     case log(LoggedEvent)
 }
@@ -51,7 +51,8 @@ public struct MotionEngine: Sendable {
     private var lastKnown: Fence?             // last accepted fix or trusted wake fix, radius clamp(hAcc, 20, 100)
     private var stillSince: Date?
     private var lastStillPoint: Date?
-    private var lastConfirmed = Date.distantPast   // Still entry or the last reading inside the rest area
+    private var lastConfirmed = Date.distantPast   // Still entry on a fix or the last reading inside the rest area
+    private var lastFixAt = Date.distantPast       // last accepted fix or trusted wake fix
     private var spotDelay: TimeInterval = 30
     private var spotChecking = false
     private var stillByFallback = false       // the current/last Still came from the no-fix fallback
@@ -82,7 +83,7 @@ public struct MotionEngine: Sendable {
             lastVehicle = now
             if confident { lastConfidentVehicle = now; wanderFence = nil }   // backing out slowly is no wander
         case .wakeFix(let s, _) where (0...100).contains(s.hAcc):   // a vague fix must not pin the place
-            lastKnown = Self.pin(s.lat, s.lon, s.hAcc)
+            lastKnown = Self.pin(s.lat, s.lon, s.hAcc); lastFixAt = now
             wanderOutside(s.lat, s.lon)
         case .steps, .activity, .wakeFix, .geofenceExit, .spotCheckDue, .spotCheckEnded, .deepSleepChanged: break
         }
@@ -107,7 +108,7 @@ public struct MotionEngine: Sendable {
     }
 
     private mutating func onFix(_ p: FilteredPoint, _ now: Date) -> [Command] {
-        quietSince = now
+        quietSince = now; lastFixAt = now
         lastKnown = Self.pin(p.lat, p.lon, p.hAcc)
         needFixAfterWake = false
         if p.speed > 7 { lastVehicle = now }
@@ -172,12 +173,14 @@ public struct MotionEngine: Sendable {
 
     /// A nil fence (nothing ever known) still stops GPS; the first wake fix then pins the place.
     private mutating func goStill(_ f: Fence?, _ now: Date, fallback: Bool = false, writePoint: Bool = true) -> [Command] {
-        state = .still; wanderFence = nil; fence = f; stillSince = now; lastStillPoint = now; lastConfirmed = now
+        state = .still; wanderFence = nil; fence = f; stillSince = now; lastStillPoint = now
+        lastConfirmed = fallback ? lastFixAt : now   // the no-fix fallback is confirmed only by its last fix
         fixes = []; spotDelay = 30; stillByFallback = fallback; needFixAfterWake = false; stepLog = []; walkedAt = nil
         var out: [Command] = [.stopRecording]
         if let f { out.append(.armGeofence(Fence(lat: f.lat, lon: f.lon, radius: 200))) }
-        out.append(deepSleep ? .setKeepAlive(false) : .scheduleSpotCheck(after: spotDelay))
-        if let f, writePoint { out.append(.writeStillPoint(f.stillPoint(at: now))) }
+        if deepSleep { out.append(.setKeepAlive(false)) }
+        out.append(.scheduleSpotCheck(after: deepSleep ? 900 : spotDelay))
+        if let f, writePoint, confirmed(now) { out.append(.writeStillPoint(f.stillPoint(at: now))) }
         return out + [log("state", "still", now)]
     }
 
@@ -211,7 +214,7 @@ public struct MotionEngine: Sendable {
         case .geofenceExit:
             return wake("geofence", now)
         case .spotCheckDue:
-            guard !deepSleep, !spotChecking else { return [] }
+            guard !spotChecking else { return [] }
             spotChecking = true
             return [.startSpotCheck]
         case .spotCheckEnded:
@@ -219,7 +222,7 @@ public struct MotionEngine: Sendable {
             if spotChecking {
                 spotChecking = false
                 spotDelay = min(spotDelay * 2, 300)
-                out = deepSleep ? [.stopSpotCheck] : [.stopSpotCheck, .scheduleSpotCheck(after: spotDelay)]
+                out = [.stopSpotCheck, .scheduleSpotCheck(after: deepSleep ? 900 : spotDelay)]
             }
             return out + stillPointIfDue(now)
         case .tick:
@@ -244,16 +247,16 @@ public struct MotionEngine: Sendable {
     private mutating func wake(_ reason: String, _ now: Date, wander: Bool = false) -> [Command] {
         var out: [Command] = spotChecking ? [.stopSpotCheck] : []
         out += [.startRecording, .disarmGeofence, .setKeepAlive(true)]
-        // An unconfirmed light rest is not backfilled up to the departure either: nothing confirmed the place.
-        if let s = stillSince, confirmed(now) { out.append(.resolveDeparture(stillSince: s)) }
+        // The departure backfill covers only confirmed time: nothing confirmed the place after that.
+        if let s = stillSince { out.append(.resolveDeparture(stillSince: s, until: min(now, lastConfirmed.addingTimeInterval(1800)))) }
         state = .moving; spotChecking = false; stillSince = nil; quietSince = now; needFixAfterWake = stillByFallback
         visitFence = fence; wanderFence = wander ? fence : nil; wanderSince = now; wanderFixed = false
         return out + [log("wake", reason, now), log("state", "moving", now)]
     }
 
-    /// Light rest writes a point at t only if a reading confirmed presence at most 30 min before t (t - lastConfirmed
-    /// <= 1800 s); deep sleep keeps its wake backfill. The unconfirmed stretch starts at the last point written.
-    private func confirmed(_ now: Date) -> Bool { deepSleep || now.timeIntervalSince(lastConfirmed) <= 1800 }
+    /// A still point at t needs a reading that confirmed presence at most 30 min before t (t - lastConfirmed <= 1800 s),
+    /// in deep sleep too. The unconfirmed stretch starts at the last point written.
+    private func confirmed(_ now: Date) -> Bool { now.timeIntervalSince(lastConfirmed) <= 1800 }
 
     /// A reading (hAcc <= 100 m) consistent with the rest area, allowing for its accuracy, confirms presence. After an
     /// unconfirmed stretch the app may fill it from motion history; a point is written for now.
@@ -278,7 +281,7 @@ public struct MotionEngine: Sendable {
         if state == .still {
             if on {
                 if spotChecking { spotChecking = false; out.append(.stopSpotCheck) }
-                out.append(.setKeepAlive(false))
+                out += [.setKeepAlive(false), .scheduleSpotCheck(after: 900)]
             } else {
                 spotDelay = 30
                 out += [.setKeepAlive(true), .scheduleSpotCheck(after: spotDelay)]
