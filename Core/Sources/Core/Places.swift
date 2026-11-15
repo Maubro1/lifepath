@@ -81,6 +81,23 @@ public enum Places {
         return out
     }
 
+    /// Which visits read from one window of points are finished and safe to learn, and where the next read starts.
+    /// Open: the run reaches the window's last point and nothing ends it yet (a later chunk, or less than 30 min before `now` in the last one).
+    /// Overlapping a stored visit means it was learned already (the re-read overlap).
+    /// `stalled`: the open run begins at the window's first point, so the caller must widen the window or the cursor never advances.
+    // shortcut: a re-read visit that overlaps a stored one but ends later (backfilled time) is skipped whole, not extended; no such case arises while stored visits are only finished ones.
+    public static func settle(visits: [(start: Date, end: Date, points: [FilteredPoint])], first: Date, lastT: Date, now: Date, isLast: Bool, stored: [Visit])
+        -> (finished: [(start: Date, end: Date, points: [FilteredPoint])], next: Date, stalled: Bool) {
+        var finished: [(start: Date, end: Date, points: [FilteredPoint])] = []
+        for v in visits {
+            if v.points.last?.t == lastT, isLast ? now.timeIntervalSince(v.end) <= 1800 : true {
+                return (finished, v.start, !isLast && v.points.first?.t == first)
+            }
+            if !stored.contains(where: { v.start <= $0.end && v.end >= $0.start }) { finished.append(v) }
+        }
+        return (finished, lastT, false)
+    }
+
     static let halfLife: TimeInterval = 60 * 86_400, recentHalfLife: TimeInterval = 30 * 86_400
 
     static func day(_ t: Date) -> Int {

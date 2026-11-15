@@ -141,6 +141,29 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(again.map(\.end), first.map(\.end))   // a partial re-read finds the same rest end
     }
 
+    func testSettle() {
+        let now = day0 + 10 * day
+        let tail = visit(at: day0, minutes: 120)                     // 10:00-12:00, stored
+        let stored = [Visit(start: tail.start, end: tail.end, placeId: 1)]
+        let later = visit(at: day0 + 3 * day, minutes: 30)
+        // overlap tail: re-reading from 11:30 finds 11:30-12:00 again; it is skipped, a new one is kept
+        let reread = tail.points.filter { $0.t >= day0 + 5400 } + [pt(day0 + 7500, north: 500, east: 0, kind: .moving)] + later.points + [pt(later.end + 60, north: 900, east: 0, kind: .moving)]
+        var s = Places.settle(visits: Places.visits(from: reread), first: reread[0].t, lastT: reread.last!.t, now: now, isLast: true, stored: stored)
+        XCTAssertEqual(s.finished.map(\.start), [later.start]); XCTAssertEqual(s.next, reread.last!.t); XCTAssertFalse(s.stalled)
+        // open run at a chunk end is held back; the cursor goes to its start
+        let openRun = tail.points
+        s = Places.settle(visits: Places.visits(from: openRun), first: openRun[0].t + 1, lastT: openRun.last!.t, now: now, isLast: false, stored: [])
+        XCTAssertTrue(s.finished.isEmpty); XCTAssertEqual(s.next, tail.start); XCTAssertFalse(s.stalled)
+        // last chunk: a run ending within 30 min of now is open, older than that it is finished
+        s = Places.settle(visits: Places.visits(from: openRun), first: openRun[0].t - 1, lastT: openRun.last!.t, now: tail.end + 1800, isLast: true, stored: [])
+        XCTAssertTrue(s.finished.isEmpty)
+        s = Places.settle(visits: Places.visits(from: openRun), first: openRun[0].t - 1, lastT: openRun.last!.t, now: tail.end + 1801, isLast: true, stored: [])
+        XCTAssertEqual(s.finished.map(\.start), [tail.start]); XCTAssertEqual(s.next, tail.end)
+        // a run filling the whole chunk stalls: the caller must widen
+        s = Places.settle(visits: Places.visits(from: openRun), first: openRun[0].t, lastT: openRun.last!.t, now: now, isLast: false, stored: [])
+        XCTAssertTrue(s.stalled); XCTAssertEqual(s.next, tail.start)
+    }
+
     func testVisitsNeedTenMinutes() throws {
         var pts: [FilteredPoint] = []
         var t = day0

@@ -204,34 +204,47 @@ public final class Diary: Sendable {
 
     /// One transaction. `removing` = ids merged away (their cells already live in the survivor).
     public func savePlaces(_ places: [Place], removing ids: [Int64]) throws {
+        try pool.write { db in try Self.writePlaces(db, places, removing: ids) }
+    }
+
+    public func saveVisits(_ visits: [Visit]) throws {
+        try pool.write { db in try Self.writeVisits(db, visits) }
+    }
+
+    /// Places, merged-away ids, visits and the learning cursor in one transaction, so a crash can never count a visit twice.
+    public func saveLearned(places: [Place], removing ids: [Int64], visits: [Visit], meta key: String, _ value: String) throws {
         try pool.write { db in
-            for id in ids {
-                try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [id])
-                try db.execute(sql: "DELETE FROM place WHERE id = ?", arguments: [id])
-            }
-            for p in places {
-                let pin = p.pin   // cache only: loading recomputes it
-                try db.execute(sql: """
-                    INSERT OR REPLACE INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """, arguments: [p.id, p.name, p.updatedAt.timeIntervalSince1970, p.totalSeconds, p.visits, p.isCandidate,
-                                     pin?.lat, pin?.lon, p.visitDays.sorted().map(String.init).joined(separator: ","),
-                                     p.lastVisit.timeIntervalSince1970])
-                try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [p.id])
-                for c in Set(p.cells.keys).union(p.recent.keys) {
-                    try db.execute(sql: "INSERT INTO placeCell(placeId, x, y, weight, recent) VALUES (?,?,?,?,?)",
-                                   arguments: [p.id, c.x, c.y, p.cells[c], p.recent[c]])
-                }
+            try Self.writePlaces(db, places, removing: ids)
+            try Self.writeVisits(db, visits)
+            try db.execute(sql: "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)", arguments: [key, value])
+        }
+    }
+
+    private static func writePlaces(_ db: Database, _ places: [Place], removing ids: [Int64]) throws {
+        for id in ids {
+            try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM place WHERE id = ?", arguments: [id])
+        }
+        for p in places {
+            let pin = p.pin   // cache only: loading recomputes it
+            try db.execute(sql: """
+                INSERT OR REPLACE INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                """, arguments: [p.id, p.name, p.updatedAt.timeIntervalSince1970, p.totalSeconds, p.visits, p.isCandidate,
+                                 pin?.lat, pin?.lon, p.visitDays.sorted().map(String.init).joined(separator: ","),
+                                 p.lastVisit.timeIntervalSince1970])
+            try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [p.id])
+            for c in Set(p.cells.keys).union(p.recent.keys) {
+                try db.execute(sql: "INSERT INTO placeCell(placeId, x, y, weight, recent) VALUES (?,?,?,?,?)",
+                               arguments: [p.id, c.x, c.y, p.cells[c], p.recent[c]])
             }
         }
     }
 
-    public func saveVisits(_ visits: [Visit]) throws {
-        try pool.write { db in
-            for v in visits {
-                try db.execute(sql: "INSERT OR REPLACE INTO visit(start, end, placeId) VALUES (?,?,?)",
-                               arguments: [v.start.timeIntervalSince1970, v.end.timeIntervalSince1970, v.placeId])
-            }
+    private static func writeVisits(_ db: Database, _ visits: [Visit]) throws {
+        for v in visits {
+            try db.execute(sql: "INSERT OR REPLACE INTO visit(start, end, placeId) VALUES (?,?,?)",
+                           arguments: [v.start.timeIntervalSince1970, v.end.timeIntervalSince1970, v.placeId])
         }
     }
 

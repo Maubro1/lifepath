@@ -241,6 +241,16 @@ final class DiaryTests: XCTestCase {
         XCTAssertEqual(try diary.meta("k"), "2")
     }
 
+    func testSaveLearnedWritesPlacesVisitsAndCursorTogether() throws {
+        let diary = try Diary(path: tempPath())
+        let a = place(1, cells: [PlaceCell(x: 1, y: 1): 2]), b = place(2, cells: [PlaceCell(x: 9, y: 9): 4])
+        try diary.savePlaces([a, b], removing: [])
+        try diary.saveLearned(places: [a], removing: [2], visits: [Visit(start: d(10), end: d(20), placeId: 1)], meta: "placesProcessedUntil", "20")
+        XCTAssertEqual(try diary.places(), [a])
+        XCTAssertEqual(try diary.visits(from: d(0), to: d(50)), [Visit(start: d(10), end: d(20), placeId: 1)])
+        XCTAssertEqual(try diary.meta("placesProcessedUntil"), "20")
+    }
+
     func testV3UpgradeKeepsPointsSmoothedAndTripLines() throws {
         let path = tempPath()
         do {
