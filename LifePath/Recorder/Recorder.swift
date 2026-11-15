@@ -76,11 +76,12 @@ import UIKit
         motion.startActivity()
         refreshConditions()
         applyGPS()
-        // Relaunched after a rest (swiped away, or a fence exit while suspended): backfill it up to the departure.
+        // Relaunched after a rest (swiped away, phone off, a fence exit while suspended): backfill it up to the departure,
+        // at most 30 min past the last still point, the longest any reading can have confirmed it.
         if let p = last, p.kind == .still {
             lastStill = p
             lastWakeReason = "relaunch"
-            execute(.resolveDeparture(stillSince: p.t), now)
+            execute(.resolveDeparture(stillSince: p.t, until: min(now, p.t.addingTimeInterval(1800))), now)
         }
     }
 
@@ -104,8 +105,7 @@ import UIKit
         }
         configureRecording()
         applyGPS()
-        // Keep-alive off lets iOS suspend the app: write before that.
-        if engine.state != before || buffer.isDue(at: now) || commands.contains(.setKeepAlive(false)) { flush() }
+        if engine.state != before || buffer.isDue(at: now) { flush() }
     }
 
     func recordingFix(_ s: Sample) {
@@ -125,6 +125,11 @@ import UIKit
         guard Date().timeIntervalSince(s.t) <= 10 else { return false }
         send(.wakeFix(s, reason: reason))
         return true
+    }
+
+    /// Keep-alive positions confirm presence while Still; a stale one (> 10 s) is only a tick.
+    func confirmFix(_ s: Sample) {
+        send(Date().timeIntervalSince(s.t) <= 10 ? .confirmFix(s) : .tick)
     }
 
     func activityChanged(_ a: Activity, confident: Bool) {
@@ -160,7 +165,7 @@ import UIKit
             buffer.add(p, at: now)
             lastPoint = p.t
             lastStill = p
-        case .resolveDeparture(let since):
+        case .resolveDeparture(let since, let until):
             guard let still = lastStill else { break }
             let fence = Fence(lat: still.lat, lon: still.lon, radius: still.hAcc)
             let reason = lastWakeReason
@@ -168,7 +173,18 @@ import UIKit
                 let departure = await motion.departure(stillSince: since, until: now)
                 // Unknown departure after a position-based wake: the walked stretch stays a gap, not still points.
                 if departure == nil, ["geofence", "slc", "relaunch", "spotcheck"].contains(reason) { return }
-                for p in Backfill.stillPoints(fence: fence, from: still.t, to: departure ?? now) { buffer.add(p, at: Date()) }
+                for p in Backfill.stillPoints(fence: fence, from: still.t, to: min(departure ?? now, until)) { buffer.add(p, at: Date()) }
+            }
+        case .fillUnconfirmed(let from, let to):
+            guard let still = lastStill else { break }
+            let fence = Fence(lat: still.lat, lon: still.lon, radius: still.hAcc)
+            Task {
+                // No motion permission, a step burst or moving activity in between: the stretch stays a gap.
+                guard MotionService.available, await motion.departure(stillSince: from, until: to) == nil else {
+                    return log("gap", "unconfirmed")
+                }
+                // The engine writes the point at `to` itself.
+                for p in Backfill.stillPoints(fence: fence, from: from, to: to) where p.t < to { buffer.add(p, at: Date()) }
             }
         case .log(var e):
             if e.kind == "deepSleep", e.detail == "on" { e.detail = "on \(deepSleepReason)" }

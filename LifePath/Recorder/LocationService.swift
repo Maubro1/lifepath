@@ -98,7 +98,7 @@ import CoreLocation
             if id == ObjectIdentifier(recording) {
                 for l in locations { recorder.recordingFix(Self.sample(l)) }
             } else if id == ObjectIdentifier(keepAlive) {
-                recorder.send(.tick)   // location discarded
+                if let l = locations.last { recorder.confirmFix(Self.sample(l)) }
             } else if let l = locations.last {
                 recorder.wakeFix(Self.sample(l), reason: "slc")
             }
