@@ -74,6 +74,15 @@ public func meta(_ key: String) throws -> String?;  public func setMeta(_ key: S
 - Recorder: on entering Settling and at launch while Still, finds the known place whose shape contains the fence centre (from the places the PlaceService last loaded, kept in memory) and sends `.enteredPlace`.
 - [ ] Failing tests: `testKnownPlaceUsesShapeNotCircle`, `testStillPointAtPin`, `testPotteringAtPlaceNeedsFiftySteps`, `testSpotCheckCapRisesAtPlace`, `testLeavingPlaceStillWakesFast` (fix 80 m outside the shape with hAcc 10 → wake), `testCandidateIsNotAPlace`. RED → GREEN; CI build; commit.
 
+### Task 4b: Still points need confirmed presence (engine)
+
+**Files:** Modify `Core/Sources/Core/MotionEngine.swift`, `LifePath/Recorder/Recorder.swift`; Test `MotionEngineTests.swift`
+- The engine tracks `lastConfirmed: Date` while Still: set on entering Still and whenever a location reading arrives that is consistent with the rest area (`.wakeFix` inside the fence/shape allowing accuracy, or a new event `.confirmFix(Sample)` the Recorder sends for keep-alive readings).
+- `stillPointIfDue` writes only when `now − lastConfirmed ≤ 1800 s`. Otherwise it records `unconfirmedSince` and writes nothing.
+- On the next confirming reading after an unconfirmed stretch, emit `.resolveDeparture(stillSince: unconfirmedSince)`-like command `.fillUnconfirmed(from:to:)`; the Recorder checks CoreMotion history (no step burst ≥ 15 steps/60 s, no confident moving activity) over that stretch and, only if clean, backfills still points every 5 min; otherwise leaves the gap and logs `gap unconfirmed`.
+- A reading clearly outside the rest area still wakes as before.
+- [ ] Failing tests: `testNoConfirmationStopsStillPoints` (Still, ticks without readings for 45 min → no still point after 30 min), `testConfirmationAfterGapRequestsFill`, `testReadingElsewhereAfterGapWakes`, `testAirplaneModeNightIsNotAssumed` (no readings 8 h, then a reading at the same place → `.fillUnconfirmed` emitted; Recorder fills only when motion history is clean). RED → GREEN; commit.
+
 ### Task 5: Places on the map
 
 **Files:** Modify `LifePath/Map/MapScreen.swift`, `TrackMapView.swift`; Create `LifePath/Places/PlaceSheet.swift`

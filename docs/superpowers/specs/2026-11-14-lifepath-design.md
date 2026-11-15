@@ -92,7 +92,7 @@ The design follows Arc Timeline's open-source engine (LocoKit2), the best-docume
 
 - **Moving**: recording manager on.
 - **Settling**: still recording. Stop is declared when the filtered position stays inside a geofence for 2 minutes (+4 minutes if automotive or cycling was seen in the last 10 minutes). The fence centre is the accuracy-weighted mean of recent fixes; radius 20–100 m, scaled by their average accuracy.
-- **Still**: recording manager off (GPS off). Position pinned to the fence centre. A still-point is written every 5 minutes. Wake signals:
+- **Still**: recording manager off (GPS off). Position pinned to the fence centre. A still-point is written every 5 minutes, but only while presence is confirmed: a location reading (keep-alive, spot check, significant change) consistent with the rest area within the last 30 minutes. Without confirmation (no signal anywhere, location services off, phone off) still-points stop; nothing is assumed. When a reading later confirms the same place and the motion chip's history shows no departure in between (no step burst, no moving activity), the unconfirmed stretch is filled in; otherwise it stays a gap. The heat map counts time only through these still-points, so it stays accurate at pins and through the night. Wake signals:
   1. `CMPedometer` live updates: ≥15 steps since stop → Moving. Works indoors.
   2. `CMMotionActivityManager`: walking/running/cycling/automotive with medium+ confidence → Moving.
   3. Spot check: the recording manager turns on for up to 20 s at growing intervals (30 s at first, doubling to a 5-minute cap the longer you're still). A fix clearly outside the fence → Moving. Catches departures without steps (car from a garage).
