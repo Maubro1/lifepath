@@ -15,22 +15,30 @@ The owner runs these on their iPhone and reports that recording works well.
 
 ## In progress: stage 2b, learned places
 
-Plan: `docs/superpowers/plans/2026-11-15-stage-2b-places.md`. Ledger: `ledger-current-stage.md` (copy of `.superpowers/sdd/2026-11-15-stage-2b-places/progress.md`). Active branch: **`places`** (pushed to GitHub).
+Plan: `docs/superpowers/plans/2026-11-15-stage-2b-places.md`. Ledger: `ledger-current-stage.md` (copy of `.superpowers/sdd/2026-11-15-stage-2b-places/progress.md`; its last section lists everything from the final session). Active branch: **`places`** (pushed to GitHub). All task branches are merged into `places`; the old `places-t*` branches and worktrees can be deleted.
 
 | Task | Status at last update |
 |---|---|
 | 1. Places core (time-density shapes, density-peak pin, learning, merging) | Done, reviewed, merged into `places`. |
-| 2. Diary v4 (place, placeCell, visit, meta tables) | Done, reviewed (data-safe upgrade), merged into `places`. |
-| 3. Learning service (folds finished rests into places while open or charging) | An implementer committed `ec7f602` on `places`; check CI and the ledger; it still needs its task review. |
-| 4b. Still points need confirmed presence (no assumed location without signal) | An implementer was building it on branch `places-t4b` (from `4ca923a`). Check whether that branch exists on GitHub and what it contains; if incomplete, redo from the plan's Task 4b. |
-| 1b. Pin rules (points, hiding after 6 months) | Being built on branch `places-t1b`. |
+| 2. Diary v4 (place, placeCell, visit, meta tables) | Done, reviewed, merged into `places`. |
+| 3. Learning service (folds finished rests into places while open or charging) | Done: reviewed, fixed (Places.settle in Core, atomic Diary.saveLearned), re-reviewed, on `places`. |
+| 4b. Still points need confirmed presence | Done: reviewed twice, merged into `places`. Deep sleep keeps the low-accuracy keep-alive on and runs a spot check every 15 min; no reading means a gap. |
+| 1b. Pin rules (points, real visits, dynamic hide rule) | Done: reviewed, fixed (84ff6fd), merged into `places` (d428145); 150 Core tests pass locally. |
+| 1c. Diary stores realDays + recentDurations | Not started. Needed right after 1b: additive migration v5 (or rebuild from the visit table), else a reloaded place has no real days and stays hidden. |
+| R. Robustness + settings (owner priority) | A read-only audit was running; its report (if it finished) is in the ledger or must be redone: crash/kill/update safety of app and data, plus every setting with a clear name and a one-line description. Fix Critical/Important before the release. |
 | 4. Resting at a known place (engine uses visible pins) | Not started; after 1b. |
-| 5. Places on the map (pins, outlines, rename) | Not started; after 3 and 1b. |
-| 6. Final review and release v0.3.0-preview.1 | Later. |
+| 5. Places on the map (pins, outlines, rename, visibility by period) | Not started; after 1b/1c. |
+| 6. Final review and release v0.3.0-preview.1 (version 0.3.0, build 7) | Later. |
+
+CI: GitHub's anonymous API limit was exhausted during the last session, so the newest commits on `places` (0109835 through d428145) had no confirmed CI result yet. Run `bash scripts/ci-wait.sh <sha>` on the branch head first.
 
 ## Owner decision on places (made 2026-11-15)
 
-One kind of place, shown as a pin: 4 points per different day + 1 point per hour; the pin appears at 100 points. A pin hides after 6 months in a row without a real visit (≥ 5 h, or ≥ half the median of that place's recent visits) and returns on one real visit. Nothing is deleted; past map periods show the pins of that time. No invisible places. Task 1b (Core) implements this; Task 4 (calm resting) uses visible pins.
+One kind of place, shown as a pin: 4 points per different day + 1 point per hour; the pin appears at 100 points. A real visit lasts at least 5 h, or at least half the median of that place's last 20 visits. Hiding is dynamic: hideAfterDays = min(730, max(180, 3 × typical gap) + 30 × min(6, years known)). A stay is a run of consecutive days touched by a real visit; a gap runs from the end of one stay to the start of the next; the typical gap is the lower median of the last 8 gaps; years known counts whole years from the first visit to the last real visit. In the owner's words: a pin stays at least 6 months after the last real visit, or three times the usual gap between stays if that is longer, plus one month per year the place has been in their life (up to 6), at most 2 years. One real visit brings it back. Nothing is deleted; past map periods show the pins of that time. No invisible places, no fading, no manual "moved away" button for now. Worked examples (all in the tests): home 8 yrs → 360 days, former home after 5 yrs → 330, school 4 yrs → 300, gym → 240, parents monthly → 360, grandparents 3×/yr → 450, holiday home yearly → 730, café → 270, internship → 180.
+
+## Owner priority (2026-11-15)
+
+The app and its data must survive crashes, updates and iOS kills, and the app must be well adjustable, with clear setting names and short descriptions where needed. Every review checks this.
 
 ## Stages after 2b (from the spec)
 
@@ -45,4 +53,4 @@ See `docs/decisions/*.md` (every ruling and deferred minor per stage) and the le
 
 ## Things only the phone can show (ask the owner for health reports)
 
-Battery per day, warmth, wake counts per hour, spot checks per hour, gaps and their reasons, whether the 8-steps fidget threshold and the 6-week/6-month pin rules feel right.
+Battery per day, warmth, wake counts per hour, spot checks per hour, gaps and their reasons, whether the 8-steps fidget threshold and the pin rules (100 points, dynamic hiding) feel right, and whether the deep-sleep keep-alive with 15-minute spot checks stays cool and battery-light overnight.
