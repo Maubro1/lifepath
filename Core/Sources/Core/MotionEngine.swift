@@ -17,6 +17,7 @@ public enum MotionEvent: Sendable {
     case steps(Int)                         // cumulative since Still began
     case activity(Activity, confident: Bool)
     case wakeFix(Sample, reason: String)    // spot check, significant change
+    case confirmFix(Sample)                 // keep-alive position: confirms presence while Still, else a tick
     case geofenceExit
     case spotCheckDue, spotCheckEnded
     case deepSleepChanged(Bool)             // effective deep sleep (manual setting OR thermal/low power/battery)
@@ -29,6 +30,7 @@ public enum Command: Sendable, Equatable {
     case armGeofence(Fence), disarmGeofence
     case writeStillPoint(FilteredPoint)
     case resolveDeparture(stillSince: Date) // app queries CoreMotion history, then backfills
+    case fillUnconfirmed(from: Date, to: Date) // app backfills still points over (from, to) only if motion history is clean
     case log(LoggedEvent)
 }
 
@@ -49,6 +51,7 @@ public struct MotionEngine: Sendable {
     private var lastKnown: Fence?             // last accepted fix or trusted wake fix, radius clamp(hAcc, 20, 100)
     private var stillSince: Date?
     private var lastStillPoint: Date?
+    private var lastConfirmed = Date.distantPast   // Still entry or the last reading inside the rest area
     private var spotDelay: TimeInterval = 30
     private var spotChecking = false
     private var stillByFallback = false       // the current/last Still came from the no-fix fallback
@@ -74,7 +77,7 @@ public struct MotionEngine: Sendable {
             wanderOutside(p.lat, p.lon)
             wanderFixed = wanderFixed || (wanderFence != nil && now.timeIntervalSince(wanderSince) <= 60)
             return wanderReturn(now) ?? onFix(p, now)
-        case .tick: return wanderReturn(now) ?? onTick(now)
+        case .tick, .confirmFix: return wanderReturn(now) ?? onTick(now)
         case .activity(let a, let confident) where a.isVehicle:
             lastVehicle = now
             if confident { lastConfidentVehicle = now; wanderFence = nil }   // backing out slowly is no wander
@@ -169,7 +172,7 @@ public struct MotionEngine: Sendable {
 
     /// A nil fence (nothing ever known) still stops GPS; the first wake fix then pins the place.
     private mutating func goStill(_ f: Fence?, _ now: Date, fallback: Bool = false, writePoint: Bool = true) -> [Command] {
-        state = .still; wanderFence = nil; fence = f; stillSince = now; lastStillPoint = now
+        state = .still; wanderFence = nil; fence = f; stillSince = now; lastStillPoint = now; lastConfirmed = now
         fixes = []; spotDelay = 30; stillByFallback = fallback; needFixAfterWake = false; stepLog = []; walkedAt = nil
         var out: [Command] = [.stopRecording]
         if let f { out.append(.armGeofence(Fence(lat: f.lat, lon: f.lon, radius: 200))) }
@@ -198,10 +201,10 @@ public struct MotionEngine: Sendable {
             let k = Self.pin(s.lat, s.lon, s.hAcc)
             guard let f = fence else {                    // Still with no position yet: this fix pins the place
                 guard s.hAcc <= 100 else { return [] }
-                fence = k; lastKnown = k; lastStillPoint = now
+                fence = k; lastKnown = k; lastStillPoint = now; lastConfirmed = now
                 return [.armGeofence(Fence(lat: k.lat, lon: k.lon, radius: 200)), .writeStillPoint(k.stillPoint(at: now))]
             }
-            guard Geo.distance(s.lat, s.lon, f.lat, f.lon) - s.hAcc > f.radius else { return [] }
+            guard Geo.distance(s.lat, s.lon, f.lat, f.lon) - s.hAcc > f.radius else { return confirm(s, now) ?? [] }
             lastKnown = k
             stepsThreshold = 15
             return wake(reason, now)
@@ -221,6 +224,8 @@ public struct MotionEngine: Sendable {
             return out + stillPointIfDue(now)
         case .tick:
             return stillPointIfDue(now)
+        case .confirmFix(let s):
+            return (confirm(s, now) ?? []) + stillPointIfDue(now)
         case .fix, .deepSleepChanged:
             return []
         }
@@ -239,14 +244,29 @@ public struct MotionEngine: Sendable {
     private mutating func wake(_ reason: String, _ now: Date, wander: Bool = false) -> [Command] {
         var out: [Command] = spotChecking ? [.stopSpotCheck] : []
         out += [.startRecording, .disarmGeofence, .setKeepAlive(true)]
-        if let s = stillSince { out.append(.resolveDeparture(stillSince: s)) }
+        // An unconfirmed light rest is not backfilled up to the departure either: nothing confirmed the place.
+        if let s = stillSince, confirmed(now) { out.append(.resolveDeparture(stillSince: s)) }
         state = .moving; spotChecking = false; stillSince = nil; quietSince = now; needFixAfterWake = stillByFallback
         visitFence = fence; wanderFence = wander ? fence : nil; wanderSince = now; wanderFixed = false
         return out + [log("wake", reason, now), log("state", "moving", now)]
     }
 
+    /// Light rest writes a point at t only if a reading confirmed presence at most 30 min before t (t - lastConfirmed
+    /// <= 1800 s); deep sleep keeps its wake backfill. The unconfirmed stretch starts at the last point written.
+    private func confirmed(_ now: Date) -> Bool { deepSleep || now.timeIntervalSince(lastConfirmed) <= 1800 }
+
+    /// A reading (hAcc <= 100 m) consistent with the rest area, allowing for its accuracy, confirms presence. After an
+    /// unconfirmed stretch the app may fill it from motion history; a point is written for now.
+    private mutating func confirm(_ s: Sample, _ now: Date) -> [Command]? {
+        guard let f = fence, (0...100).contains(s.hAcc), Geo.distance(s.lat, s.lon, f.lat, f.lon) - s.hAcc <= f.radius else { return nil }
+        defer { lastConfirmed = now }
+        guard !confirmed(now), let from = lastStillPoint else { return [] }
+        lastStillPoint = now
+        return [.fillUnconfirmed(from: from, to: now), .writeStillPoint(f.stillPoint(at: now))]
+    }
+
     private mutating func stillPointIfDue(_ now: Date) -> [Command] {
-        guard let f = fence, let last = lastStillPoint, now.timeIntervalSince(last) >= 300 else { return [] }
+        guard let f = fence, let last = lastStillPoint, now.timeIntervalSince(last) >= 300, confirmed(now) else { return [] }
         lastStillPoint = now
         return [.writeStillPoint(f.stillPoint(at: now))]
     }

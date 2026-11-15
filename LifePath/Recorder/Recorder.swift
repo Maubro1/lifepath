@@ -127,6 +127,11 @@ import UIKit
         return true
     }
 
+    /// Keep-alive positions confirm presence while Still; a stale one (> 10 s) is only a tick.
+    func confirmFix(_ s: Sample) {
+        send(Date().timeIntervalSince(s.t) <= 10 ? .confirmFix(s) : .tick)
+    }
+
     func activityChanged(_ a: Activity, confident: Bool) {
         lastActivity = a
         send(.activity(a, confident: confident))
@@ -169,6 +174,17 @@ import UIKit
                 // Unknown departure after a position-based wake: the walked stretch stays a gap, not still points.
                 if departure == nil, ["geofence", "slc", "relaunch", "spotcheck"].contains(reason) { return }
                 for p in Backfill.stillPoints(fence: fence, from: still.t, to: departure ?? now) { buffer.add(p, at: Date()) }
+            }
+        case .fillUnconfirmed(let from, let to):
+            guard let still = lastStill else { break }
+            let fence = Fence(lat: still.lat, lon: still.lon, radius: still.hAcc)
+            Task {
+                // No motion permission, a step burst or moving activity in between: the stretch stays a gap.
+                guard MotionService.available, await motion.departure(stillSince: from, until: to) == nil else {
+                    return log("gap", "unconfirmed")
+                }
+                // The engine writes the point at `to` itself.
+                for p in Backfill.stillPoints(fence: fence, from: from, to: to) where p.t < to { buffer.add(p, at: Date()) }
             }
         case .log(var e):
             if e.kind == "deepSleep", e.detail == "on" { e.detail = "on \(deepSleepReason)" }

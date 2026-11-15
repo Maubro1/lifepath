@@ -517,4 +517,93 @@ final class MotionEngineTests: XCTestCase {
         XCTAssertEqual(scheduled(off), [30])
         XCTAssertEqual(send(&e, .spotCheckDue, s + 130), [.startSpotCheck])
     }
+
+    // MARK: confirmed presence
+
+    /// A reading `north` m from the fence centre, as keep-alive (`.confirmFix`) or spot check (`.wakeFix`).
+    func reading(_ f: Fence, north: Double, hAcc: Double, _ t: TimeInterval, wake: Bool = false) -> MotionEvent {
+        let p = Geo.offset(lat: f.lat, lon: f.lon, north: north, east: 0)
+        let s = Sample(t: at(t), lat: p.lat, lon: p.lon, hAcc: hAcc, speed: -1, course: -1)
+        return wake ? .wakeFix(s, reason: "spotcheck") : .confirmFix(s)
+    }
+    func fills(_ out: [Command]) -> [(Date, Date)] { out.compactMap { if case .fillUnconfirmed(let a, let b) = $0 { (a, b) } else { nil } } }
+
+    func testNoConfirmationStopsStillPoints() throws {
+        var (e, s, entry) = try stillEngine()
+        var points = stillPoints(entry)
+        for i in 1...90 { points += stillPoints(send(&e, .tick, s + Double(i) * 30)) }   // 45 min, no reading
+        XCTAssertEqual(points.map(\.t), stride(from: 0.0, through: 1800, by: 300).map { at(s + $0) })
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testConfirmFixInsideAreaKeepsStillPoints() throws {
+        var (e, s, entry) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        var points = stillPoints(entry), out: [Command] = []
+        for i in 1...180 {                                                    // 90 min; a keep-alive reading every 10 min
+            let t = s + Double(i) * 30
+            let c = i % 20 == 0 ? send(&e, reading(f, north: 60, hAcc: 65, t), t) : send(&e, .tick, t)
+            points += stillPoints(c); out += c
+        }
+        XCTAssertEqual(points.map(\.t), stride(from: 0.0, through: 5400, by: 300).map { at(s + $0) })
+        XCTAssert(fills(out).isEmpty)
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testInaccurateReadingDoesNotConfirm() throws {
+        var (e, s, entry) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        var points = stillPoints(entry), out: [Command] = []
+        for i in 1...120 {
+            let t = s + Double(i) * 30
+            let c = i % 20 == 0 ? send(&e, reading(f, north: 0, hAcc: 2000, t), t) : send(&e, .tick, t)
+            points += stillPoints(c); out += c
+        }
+        XCTAssertEqual(points.last?.t, at(s + 1800))
+        XCTAssert(fills(out).isEmpty)
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testConfirmationAfterGapRequestsFill() throws {
+        var (e, s, _) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        for i in 1...90 { send(&e, .tick, s + Double(i) * 30) }
+        let out = send(&e, reading(f, north: 10, hAcc: 30, s + 2710), s + 2710)
+        XCTAssertEqual(out, [.fillUnconfirmed(from: at(s + 1800), to: at(s + 2710)), .writeStillPoint(f.stillPoint(at: at(s + 2710)))])
+        XCTAssertEqual(stillPoints(send(&e, .tick, s + 3010)).map(\.t), [at(s + 3010)])   // live points resume
+        // A spot-check fix inside the area confirms too.
+        for i in 1...70 { send(&e, .tick, s + 3010 + Double(i) * 30) }
+        let spot = send(&e, reading(f, north: 0, hAcc: 15, s + 6000, wake: true), s + 6000)
+        XCTAssertEqual(fills(spot).map(\.0), [at(s + 4510)])
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testReadingElsewhereAfterGapWakes() throws {
+        var (e, s, _) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        for i in 1...90 { send(&e, .tick, s + Double(i) * 30) }
+        let out = send(&e, reading(f, north: 300, hAcc: 20, s + 2710, wake: true), s + 2710)
+        XCTAssertEqual(e.state, .moving)
+        XCTAssert(out.contains(.startRecording))
+        XCTAssert(out.contains(log(s + 2710, "wake", "spotcheck")))
+        XCTAssert(fills(out).isEmpty)
+        // Nothing confirmed the unconfirmed stretch: no departure backfill over it either.
+        XCTAssertFalse(out.contains { if case .resolveDeparture = $0 { true } else { false } }, "\(out)")
+    }
+
+    func testAirplaneModeNightIsNotAssumed() throws {
+        var (e, s, _) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        XCTAssertEqual(stillPoints(send(&e, .tick, s + 3600)), [])            // a stray tick in the night writes nothing
+        let out = send(&e, reading(f, north: 0, hAcc: 20, s + 28800), s + 28800)
+        XCTAssertEqual(fills(out).map(\.0), [at(s)])
+        XCTAssertEqual(fills(out).map(\.1), [at(s + 28800)])
+        // The app fills only when motion history shows no departure (no moving activity, no step burst).
+        XCTAssertNil(Backfill.departure(stillSince: at(s), activities: [(at(s + 9000), .stationary)], stepTimes: [at(s + 9000)]))
+        let burst = (0..<15).map { at(s + 9000 + Double($0) * 2) }
+        XCTAssertNotNil(Backfill.departure(stillSince: at(s), activities: [], stepTimes: burst))
+        XCTAssertNotNil(Backfill.departure(stillSince: at(s), activities: [(at(s + 9000), .walking)], stepTimes: []))
+        let filled = Backfill.stillPoints(fence: f, from: at(s), to: at(s + 28800)).filter { $0.t < at(s + 28800) }
+        XCTAssertEqual(filled.count, 95)
+    }
 }
