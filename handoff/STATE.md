@@ -25,12 +25,12 @@ Plan: `docs/superpowers/plans/2026-11-15-stage-2b-places.md`. Ledger: `ledger-cu
 | 4b. Still points need confirmed presence | Done: reviewed twice, merged into `places`. Deep sleep keeps the low-accuracy keep-alive on and runs a spot check every 15 min; no reading means a gap. |
 | 1b. Pin rules (points, real visits, dynamic hide rule) | Done: reviewed, fixed (84ff6fd), merged into `places` (d428145); 150 Core tests pass locally. |
 | 1c. Diary stores realDays + recentDurations | Not started. Needed right after 1b: additive migration v5 (or rebuild from the visit table), else a reloaded place has no real days and stays hidden. |
-| R. Robustness + settings (owner priority) | A read-only audit was running; its report (if it finished) is in the ledger or must be redone: crash/kill/update safety of app and data, plus every setting with a clear name and a one-line description. Fix Critical/Important before the release. |
+| R. Robustness + settings (owner priority) | Audit done: [robustness-audit.md](robustness-audit.md). Next task after 1c: fix its Critical items (minimal "Save a backup" button, visible "Not saving since" status, 1c) and Important items 4-8, and apply the proposed setting names and descriptions. Keep it lean (owner: tests only at critical moments). |
 | 4. Resting at a known place (engine uses visible pins) | Not started; after 1b. |
 | 5. Places on the map (pins, outlines, rename, visibility by period) | Not started; after 1b/1c. |
 | 6. Final review and release v0.3.0-preview.1 (version 0.3.0, build 7) | Later. |
 
-CI: GitHub's anonymous API limit was exhausted during the last session, so the newest commits on `places` (0109835 through d428145) had no confirmed CI result yet. Run `bash scripts/ci-wait.sh <sha>` on the branch head first.
+CI: GitHub's anonymous API limit was exhausted during the last session, so the newest commits on `places` (0109835 through d428145) had no confirmed CI result yet. Run `bash scripts/ci-wait.sh <sha>` on the branch head first and fix any build errors (PlaceService, Diary.saveLearned and the Recorder changes compile only on CI).
 
 ## Owner decision on places (made 2026-11-15)
 
