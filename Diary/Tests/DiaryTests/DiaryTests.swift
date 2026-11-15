@@ -208,4 +208,70 @@ final class DiaryTests: XCTestCase {
         try diary.saveTripLines([line(1, 2)], replacingFrom: d(0))
         XCTAssertEqual(try diary.tripLinesUntil(), d(2))
     }
+
+    private func place(_ id: Int64, name: String? = nil, cells: [PlaceCell: Double]) -> Place {
+        Place(id: id, name: name, cells: cells, recent: [PlaceCell(x: 1, y: 1): 0.5], visitDays: [20_000, 20_003],
+              updatedAt: d(500), lastVisit: d(400), totalSeconds: 900, visits: 3, isCandidate: false)
+    }
+
+    func testPlacesRoundTripMergeRenameVisitsMeta() throws {
+        let diary = try Diary(path: tempPath())
+        let a = place(1, name: "Home", cells: [PlaceCell(x: 1, y: 1): 2, PlaceCell(x: 2, y: 1): 1])
+        let b = place(2, cells: [PlaceCell(x: 9, y: 9): 4])
+        try diary.savePlaces([a, b], removing: [])
+        XCTAssertEqual(try diary.places(), [a, b])
+
+        var merged = a
+        merged.cells[PlaceCell(x: 9, y: 9)] = 4
+        try diary.savePlaces([merged], removing: [2])   // survivor keeps all cells, loser gone
+        XCTAssertEqual(try diary.places(), [merged])
+
+        try diary.renamePlace(1, to: "Flat")
+        XCTAssertEqual(try diary.places().first?.name, "Flat")
+        try diary.renamePlace(1, to: nil)
+        XCTAssertNil(try diary.places().first?.name)
+
+        try diary.saveVisits([Visit(start: d(10), end: d(20), placeId: 1), Visit(start: d(100), end: d(200), placeId: nil)])
+        try diary.saveVisits([Visit(start: d(10), end: d(30), placeId: 1)])
+        XCTAssertEqual(try diary.visits(from: d(0), to: d(50)), [Visit(start: d(10), end: d(30), placeId: 1)])
+        XCTAssertEqual(try diary.visits(from: d(0), to: d(1000)).count, 2)
+
+        XCTAssertNil(try diary.meta("k"))
+        try diary.setMeta("k", "1"); try diary.setMeta("k", "2")
+        XCTAssertEqual(try diary.meta("k"), "2")
+    }
+
+    func testV3UpgradeKeepsPointsSmoothedAndTripLines() throws {
+        let path = tempPath()
+        do {
+            let q = try DatabaseQueue(path: path)
+            try q.write { db in
+                try db.execute(sql: """
+                    CREATE TABLE point(
+                        t REAL PRIMARY KEY, lat REAL, lon REAL, rawLat REAL, rawLon REAL,
+                        hAcc REAL, speed REAL, kind TEXT, course REAL);
+                    CREATE TABLE event(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, t REAL, kind TEXT, detail TEXT);
+                    CREATE INDEX event_t ON event(t);
+                    CREATE TABLE smoothedPoint(t REAL PRIMARY KEY, lat REAL, lon REAL);
+                    CREATE TABLE tripLine(
+                        start REAL PRIMARY KEY, end REAL, minLat REAL, maxLat REAL, minLon REAL, maxLon REAL,
+                        distance REAL, coords BLOB);
+                    CREATE INDEX tripLine_end ON tripLine(end);
+                    CREATE TABLE grdb_migrations(identifier TEXT NOT NULL PRIMARY KEY);
+                    INSERT INTO grdb_migrations VALUES ('v1');
+                    INSERT INTO grdb_migrations VALUES ('v2');
+                    INSERT INTO grdb_migrations VALUES ('v3');
+                    INSERT INTO point VALUES (100, 1, 2, 3, 4, 5, 6, 'still', -1);
+                    INSERT INTO smoothedPoint VALUES (100, 7, 8);
+                    INSERT INTO tripLine VALUES (1, 2, 0, 1, 0, 1, 5, x'');
+                    """)
+            }
+        }
+        let diary = try Diary(path: path)
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(100)])
+        XCTAssertEqual(try diary.smoothed(from: d(0), to: d(1000)).map(\.lat), [7])
+        XCTAssertEqual(try diary.tripLinesUntil(), d(2))
+        XCTAssertEqual(try diary.places(), [])
+    }
 }
