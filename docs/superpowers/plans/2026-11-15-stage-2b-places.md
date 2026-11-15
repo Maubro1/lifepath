@@ -53,9 +53,10 @@ public enum Places {
 
 **Files:** Modify `Core/Sources/Core/Places.swift`, `PlacesTests.swift`
 - `Place.points: Double` = 4 · visitDays.count + totalSeconds / 3600 (computed). Promotion: `isCandidate = points < 100`, re-evaluated after every joined visit and after a merge (replace the 5-days/7-apart rule).
-- `Place.recentDurations: [Double]` (last 20 visit durations, seconds) and `Place.lastRealVisit: Date` (updated when a visit lasts ≥ 5 h or ≥ 0.5 × median(recentDurations before this visit); the first visit counts as real if ≥ 5 h).
-- `Place.isVisible(at now: Date) -> Bool` = !isCandidate && now − lastRealVisit ≤ 182 days.
-- [ ] Tests: `testHomeBecomesPinInAboutSixDays` (14 h/day), `testSchoolTwoWeeks` (6 h × 10 days), `testOneLongStayNeverPins` (10 h once), `testBenchNeverPins`, `testHiddenAfterSixMonthsWithoutRealVisit`, `testOneRealVisitBringsItBack`, `testShortGymVisitsKeepGymVisible` (1.5 h visits weekly keep it visible), `testShortDropInDoesNotCount` (10 min at home after 7 months away → still hidden), `testMergeReevaluatesPoints`. Remove the 5-days tests. RED → GREEN; commit.
+- `Place.recentDurations: [Double]` (last 20 visit durations, seconds) and `Place.realDays: Set<Int>` (local day numbers any real visit touches, start through end; life-long, merge = union). A visit is real when it lasts ≥ 5 h or ≥ 0.5 × lower median(recentDurations before this visit); the first visit counts as real if ≥ 5 h.
+- `Place.hideAfterDays: Int` = min(730, max(180, 3 × typicalGap) + 30 × min(6, yearsKnown)). Stays are runs of consecutive days in `realDays`; a gap is the next stay's start day − the previous stay's end day; typicalGap = lower median of the last 8 gaps (0 with none); yearsKnown = (last real day − first visit day) / 365, whole years.
+- `Place.isVisible(at now: Date) -> Bool` = !isCandidate && day(now) − realDays.max() ≤ hideAfterDays; a place with no real day is hidden.
+- [ ] Tests: `testHomeBecomesPinInAboutSixDays` (14 h/day), `testSchoolTwoWeeks` (6 h × 10 days), `testOneLongStayNeverPins` (10 h once), `testBenchNeverPins`, `testHiddenAfterSixMonthsWithoutRealVisit`, `testHideAfterDays` (home 360, former home 330, school 300, gym 240, parents 360, grandparents 450, holiday home 730, café 270, internship 180), `testBreaksDoNotHideAndARealVisitBringsItBack`, `testOneRealVisitBringsItBack`, `testShortGymVisitsKeepGymVisible` (1.5 h visits weekly keep it visible), `testShortDropInDoesNotCount` (10 min at home after 7 months away → still hidden), `testMergeReevaluatesPoints`. Remove the 5-days tests. RED → GREEN; commit.
 
 ### Task 2: Diary v4
 
