@@ -30,37 +30,85 @@ final class PlacesTests: XCTestCase {
     }
 
     /// Visits on day offsets `days` (several per day allowed).
-    func onDays(_ days: [Double], east: Double = 0, hAcc: Double = 5) -> [V] {
-        days.enumerated().map { i, d in visit(at: day0 + d * day + Double(i % 3) * 3600, east: east, hAcc: hAcc) }
+    func onDays(_ days: [Double], east: Double = 0, minutes: Int = 30, hAcc: Double = 5) -> [V] {
+        days.enumerated().map { i, d in visit(at: day0 + d * day + Double(i % 3) * 3600, east: east, minutes: minutes, hAcc: hAcc) }
     }
-    let week: [Double] = [0, 2, 4, 6, 8]   // 5 days, first and last 8 days apart
+    let week: [Double] = [0, 2, 4, 6, 8]   // 5 days of 18 h each: 110 points, a pin
 
-    func testFiveDaysOverAWeekPromote() throws {
-        let four = fold([], onDays(Array(week.prefix(4))))
-        XCTAssertEqual(four.map(\.isCandidate), [true])
-        let five = fold(four, onDays([8]))
-        XCTAssertEqual(five.map(\.isCandidate), [false])
-        XCTAssertEqual(five.first?.visits, 5)
-        XCTAssertEqual(five.first?.lastVisit, onDays([8])[0].end)
+    func homeDays(_ days: [Double], east: Double = 0, hAcc: Double = 5) -> [V] { onDays(days, east: east, minutes: 1080, hAcc: hAcc) }
+
+    func testHomeBecomesPinInAboutSixDays() throws {
+        let five = fold([], onDays([0, 1, 2, 3, 4], minutes: 840))   // 5 × 18 = 90
+        XCTAssertEqual(five.map(\.isCandidate), [true])
+        let six = fold(five, onDays([5], minutes: 840))
+        XCTAssertEqual(six.map(\.isCandidate), [false])
+        XCTAssertEqual(six.first?.points ?? 0, 108, accuracy: 0.01)
+        XCTAssertEqual(six.first?.lastVisit, onDays([5], minutes: 840)[0].end)
     }
 
-    func testFiveVisitsOnFourDaysStaysCandidate() {
-        let ps = fold([], onDays([0, 3, 3, 6, 9]))
+    func testSchoolTwoWeeks() {
+        let d = [0, 1, 2, 3, 4, 7, 8, 9, 10, 11].map(Double.init)   // 6 h × 10 days = 100
+        XCTAssertEqual(fold([], onDays(Array(d.prefix(9)), minutes: 360)).map(\.isCandidate), [true])
+        XCTAssertEqual(fold([], onDays(d, minutes: 360)).map(\.isCandidate), [false])
+    }
+
+    func testOneLongStayNeverPins() {
+        XCTAssertEqual(fold([], [visit(at: day0 - 3600, minutes: 600)]).map(\.isCandidate), [true])
+    }
+
+    func testBenchNeverPins() {
+        let ps = fold([], onDays([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], minutes: 15))   // 10 × 4.25
         XCTAssertEqual(ps.map(\.isCandidate), [true])
-        XCTAssertEqual(ps.first?.visits, 5)
     }
 
-    func testOneLongStayStaysCandidate() {
-        let ps = fold([], [visit(at: day0 - 3600, minutes: 360)])
-        XCTAssertEqual(ps.map(\.isCandidate), [true])
+    /// 6 days of 14 h at home, then one stay elsewhere `gap` days later (so decay and time pass).
+    func homeThen(_ visits: [V]) -> [Place] { fold(fold([], onDays([0, 1, 2, 3, 4, 5], minutes: 840)), visits) }
+
+    func testHiddenAfterSixMonthsWithoutRealVisit() throws {
+        let ps = homeThen([visit(at: day0 + 300 * day, north: 2000, minutes: 600)])
+        let h = try XCTUnwrap(ps.first { $0.pin != nil && $0.visits == 6 })
+        let end = h.lastRealVisit
+        XCTAssertTrue(h.isVisible(at: end + 182 * day))
+        XCTAssertFalse(h.isVisible(at: end + 182 * day + 1))
+        XCTAssertFalse(h.isVisible(at: day0 + 300 * day))
     }
 
-    func testFiveDaysInSixDaysStaysCandidate() {
-        XCTAssertEqual(fold([], onDays([0, 1, 2, 3, 6])).map(\.isCandidate), [true])
+    func testOneRealVisitBringsItBack() throws {
+        let back = day0 + 300 * day
+        let ps = homeThen([visit(at: back, minutes: 600)])
+        let h = try XCTUnwrap(ps.first)
+        XCTAssertEqual(ps.count, 1)
+        XCTAssertFalse(h.isCandidate)
+        XCTAssertTrue(h.isVisible(at: back + 11 * 3600))
+        XCTAssertEqual(h.lastRealVisit, back + 600 * 60)
     }
 
-    func testFiveDaysExactlySevenApartPromote() {
-        XCTAssertEqual(fold([], onDays([0, 1, 2, 3, 7])).map(\.isCandidate), [false])
+    func testShortGymVisitsKeepGymVisible() throws {
+        let weekly = (0..<30).map { visit(at: day0 + Double($0) * 7 * day, minutes: 90) }
+        let gym = try XCTUnwrap(fold([], weekly).first)
+        XCTAssertFalse(gym.isCandidate)   // 30 × 5.5 = 165
+        XCTAssertTrue(gym.isVisible(at: weekly.last!.end + 7 * day))
+        XCTAssertEqual(gym.lastRealVisit, weekly.last!.end)
+    }
+
+    func testShortDropInDoesNotCount() throws {
+        let away = day0 + 213 * day
+        let ps = homeThen([visit(at: away, minutes: 10)])
+        let h = try XCTUnwrap(ps.first)
+        XCTAssertEqual(ps.count, 1); XCTAssertEqual(h.visits, 7)
+        XCTAssertFalse(h.isVisible(at: away + 700))
+    }
+
+    func testMergeReevaluatesPoints() throws {
+        let a = onDays((0..<12).map(Double.init), minutes: 60)
+        let b = onDays((12..<24).map(Double.init), east: 30, minutes: 60)
+        let two = fold(fold([], a), b)
+        XCTAssertEqual(two.map(\.isCandidate), [true, true])   // 60 points each
+        let bridge = Places.learn(two, visit: visit(at: day0 + 24 * day, east: 15, minutes: 180), now: day0 + 24 * day + 3 * 3600, nextId: 9).places
+        XCTAssertEqual(bridge.count, 1)
+        XCTAssertFalse(bridge[0].isCandidate)
+        XCTAssertEqual(bridge[0].points, 127, accuracy: 0.01)
+        XCTAssertEqual(bridge[0].recentDurations.count, 20)
     }
 
     func testFarCandidatesDoNotChangeResult() throws {
@@ -70,22 +118,17 @@ final class PlacesTests: XCTestCase {
             return Place(id: Int64(1000 + i), name: nil, cells: [PlaceGrid.cell(lat: p.lat, lon: p.lon): 1], updatedAt: day0, lastVisit: day0,
                          totalSeconds: 600, visits: 1, isCandidate: true)
         }
-        let alone = try XCTUnwrap(fold([], onDays(week)).first)
-        let crowd = fold(far, onDays(week))
+        let alone = try XCTUnwrap(fold([], homeDays(week)).first)
+        let crowd = fold(far, homeDays(week))
         XCTAssertEqual(crowd.count, 2001)
         var home = try XCTUnwrap(crowd.last)
         home.id = alone.id
         XCTAssertEqual(home, alone)
     }
 
-    func testSevenDaysApartButOnlyThreeDaysStaysCandidate() {
-        let ps = fold([], onDays([0, 0, 4, 7, 7, 7]))
-        XCTAssertEqual(ps.map(\.isCandidate), [true])
-    }
-
     func testNeighbourSixtyMetresStaysSeparate() {
-        let home = fold([], onDays(week, hAcc: 10))
-        let ps = fold(home, onDays(week.map { $0 + 10 }, east: 60, hAcc: 10))
+        let home = fold([], homeDays(week, hAcc: 10))
+        let ps = fold(home, homeDays(week.map { $0 + 10 }, east: 60, hAcc: 10))
         XCTAssertEqual(ps.count, 2)
         XCTAssertEqual(ps.map(\.isCandidate), [false, false])
         XCTAssertEqual(ps.map(\.visits), [5, 5])
@@ -114,7 +157,7 @@ final class PlacesTests: XCTestCase {
     }
 
     func testOldHomeFadesNotDeleted() throws {
-        let home = fold([], onDays(week))
+        let home = fold([], homeDays(week))
         let before = try XCTUnwrap(home.first).cells.values.reduce(0, +)
         let later = day0 + 365 * day
         let ps = Places.learn(home, visit: visit(at: later, north: 2000), now: later + 1800, nextId: 2).places

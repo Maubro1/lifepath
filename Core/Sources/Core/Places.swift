@@ -12,12 +12,20 @@ public struct Place: Sendable, Equatable, Codable {
     public var totalSeconds: Double
     public var visits: Int
     public var isCandidate: Bool
+    public var recentDurations: [Double] = []   // last 20 visit lengths in seconds, oldest first
+    public var lastRealVisit: Date = .distantPast   // end of the latest visit that was long for this place
 
     public init(id: Int64, name: String?, cells: [PlaceCell: Double], recent: [PlaceCell: Double] = [:], visitDays: Set<Int> = [],
                 updatedAt: Date, lastVisit: Date, totalSeconds: Double, visits: Int, isCandidate: Bool) {
         self.id = id; self.name = name; self.cells = cells; self.recent = recent; self.visitDays = visitDays
         self.updatedAt = updatedAt; self.lastVisit = lastVisit; self.totalSeconds = totalSeconds; self.visits = visits; self.isCandidate = isCandidate
     }
+
+    /// 4 per day with a visit plus 1 per hour spent; 100 makes the place a pin.
+    public var points: Double { 4 * Double(visitDays.count) + totalSeconds / 3600 }
+
+    /// A pin, shown unless 6 months in a row went by without a real visit.
+    public func isVisible(at now: Date) -> Bool { !isCandidate && now.timeIntervalSince(lastRealVisit) <= 182 * 86_400 }
 
     /// Density peak: the cell with the most 3×3-smoothed weight; peaks within 10% of it go to the one with more recent weight.
     public var pin: (lat: Double, lon: Double)? {   // nil only for a place with no cells
@@ -118,7 +126,12 @@ public enum Places {
         places[k].cells.merge(added, uniquingKeysWith: +)
         places[k].recent.merge(added, uniquingKeysWith: +)
         places[k].visits += 1
-        places[k].totalSeconds += visit.end.timeIntervalSince(visit.start)
+        let length = visit.end.timeIntervalSince(visit.start)
+        let sorted = places[k].recentDurations.sorted()
+        // real: ≥ 5 h, or at least half this place's usual stay (the first visit needs the 5 h)
+        if length >= 5 * 3600 || (!sorted.isEmpty && length >= 0.5 * sorted[sorted.count / 2]) { places[k].lastRealVisit = max(places[k].lastRealVisit, visit.end) }
+        places[k].recentDurations = Array((places[k].recentDurations + [length]).suffix(20))
+        places[k].totalSeconds += length
         places[k].visitDays.insert(day(visit.start))
         places[k].lastVisit = max(places[k].lastVisit, visit.end)
         places[k].updatedAt = max(places[k].updatedAt, now)
@@ -137,16 +150,14 @@ public enum Places {
             places[keep].lastVisit = max(places[keep].lastVisit, g.lastVisit)
             places[keep].totalSeconds += g.totalSeconds
             places[keep].name = places[keep].name ?? g.name
-            places[keep].isCandidate = places[keep].isCandidate && g.isCandidate
+            places[keep].recentDurations = Array((places[keep].recentDurations + g.recentDurations).suffix(20))   // shortcut: survivor's then the other's, not by visit time; fine for a median
+            places[keep].lastRealVisit = max(places[keep].lastRealVisit, g.lastRealVisit)
             places.remove(at: gone)
             k = keep > gone ? keep - 1 : keep
             region = places[k].region(); box = PlaceGrid.bounds(places[k].cells.keys)
         }
 
-        // A place forms over about a week: ≥ 5 different days, first and last ≥ 7 days apart; never from one long stay.
-        if let lo = places[k].visitDays.min(), let hi = places[k].visitDays.max(), places[k].visitDays.count >= 5, hi - lo >= 7 {
-            places[k].isCandidate = false
-        }
+        places[k].isCandidate = places[k].points < 100   // never from one long stay: 10 h is only 14 points
         return (places, Visit(start: visit.start, end: visit.end, placeId: places[k].id))
     }
 }
