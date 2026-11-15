@@ -69,9 +69,9 @@ final class PlacesTests: XCTestCase {
         let h = try XCTUnwrap(ps.first { $0.pin != nil && $0.visits == 6 })
         let last = try XCTUnwrap(h.realDays.max())
         XCTAssertEqual(h.hideAfterDays, 180)
-        XCTAssertTrue(h.isVisible(at: day0 + (5 + 180) * day))
-        XCTAssertFalse(h.isVisible(at: day0 + (5 + 181) * day))
-        XCTAssertEqual(last, Places.day(day0 + 5 * day))
+        XCTAssertTrue(h.isVisible(at: day0 + (6 + 180) * day))
+        XCTAssertFalse(h.isVisible(at: day0 + (6 + 181) * day))
+        XCTAssertEqual(last, Places.day(day0 + 6 * day))   // the 14 h stay on day 5 runs past midnight
         XCTAssertFalse(h.isVisible(at: day0 + 300 * day))
     }
 
@@ -116,7 +116,7 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(known(0..<1826).hideAfterDays, 330, "former home, 5 years")
         let school = (0..<1465).filter { $0 % 7 < 5 }
         XCTAssertEqual(known(school).hideAfterDays, 300, "school, weekends")
-        XCTAssertEqual(known(school, hole: 200..<249).hideAfterDays, 300, "school with a 49-day break")
+        XCTAssertEqual(known(school, hole: 1400..<1449).hideAfterDays, 300, "school with a 49-day break in the last gaps")
         let gym = (0..<731).filter { [0, 2, 4].contains($0 % 7) }
         XCTAssertEqual(known(gym).hideAfterDays, 240, "gym 3 a week")
         XCTAssertEqual(known(stays(76, every: 30, stay: 2)).hideAfterDays, 360, "parents monthly")
@@ -126,6 +126,31 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(known(0..<92).hideAfterDays, 180, "internship")
         XCTAssertEqual(known(0..<14).hideAfterDays, 180, "holiday home, first year")
         XCTAssertEqual(known([]).hideAfterDays, 180)
+    }
+
+    /// Single-day stays with the given gaps (next start − previous end) between them.
+    func gapped(_ gaps: [Int]) -> Place { known(gaps.reduce(into: [0]) { $0.append($0.last! + $1) }) }
+
+    func testTypicalGapIsTheLowerMedianOfTheLastEight() {
+        XCTAssertEqual(gapped(Array(repeating: 30, count: 7) + [200]).hideAfterDays, 210, "one long gap is not the typical one")
+        XCTAssertEqual(gapped([100, 30, 100, 30, 100, 30, 100, 30]).hideAfterDays, 210, "even count takes the lower middle")
+        XCTAssertEqual(gapped(Array(repeating: 200, count: 9) + Array(repeating: 30, count: 8)).hideAfterDays, 330, "only the last 8 gaps count")
+        XCTAssertEqual(gapped([70, 200]).hideAfterDays, 210, "two gaps: the smaller")
+        XCTAssertEqual(known([5, 6, 7]).hideAfterDays, 180, "one stay has no gap")
+    }
+
+    func testRealVisitTouchesEveryDayItCovers() throws {
+        let fri = day0 + 4 * day + 10 * 3600   // Friday 20:00 to Sunday 10:00, one visit
+        let away = visit(at: fri, minutes: 38 * 60)
+        let a = Places.learn([], visit: away, now: away.end, nextId: 1).places
+        XCTAssertEqual(a[0].realDays, Set(Places.day(fri)...Places.day(away.end)))
+        XCTAssertEqual(a[0].realDays.count, 3)
+        let later = visit(at: day0 + 86 * day, minutes: 360)   // 80 days after Sunday
+        let b = Places.learn(a, visit: later, now: later.end, nextId: 2).places
+        XCTAssertEqual(b.count, 1)
+        XCTAssertEqual(b[0].hideAfterDays, 240)   // gap 80, not 82
+        let night = visit(at: day0 + 11 * 3600, minutes: 360)   // 21:00 to 3:00 the next morning
+        XCTAssertEqual(Places.learn([], visit: night, now: night.end, nextId: 1).places[0].realDays.count, 2)
     }
 
     func testBreaksDoNotHideAndARealVisitBringsItBack() {
@@ -154,6 +179,7 @@ final class PlacesTests: XCTestCase {
         XCTAssertFalse(bridge[0].isCandidate)
         XCTAssertEqual(bridge[0].points, 127, accuracy: 0.01)
         XCTAssertEqual(bridge[0].recentDurations.count, 20)
+        XCTAssertEqual(bridge[0].realDays.count, 23)   // 11 + 11 + the bridge: first visits are not real
     }
 
     func testFarCandidatesDoNotChangeResult() throws {

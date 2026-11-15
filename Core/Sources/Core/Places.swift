@@ -29,7 +29,7 @@ public struct Place: Sendable, Equatable, Codable {
     public var hideAfterDays: Int {
         let days = realDays.sorted()
         let gaps = zip(days, days.dropFirst()).map { $1 - $0 }.filter { $0 > 1 }.suffix(8).sorted()   // shortcut: re-sorts on each call; cache if the map asks per frame
-        let years = ((days.last ?? 0) - (visitDays.min() ?? 0)) / 365
+        let years = days.last.map { ($0 - (visitDays.min() ?? $0)) / 365 } ?? 0
         return min(730, max(180, 3 * (gaps.isEmpty ? 0 : gaps[(gaps.count - 1) / 2])) + 30 * min(6, years))
     }
 
@@ -141,7 +141,7 @@ public enum Places {
         let length = visit.end.timeIntervalSince(visit.start)
         let sorted = places[k].recentDurations.sorted()
         // real: ≥ 5 h, or at least half this place's usual stay (the first visit needs the 5 h)
-        if length >= 5 * 3600 || (!sorted.isEmpty && length >= 0.5 * sorted[sorted.count / 2]) { places[k].realDays.insert(day(visit.start)) }
+        if length >= 5 * 3600 || (!sorted.isEmpty && length >= 0.5 * sorted[(sorted.count - 1) / 2]) { places[k].realDays.formUnion(day(visit.start)...day(visit.end)) }
         places[k].recentDurations = Array((places[k].recentDurations + [length]).suffix(20))
         places[k].totalSeconds += length
         places[k].visitDays.insert(day(visit.start))
