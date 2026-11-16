@@ -118,11 +118,12 @@ import UIKit
         if engine.state != before {
             state = engine.state
             if state == .still { stillSince = now; motion.startSteps(from: now) }
-            else if before == .still { stillSince = nil; motion.stopSteps() }
+            else if before == .still { stillSince = nil }
             // shortcut: a no-fix fallback (Moving → Still) learns its place after writing its first point at the fence; send it
             // before handling if that first point must sit on the pin too.
             if state == .settling || (state == .still && before == .moving) { _ = engine.handle(.enteredPlace(knownPlace(now)), at: now) }
         }
+        if engine.state != .still, !engine.wandering, motion.counting { motion.stopSteps() }   // steps run through a wander check
         configureRecording()
         applyGPS()
         if engine.state != before || buffer.isDue(at: now) { flush() }

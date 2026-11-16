@@ -10,7 +10,8 @@ import CoreMotion
 
     private unowned let recorder: Recorder
     private let pedometer = CMPedometer(), activities = CMMotionActivityManager()
-    private var counting = false, lastCount = 0
+    private(set) var counting = false
+    private var lastCount = 0
 
     init(recorder: Recorder) { self.recorder = recorder }
 

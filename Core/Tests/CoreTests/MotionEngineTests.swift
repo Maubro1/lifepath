@@ -422,6 +422,24 @@ final class MotionEngineTests: XCTestCase {
         assertWoke(send(&e, .steps(15), still + 10), e, reason: "steps", stillAt: still, when: still + 10)
     }
 
+    /// A walk resumed after a short pause, between buildings where fixes barely move: steps at walking pace are no wander.
+    func testSteadyStepsBlockWanderReturn() throws {
+        var (e, s, _) = try stillEngine()
+        var rng = SeededRandom(seed: 28)
+        send(&e, .steps(15), s + 30)
+        for i in 1...150 {
+            let t = s + 30 + Double(i)
+            if i % 5 == 0 { send(&e, .steps(15 + i * 2), t) }                // ~2 steps/s, reported every 5 s
+            send(&e, .fix(standing(t, east: 168, rng: &rng)), t)
+            XCTAssertNotEqual(e.state, .still, "wander-return while walking at \(t - s)")
+        }
+        // The steps stop (a real browse): back to Still once 30 s pass without walking.
+        var t = s + 181
+        while e.state != .still && t < s + 300 { send(&e, .fix(standing(t, east: 168, rng: &rng)), t); t += 1 }
+        XCTAssertEqual(e.state, .still)
+        XCTAssertLessThanOrEqual(t - s, 181 + 31)
+    }
+
     func testLateFirstFixIsNoWanderReturn() throws {
         var (e, s, _) = try stillEngine()
         var rng = SeededRandom(seed: 26)

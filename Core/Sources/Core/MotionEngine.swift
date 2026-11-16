@@ -68,6 +68,9 @@ public struct MotionEngine: Sendable {
     private var walkedAt: Date?               // last confident walking/running while Still
     private var place: PlaceShape?            // the known place of this rest; kept through a wander, dropped on leaving
 
+    /// A steps/walking wake is still being checked for a wander; the app keeps counting steps meanwhile.
+    public var wandering: Bool { wanderFence != nil }
+
     public init(deepSleep: Bool) {
         self.deepSleep = deepSleep
     }
@@ -83,6 +86,7 @@ public struct MotionEngine: Sendable {
             wanderFixed = wanderFixed || (wanderFence != nil && now.timeIntervalSince(wanderSince) <= 60)
             return wanderReturn(now) ?? onFix(p, now)
         case .tick, .confirmFix: return wanderReturn(now) ?? onTick(now)
+        case .steps(let n) where wanderFence != nil: logSteps(n, now)
         case .activity(let a, let confident) where a.isVehicle:
             lastVehicle = now
             if confident { lastConfidentVehicle = now; wanderFence = nil }   // backing out slowly is no wander
@@ -120,9 +124,10 @@ public struct MotionEngine: Sendable {
         (place.map { Fence(lat: $0.pin.lat, lon: $0.pin.lon, radius: f.radius) } ?? f).stillPoint(at: now)
     }
 
-    /// 60 s after a steps/walking wake, with fixes and all of them inside the visit fence: back to Still, no new still point.
+    /// 60 s after a steps/walking wake, with fixes and all of them inside the visit fence, and no walking in the last 30 s:
+    /// back to Still, no new still point. Steps decide where GPS can't: between buildings a resumed walk barely moves the fixes.
     private mutating func wanderReturn(_ now: Date) -> [Command]? {
-        guard let w = wanderFence, wanderFixed, now.timeIntervalSince(wanderSince) >= 60 else { return nil }
+        guard let w = wanderFence, wanderFixed, now.timeIntervalSince(wanderSince) >= 60, !walking(now) else { return nil }
         stepsThreshold = threshold == 15 ? 50 : 150
         return goStill(w, now, writePoint: false) + [log("wake", "wander-return", now)]
     }
@@ -169,7 +174,7 @@ public struct MotionEngine: Sendable {
     /// Still once the window is proven by fixes (the oldest inside, so a walk-in is never tolerated) and the outlier
     /// tolerance holds, so one multipath outlier does not restart the clock.
     private mutating func settleCheck(_ now: Date) -> [Command] {
-        guard state == .settling, let f = fence else { return [] }
+        guard state == .settling, let f = fence, !(wanderFence != nil && walking(now)) else { return [] }   // a resumed walk is no stop
         let window: TimeInterval = lastVehicle.map { now.timeIntervalSince($0) <= 600 } == true ? 360 : 120
         guard let oldest = windowFixes(now).first, oldest.t <= now.addingTimeInterval(-window),
               f.contains(oldest), tolerates(f, now) else { return [] }
@@ -207,9 +212,8 @@ public struct MotionEngine: Sendable {
     private mutating func handleStill(_ e: MotionEvent, _ now: Date) -> [Command] {
         switch e {
         case .steps(let n):
+            logSteps(n, now)
             if n >= threshold { return wake("steps", now, wander: true) }
-            stepLog.append((now, n))
-            while stepLog.count > 1, stepLog[1].t < now.addingTimeInterval(-40) { stepLog.removeFirst() }
             return walkCorroborated(now) ? wake("activity", now, wander: true) : []
         case .activity(let a, let confident):
             guard confident && a.isMoving else { return [] }
@@ -263,6 +267,18 @@ public struct MotionEngine: Sendable {
               last.t >= w.addingTimeInterval(-20) else { return false }
         let before = stepLog.last { $0.t < w.addingTimeInterval(-20) }?.n ?? 0
         return last.n - before >= 8
+    }
+
+    private mutating func logSteps(_ n: Int, _ now: Date) {
+        stepLog.append((now, n))
+        while stepLog.count > 1, stepLog[1].t < now.addingTimeInterval(-40) { stepLog.removeFirst() }
+    }
+
+    /// At least 15 steps in the last 30 s (walking pace is ~50): someone walking, not browsing.
+    private func walking(_ now: Date) -> Bool {
+        guard let last = stepLog.last else { return false }
+        let before = stepLog.last { $0.t <= now.addingTimeInterval(-30) }?.n ?? stepLog[0].n
+        return last.n - before >= 15
     }
 
     private mutating func wake(_ reason: String, _ now: Date, wander: Bool = false) -> [Command] {
