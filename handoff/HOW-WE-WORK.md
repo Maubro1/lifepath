@@ -10,6 +10,7 @@
 - When away, keep building stage after stage; collect phone checks and big decisions for their return.
 - Wants speed and token efficiency: tests and reviews only at critical periodic moments (before merging a stage, before a release, for risky data or recording-engine logic), not after every change. Skip scoped re-reviews when fixes are precise.
 - The app and its data must survive crashes, updates and iOS kills; every setting needs a clear name and, where needed, a one-line description.
+- Uses the `limit-pacer` plugin (see PLUGINS.md) to plan releases and handoffs around the 5-hour and weekly limits, so a testable build is ready before a limit hits and the owner can try it while waiting.
 - Publishes an installable pre-release on GitHub at every milestone that changes what the phone app does.
 - Their writing preferences (tone, banned phrases, structure) are in `private/preferences.md` (from the `prefskill` plugin). Follow them in every message.
 
