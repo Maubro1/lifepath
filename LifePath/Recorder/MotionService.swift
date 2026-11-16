@@ -24,15 +24,15 @@ import CoreMotion
         }
     }
 
-    /// The counter restarts at each Still entry; the cumulative count goes to the engine as `.steps(n)`.
+    /// The counter restarts at each Still entry; the cumulative count and distance go to the engine as `.steps(n)` and `.walked(m)`.
     func startSteps(from: Date) {
         guard Self.available, CMPedometer.isStepCountingAvailable() else { return }
         pedometer.stopUpdates()
         counting = true; lastCount = 0
         pedometer.startUpdates(from: from) { @Sendable data, _ in
             guard let data else { return }
-            let n = data.numberOfSteps.intValue
-            Task { @MainActor in self.steps(n) }
+            let n = data.numberOfSteps.intValue, m = data.distance?.doubleValue
+            Task { @MainActor in self.steps(n, m) }
         }
     }
 
@@ -41,10 +41,11 @@ import CoreMotion
         pedometer.stopUpdates()
     }
 
-    private func steps(_ n: Int) {
+    private func steps(_ n: Int, _ metres: Double?) {
         guard counting, n > lastCount else { return }
         lastCount = n
         recorder.send(.steps(n))
+        if let metres { recorder.send(.walked(metres)) }
     }
 
     /// True trip start from CoreMotion history, which also covers a rest the app slept through.
