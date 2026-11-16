@@ -18,6 +18,8 @@ Changes from the original brief, forced by iOS:
 
 Every design choice, shortcut, limit and ruling is measured against these before it's made. When a shortcut would break one, it's the wrong shortcut.
 
+**Top priority (owner, 2026-11-16): accuracy, efficiency and a cool phone come first, together.** When they pull against anything else, they win; when they pull against each other, find the design that serves all three (for example, use a sensor that is already running instead of switching GPS on) before trading one away, and say plainly what the trade costs.
+
 1. **Life-long and complete.** LifePath is a map of a whole life. Nothing recorded is ever hidden by a limit: performance comes from showing less *detail* (simplified lines, coarser cells) when zoomed out, never from showing fewer *trips or places*. Time filters exist to choose a period, not to make the app cope.
 2. **Honest.** Nothing is invented: unknown stretches stay gaps, guesses are marked as guesses, stored points are never modified.
 3. **Precise.** The street actually taken, the place actually visited.

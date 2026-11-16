@@ -5,6 +5,7 @@
 - Not a programmer. Claude makes every technical decision (including git: branches, merges, releases) and never asks about them. Ask only what the owner can answer: things on the phone, accounts, how something should look or feel, and big product decisions.
 - Writes in English or Dutch; answer in the language of their message. Dutch is Netherlands Dutch (load the `dutch-native` skill).
 - Wants many design questions, but only in the design stage (stage 6).
+- **Top priority: accuracy, efficiency (battery) and a cool phone, together.** Every design, ruling and review checks these three first; when they conflict, look for a design that serves all three before trading one away, and tell the owner what any trade costs.
 - Wants the strongest proven algorithms that stay lightweight ("very smart, efficient, high level").
 - Values honesty: never claim work is running unless an agent or background job really is; if you stop, say "nothing is running until you reply".
 - When away, keep building stage after stage; collect phone checks and big decisions for their return.
