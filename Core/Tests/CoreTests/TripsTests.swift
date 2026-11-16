@@ -16,6 +16,8 @@ final class TripsTests: XCTestCase {
         let trips = Trips.split(pts)
         XCTAssertEqual(trips.count, 1)
         XCTAssertEqual(trips.first?.points.count, 11)
+        let straight = Geo.distance(pts[2].lat, pts[2].lon, pts[8].lat, pts[8].lon)
+        XCTAssertLessThan(trips.first?.distance ?? .infinity, 30 + straight * 2)   // the 1 km rough zigzag adds nothing
     }
 
     func testGapSplitsTrip() {

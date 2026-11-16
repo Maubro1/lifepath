@@ -19,10 +19,9 @@ public enum Trips {
             defer { run = [] }
             guard run.count >= 2 else { return }
             var distance = 0.0, time = 0.0
-            for (a, b) in zip(run, run.dropFirst()) {
-                distance += Geo.distance(a.lat, a.lon, b.lat, b.lon)
-                time += b.t.timeIntervalSince(a.t)
-            }
+            for (a, b) in zip(run, run.dropFirst()) { time += b.t.timeIntervalSince(a.t) }
+            let precise = run.filter { $0.kind != .rough }   // a rough point can be a kilometre off: distance runs precise to precise
+            for (a, b) in zip(precise, precise.dropFirst()) { distance += Geo.distance(a.lat, a.lon, b.lat, b.lon) }
             trips.append(Trip(points: run, start: run[0].t, end: run[run.count - 1].t, distance: distance, movingTime: time))
         }
         for p in points {
