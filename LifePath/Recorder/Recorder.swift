@@ -89,6 +89,8 @@ import UIKit
         resumed = true
         let now = Date()
         try? diary.pruneEvents(olderThan: now.addingTimeInterval(-14 * 86400))
+        // A background relaunch runs no places pass: load the stored places so resting at a known place works before the app is opened.
+        if PlaceService.shared.places.isEmpty { PlaceService.shared.places = (try? diary.places()) ?? [] }
         let last = try? diary.lastPoint()
         if lastPoint == nil { lastPoint = last?.t }
         // Relaunched after a rest (swiped away, phone off, a fence exit while suspended): backfill it up to the departure,
@@ -117,10 +119,20 @@ import UIKit
             state = engine.state
             if state == .still { stillSince = now; motion.startSteps(from: now) }
             else if before == .still { stillSince = nil; motion.stopSteps() }
+            // shortcut: a no-fix fallback (Moving → Still) learns its place after writing its first point at the fence; send it
+            // before handling if that first point must sit on the pin too.
+            if state == .settling || (state == .still && before == .moving) { _ = engine.handle(.enteredPlace(knownPlace(now)), at: now) }
         }
         configureRecording()
         applyGPS()
         if engine.state != before || buffer.isDue(at: now) { flush() }
+    }
+
+    /// The visible pin whose shape holds the rest's centre, from the places last loaded; nil elsewhere.
+    // shortcut: rebuilds every visible place's region once per rest (a few ms); cache the shapes on placesChanged if places reach thousands.
+    private func knownPlace(_ now: Date) -> PlaceShape? {
+        guard let f = engine.fence else { return nil }
+        return PlaceService.shared.places.lazy.compactMap { PlaceShape($0, at: now) }.first { $0.contains(lat: f.lat, lon: f.lon, hAcc: 0) }
     }
 
     func recordingFix(_ s: Sample) {

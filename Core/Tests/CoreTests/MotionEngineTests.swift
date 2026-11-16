@@ -624,4 +624,97 @@ final class MotionEngineTests: XCTestCase {
         let wake = send(&e, .geofenceExit, s + 6000)
         XCTAssert(wake.contains(.resolveDeparture(stillSince: at(s), until: at(s + 1800))), "\(wake)")
     }
+
+    // MARK: known places
+
+    /// The stop of `walkThenStand` (168 m east) plus a garden reaching 60 m north; pin 10 m north of the stop.
+    func home() -> PlaceShape {
+        var cells = Set<PlaceCell>()
+        for n in stride(from: -10.0, through: 60, by: 5) { for east in stride(from: 153.0, through: 183, by: 5) {
+            let p = Geo.offset(lat: 52.37, lon: 4.90, north: n, east: east)
+            cells.insert(PlaceGrid.cell(lat: p.lat, lon: p.lon))
+        } }
+        let pin = Geo.offset(lat: 52.37, lon: 4.90, north: 10, east: 168)
+        return PlaceShape(region: cells, pin: (pin.lat, pin.lon))
+    }
+    /// `walkThenStand`, with the Recorder's `.enteredPlace` when Settling begins.
+    func stillAtHome() throws -> (MotionEngine, TimeInterval, [Command]) {
+        var e = MotionEngine(deepSleep: false)
+        var rng = SeededRandom(seed: 11)
+        let fixes = route(to: 168, speed: 1.4, seed: 1) + (121...300).map { standing(TimeInterval($0), east: 168, rng: &rng) }
+        for p in fixes {
+            let before = e.state
+            let out = e.handle(.fix(p), at: p.t)
+            if e.state == .settling && before == .moving { _ = e.handle(.enteredPlace(home()), at: p.t) }
+            if e.state == .still { return (e, p.t.timeIntervalSince(t0), out) }
+        }
+        XCTFail("never went Still")
+        throw CocoaError(.featureUnsupported)
+    }
+    func sample(north: Double, east: Double = 168, hAcc: Double, _ t: TimeInterval) -> Sample {
+        let p = Geo.offset(lat: 52.37, lon: 4.90, north: north, east: east)
+        return Sample(t: at(t), lat: p.lat, lon: p.lon, hAcc: hAcc, speed: -1, course: -1)
+    }
+
+    func testKnownPlaceUsesShapeNotCircle() throws {
+        var (e, s, _) = try stillAtHome()
+        XCTAssertEqual(try XCTUnwrap(e.fence).radius, 20)
+        XCTAssertEqual(send(&e, .wakeFix(sample(north: 50, hAcc: 5, s + 60), reason: "spotcheck"), s + 60), [])   // the garden
+        XCTAssertEqual(e.state, .still)
+        // Unconfirmed after 30 min, then a reading in the garden confirms presence again.
+        for i in 1...80 { send(&e, .tick, s + 60 + Double(i) * 30) }
+        let out = send(&e, .confirmFix(sample(north: 50, hAcc: 5, s + 2500)), s + 2500)
+        XCTAssert(out.contains(.fillUnconfirmed(from: at(s + 1800), to: at(s + 2500))), "\(out)")
+    }
+
+    func testStillPointAtPin() throws {
+        var (e, s, entry) = try stillAtHome()
+        let pin = home().pin
+        let points = stillPoints(entry) + stillPoints(send(&e, .tick, s + 300))
+        XCTAssertEqual(points.count, 2)
+        XCTAssert(points.allSatisfy { $0.lat == pin.lat && $0.lon == pin.lon && $0.kind == .still }, "\(points)")
+    }
+
+    func testPotteringAtPlaceNeedsFiftySteps() throws {
+        var (e, s, _) = try stillAtHome()
+        XCTAssertEqual(send(&e, .steps(15), s + 30), [])
+        send(&e, .activity(.walking, confident: true), s + 35)
+        XCTAssertEqual(send(&e, .steps(49), s + 40), [])
+        XCTAssertEqual(e.state, .still)
+        send(&e, .steps(50), s + 60)
+        XCTAssertEqual(e.state, .moving)
+        var rng = SeededRandom(seed: 31)
+        for i in 1...61 { send(&e, .fix(standing(s + 60 + Double(i), north: 45, east: 168, rng: &rng)), s + 60 + Double(i)) }   // garden
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testSpotCheckCapRisesAtPlace() throws {
+        var (e, s, entry) = try stillAtHome()
+        var delays = scheduled(entry)
+        var t = s
+        for _ in 0..<10 {
+            t += delays.last ?? 30
+            send(&e, .spotCheckDue, t)
+            t += 20
+            delays += scheduled(send(&e, .spotCheckEnded, t))
+        }
+        XCTAssertEqual(delays, [30, 60, 120, 240, 300, 300, 300, 300, 600, 900, 900])
+    }
+
+    func testLeavingPlaceStillWakesFast() throws {
+        var (e, s, _) = try stillAtHome()
+        let out = send(&e, .wakeFix(sample(north: 140, hAcc: 10, s + 60), reason: "spotcheck"), s + 60)   // 80 m past the garden
+        assertWoke(out, e, reason: "spotcheck", stillAt: s, when: s + 60)
+    }
+
+    func testCandidateIsNotAPlace() throws {
+        let now = t0, c = PlaceGrid.cell(lat: 52.37, lon: 4.90)
+        var p = Place(id: 1, name: nil, cells: [c: 100], updatedAt: now, lastVisit: now, totalSeconds: 3600, visits: 1,
+                      isCandidate: true, realDays: [Places.day(now)])
+        XCTAssertNil(PlaceShape(p, at: now))
+        p.isCandidate = false
+        XCTAssertEqual(try XCTUnwrap(PlaceShape(p, at: now)).region, [c])
+        p.realDays = []                                                       // a hidden pin
+        XCTAssertNil(PlaceShape(p, at: now))
+    }
 }

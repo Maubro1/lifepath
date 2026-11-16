@@ -67,9 +67,31 @@ public struct Place: Sendable, Equatable, Codable {
 
     /// The fix's cell, widened by its accuracy (at most 50 m), touches the region.
     public func contains(lat: Double, lon: Double, hAcc: Double) -> Bool {
-        let r = min(Int((max(hAcc, 0) / PlaceGrid.cellSize).rounded(.up)), 10)
-        return !PlaceGrid.dilate([PlaceGrid.cell(lat: lat, lon: lon)], by: r).isDisjoint(with: region())
+        PlaceShape.touches(region(), lat: lat, lon: lon, hAcc: hAcc)
     }
+}
+
+/// A visible pin as the motion engine sees it: its region computed once, so each fix costs at most 21×21 set lookups.
+public struct PlaceShape: Sendable, Equatable {
+    public var region: Set<PlaceCell>
+    public var pin: (lat: Double, lon: Double)
+    public init(region: Set<PlaceCell>, pin: (lat: Double, lon: Double)) { self.region = region; self.pin = pin }
+
+    /// Visible pins only: a candidate or a hidden place is no known place.
+    public init?(_ p: Place, at now: Date) {
+        guard p.isVisible(at: now), let pin = p.pin else { return nil }
+        self.init(region: p.region(), pin: pin)
+    }
+
+    public func contains(lat: Double, lon: Double, hAcc: Double) -> Bool { Self.touches(region, lat: lat, lon: lon, hAcc: hAcc) }
+
+    /// The fix's cell, widened by its accuracy (at most 50 m), touches the region.
+    static func touches(_ region: Set<PlaceCell>, lat: Double, lon: Double, hAcc: Double) -> Bool {
+        let r = min(Int((max(hAcc, 0) / PlaceGrid.cellSize).rounded(.up)), 10)
+        return !PlaceGrid.dilate([PlaceGrid.cell(lat: lat, lon: lon)], by: r).isDisjoint(with: region)
+    }
+
+    public static func == (a: PlaceShape, b: PlaceShape) -> Bool { a.region == b.region && a.pin == b.pin }
 }
 
 public struct Visit: Sendable, Equatable, Codable {
