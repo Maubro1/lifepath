@@ -6,27 +6,35 @@ import Diary
 enum SmoothingService {
     static let taskID = "app.lifepath.LifePath.smooth"
     private static let margin: TimeInterval = 600   // newest 10 min stay raw; also the re-smoothing overlap
+    private static let versionKey = "smoothingVersion"
     @MainActor private static var ranThisForeground = false
     @MainActor static var running: Task<Void, Never>?
     static let linesChanged = Notification.Name("app.lifepath.tripLinesChanged")   // posted on the main actor after a run wrote trip lines
 
-    /// Synchronous and cancellable between trips (each trip is saved whole, in time order, so a cancel leaves a clean prefix).
-    static func run(_ diary: Diary) throws -> (trips: Int, points: Int, lines: Int) {
+    /// Cancellable between trips (each trip is saved whole, in time order, so a cancel leaves a clean prefix).
+    static func run(_ diary: Diary) async throws -> (trips: Int, points: Int, lines: Int) {
+        // A new smoother version re-smooths all history once: both cursors start over, the version is stored at the end.
+        // shortcut: a cancelled re-smooth starts over next time; upgrade to a resumable cursor if the log shows it never finishing
+        let resmooth = try diary.meta(versionKey) != String(TripSmoother.version)
         // Load a margin before the overlap so the re-smoothed seam has context; save only the overlap onward.
-        let until = try diary.smoothedUntil()
+        let until = try resmooth ? nil : diary.smoothedUntil()
         let smoothFrom = until?.addingTimeInterval(-2 * margin) ?? .distantPast
         let keepFrom = until?.addingTimeInterval(-margin) ?? .distantPast
         // Trip lines restart at the newest cached trip (it may have been cut by the last run's end); an empty cache covers all history.
-        let linesFrom = try diary.tripLinesUntil().map { u in
+        let linesFrom: Date = try resmooth ? .distantPast : diary.tripLinesUntil().map { u in
             try diary.tripLines(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180, from: u, to: .distantFuture).map(\.start).min() ?? u
         } ?? .distantPast
         var trips = 0, points = 0, lines = 0
-        func process(_ split: [Trip]) throws {
+        func process(_ split: [Trip]) async throws {
             for trip in split {
                 try Task.checkCancellation()
                 trips += 1
                 let fixes = trip.points.map { Sample(t: $0.t, lat: $0.rawLat, lon: $0.rawLon, hAcc: $0.hAcc, speed: $0.speed, course: $0.course) }
-                let smooth = TripSmoother.smooth(fixes)
+                let rough = Set(trip.points.indices.filter { trip.points[$0].kind == .rough })
+                // Walks within CoreMotion's 7-day history get the step counter's pace; older trips smooth without it.
+                let pace = TripSmoother.medianSpeed(fixes, rough: rough) < 2.5 && trip.start > Date().addingTimeInterval(-7 * 86_400)
+                    ? await MotionService.pace(from: trip.start, to: trip.end) : []
+                let smooth = TripSmoother.smooth(fixes, rough: rough, pace: pace)
                 let line = smooth.filter { $0.t >= keepFrom }
                 try diary.saveSmoothed(line)
                 points += line.count
@@ -45,17 +53,18 @@ enum SmoothingService {
         while let first = try diary.points(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180, after: after, to: end, limit: 1).first {
             try Task.checkCancellation()
             let chunk = try diary.points(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180, after: after, to: min(end, first.t.addingTimeInterval(month)), limit: Int.max)
-            try process(Trips.split(chunk: chunk, carry: &carry))
+            try await process(Trips.split(chunk: chunk, carry: &carry))
             after = chunk[chunk.count - 1].t
         }
-        try process(Trips.split(carry))
+        try await process(Trips.split(carry))
+        if resmooth { try diary.setMeta(versionKey, String(TripSmoother.version)) }
         return (trips, points, lines)
     }
 
     private static func execute() async {
         guard let diary = await MainActor.run(body: { Recorder.shared.readDiary }) else { return }   // locked before first unlock
         let detail: String, wroteLines: Bool
-        do { let r = try run(diary); detail = "trips=\(r.trips) points=\(r.points) lines=\(r.lines)"; wroteLines = r.lines > 0 }
+        do { let r = try await run(diary); detail = "trips=\(r.trips) points=\(r.points) lines=\(r.lines)"; wroteLines = r.lines > 0 }
         catch is CancellationError { return }
         catch { detail = "failed"; wroteLines = false }
         await MainActor.run {

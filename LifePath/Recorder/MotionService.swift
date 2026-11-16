@@ -74,6 +74,23 @@ import CoreMotion
         return await stepTimes(from, lo, mid, until: now) + stepTimes(from, mid, hi, until: now)
     }
 
+    /// Walking pace (m/s) from pedometer distance in 30 s buckets, each dated at its start; empty without motion permission.
+    /// CoreMotion keeps 7 days, so callers ask only for recent trips.
+    nonisolated static func pace(from: Date, to: Date) async -> [(t: Date, speed: Double)] {
+        guard available, CMPedometer.isDistanceAvailable() else { return [] }
+        let pedometer = CMPedometer()
+        var out: [(t: Date, speed: Double)] = [], a = from
+        while a < to {
+            let b = min(a.addingTimeInterval(30), to)
+            let d: Double? = await withCheckedContinuation { c in
+                pedometer.queryPedometerData(from: a, to: b) { @Sendable d, _ in c.resume(returning: d?.distance?.doubleValue) }
+            }
+            if let d { out.append((a, d / b.timeIntervalSince(a))) }
+            a = b
+        }
+        return out
+    }
+
     nonisolated static func activity(_ a: CMMotionActivity) -> Activity {
         a.automotive ? .automotive : a.cycling ? .cycling : a.running ? .running
             : a.walking ? .walking : a.stationary ? .stationary : .unknown

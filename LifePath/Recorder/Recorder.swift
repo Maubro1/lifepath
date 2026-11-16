@@ -8,6 +8,7 @@ import UIKit
 /// Thin glue: feeds CoreLocation/CoreMotion into the pure MotionEngine and TrackFilter, executes the commands, writes the Diary.
 @MainActor @Observable final class Recorder {
     static let shared = Recorder()
+    static let pointsSaved = Notification.Name("app.lifepath.pointsSaved")   // posted on the main actor after a flush that wrote points
 
     private(set) var state: MotionState = .moving
     /// Time of the last transition into Still; nil otherwise.
@@ -351,6 +352,7 @@ import UIKit
             try diary.log(events)
             flushFailedAt = nil
             notSavingSince = nil
+            if !points.isEmpty { NotificationCenter.default.post(name: Self.pointsSaved, object: nil) }   // the map redraws if visible
         } catch {
             buffer.putBack(points: points, events: events)
             if notSavingSince == nil { buffer.add(LoggedEvent(t: Date(), kind: "flush", detail: "failed")); notSavingSince = Date() }

@@ -110,4 +110,56 @@ final class TripSmootherTests: XCTestCase {
         XCTAssertFalse(nanOut.contains { !$0.lat.isFinite || !$0.lon.isFinite }, "NaN hAcc leaks into the output")
         XCTAssertLessThanOrEqual(zip(nanOut, clean).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.max()!, 5)
     }
+
+    func pathLength(_ o: [(t: Date, lat: Double, lon: Double)]) -> Double {
+        zip(o, o.dropFirst()).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.reduce(0, +)
+    }
+
+    /// Train: straight 30 m/s, a rough fix every 10 s (as stored), hAcc 700–1500 m, true error ≤ 40 m.
+    func testRoughStretchWeightedByConsistency() {
+        var rng = SeededRandom(seed: 21)
+        var fixes: [Sample] = [], truth: [(Date, Double, Double)] = []
+        for i in 0...60 {
+            let t = t0.addingTimeInterval(Double(i) * 10)
+            let p = Geo.offset(lat: 52.37, lon: 4.90, north: Double(i) * 300, east: 0)
+            let n = max(-28, min(28, rng.gaussian() * 15)), e = max(-28, min(28, rng.gaussian() * 15))   // radial ≤ 40 m
+            let q = Geo.offset(lat: p.lat, lon: p.lon, north: n, east: e)
+            truth.append((t, p.lat, p.lon))
+            fixes.append(Sample(t: t, lat: q.lat, lon: q.lon, hAcc: 700 + Double.random(in: 0...800, using: &rng), speed: -1, course: -1))
+        }
+        let out = TripSmoother.smooth(fixes, rough: Set(fixes.indices))
+        let e = errors(out, truth).max()!
+        print("MEAS train rough max error", e)
+        XCTAssertLessThanOrEqual(e, 60, "max error \(e) m")
+    }
+
+    /// Bus: 10 m/s route, a fix every 2 s, a 3-fix 150 m out-and-back excursion with confident hAcc and no course.
+    func testSpikeRemoved() {
+        let w = walk(path: [(0, 0), (3000, 0)], speed: 10, every: 2, noise: 5, seed: 23, start: t0, doppler: .vehicle)
+        let samples = multipath(w.samples, range: 70..<73, east: 150, hAcc: 10, course: .invalid)
+        let d = errors(TripSmoother.smooth(samples), w.truth).max()!
+        print("MEAS bus spike max deviation", d)
+        XCTAssertLessThanOrEqual(d, 20, "max deviation \(d) m")
+    }
+
+    /// Canyon walk: 1.3 m/s, every 30 s a 10-fix burst 25–35 m to alternating sides without Doppler; pedometer pace per 30 s.
+    func testWalkingPaceStraightensZigzag() {
+        let w = walk(path: [(0, 0), (780, 0)], speed: 1.3, every: 1, noise: 4, seed: 29, start: t0, doppler: .foot)
+        var fixes = w.samples, rng = SeededRandom(seed: 31)
+        for (k, b) in stride(from: 15, to: fixes.count - 10, by: 30).enumerated() {
+            let off = (k % 2 == 0 ? 1.0 : -1.0) * (25 + Double.random(in: 0...10, using: &rng))
+            for i in b..<b + 10 {
+                let p = Geo.offset(lat: fixes[i].lat, lon: fixes[i].lon, north: 0, east: off)
+                fixes[i] = Sample(t: fixes[i].t, lat: p.lat, lon: p.lon, hAcc: 10, speed: -1, course: -1)
+            }
+        }
+        let pace = stride(from: 0.0, to: 600, by: 30).map { (t: t0.addingTimeInterval($0), speed: 1.3 * (1 + 0.05 * rng.gaussian())) }
+        let walked = pace.map { $0.speed * 30 }.reduce(0, +)
+        let withPace = TripSmoother.smooth(fixes, pace: pace), without = TripSmoother.smooth(fixes)
+        let ratio = pathLength(withPace) / walked
+        let mean = { (o: [(t: Date, lat: Double, lon: Double)]) in self.errors(o, w.truth).reduce(0, +) / Double(o.count) }
+        print("MEAS canyon length ratio", ratio, "without pace", pathLength(without) / walked, "mean error", mean(withPace), "without", mean(without))
+        XCTAssertEqual(ratio, 1, accuracy: 0.15, "path length / pedometer distance \(ratio)")
+        XCTAssertLessThan(mean(withPace), mean(without))
+    }
 }
