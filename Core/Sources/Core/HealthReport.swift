@@ -59,8 +59,8 @@ public enum HealthReport {
             out += ["", "== \(day.string(from: start)) ==",
                     "GPS on: \(String(format: "%.1f", gps)) h",
                     "Wakes by reason: \(wakes.isEmpty ? "none" : wakes.joined(separator: ", "))",
-                    "Points: \(dayPoints.filter { $0.kind == .moving }.count) moving, \(dayPoints.filter { $0.kind == .still }.count) still",
-                    "hour  resting  wakes  spot checks  points  median hAcc  drops  thermal  charging"]
+                    "Points: \(dayPoints.filter { $0.kind == .moving }.count) moving, \(dayPoints.filter { $0.kind == .still }.count) still, \(dayPoints.filter { $0.kind == .rough }.count) rough",
+                    "hour  resting  wakes  spot checks  points  median hAcc  rough  drops  thermal  charging"]
             for h in 0..<24 {
                 let a = cal.date(byAdding: .hour, value: h, to: start)!, b = cal.date(byAdding: .hour, value: 1, to: a)!
                 let elapsed = min(b, input.now).timeIntervalSince(a)
@@ -82,11 +82,11 @@ public enum HealthReport {
                         if kv.count == 2, let c = Int(kv[1]) { drops[String(kv[0]), default: 0] += c }
                     }
                 }
-                let dropText = ["accuracy", "stale", "future", "order", "teleport"]
+                let dropText = ["accuracy", "rough-spacing", "stale", "future", "order", "teleport"]
                     .compactMap { r in drops[r].flatMap { $0 > 0 ? "\(r)=\($0)" : nil } }.joined(separator: ",")
                 let spots = inHour.filter { $0.kind == "gps" && $0.detail == "on spotcheck" }.count
                 out.append("\(hm.string(from: a))  \(pct)%  \(inHour.filter(isWake).count)  \(spots)  "
-                           + "\(hourPoints.count)  acc \(median)  drops \(dropText.isEmpty ? "-" : dropText)  \(name)  \(chg)")
+                           + "\(hourPoints.count)  acc \(median)  rough \(hourPoints.filter { $0.kind == .rough }.count)  drops \(dropText.isEmpty ? "-" : dropText)  \(name)  \(chg)")
             }
         }
 

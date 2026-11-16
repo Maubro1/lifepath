@@ -143,6 +143,7 @@ import UIKit
         } else if recordingWanted {
             guard let p = filter.process(s, receivedAt: Date(), activity: lastActivity) else { return send(.tick) }
             buffer.add(p, at: Date())
+            guard p.kind != .rough else { return send(.tick) }   // stored for later judging; the engine decides on precise fixes
             lastPoint = p.t
             send(.fix(p))
         }

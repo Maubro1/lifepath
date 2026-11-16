@@ -62,7 +62,7 @@ final class HealthReportTests: XCTestCase {
                                   ev(at(15, 9, 20), "gps", "on spotcheck"), ev(at(15, 9, 40), "gps", "off spotcheck"),
                                   ev(at(15, 9, 45), "wake", "steps"), ev(at(15, 9, 50), "wake", "wander-return"),
                                   ev(at(15, 9, 55), "wake", "indoor-nofix")])
-        XCTAssertTrue(row(out, "09:00").hasPrefix("09:00  0%  1  2  0  acc"), row(out, "09:00"))
+        XCTAssertTrue(row(out, "09:00").hasPrefix("09:00  0%  1  2  0  acc -  rough 0"), row(out, "09:00"))
         XCTAssertTrue(out.contains("Wakes by reason: steps=1\n"), out)
         XCTAssertTrue(out.contains("GPS on: 0.5 h"), out)
     }

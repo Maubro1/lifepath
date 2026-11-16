@@ -19,6 +19,11 @@ final class HeatTests: XCTestCase {
         XCTAssertEqual(g[Heat.cell(lat: 52, lon: 5)]!, 60, accuracy: 0.001)
     }
 
+    func testHeatIgnoresRough() {
+        XCTAssertTrue(Heat.grid([pt(0, .rough), pt(30, .rough)]).isEmpty)
+        XCTAssertEqual(Heat.grid([pt(0, .still), pt(300, .rough), pt(330, .still)]).values.reduce(0, +), 300, accuracy: 0.001)
+    }
+
     func testCellRoundTrip() {
         let c = Heat.cell(lat: 52.0, lon: 5.0)
         let m = Heat.center(of: c)

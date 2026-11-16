@@ -13,7 +13,9 @@ public enum Activity: String, Sendable, Codable {
     public var isVehicle: Bool { self == .cycling || self == .automotive }
 }
 
-public enum PointKind: String, Sendable, Codable { case moving, still }
+/// rough: a fix above the quality's accuracy ceiling, kept raw for later judging (trains report ~1 km for good positions).
+/// Older app versions read an unknown kind as moving.
+public enum PointKind: String, Sendable, Codable { case moving, still, rough }
 
 public struct FilteredPoint: Sendable, Equatable, Codable {
     public var t: Date

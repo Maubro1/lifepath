@@ -9,7 +9,8 @@ public struct Trip: Sendable, Equatable {
 }
 
 public enum Trips {
-    /// Moving points only; a still point, a gap > maxGap or a jump > maxJump ends a trip; trips with < 2 points are dropped.
+    /// Moving and rough points; a still point, a gap > maxGap or a jump > maxJump between precise points ends a trip (a rough
+    /// point can be a kilometre off, so it never counts as a jump); trips with < 2 points are dropped.
     /// A still point first trims the run's slow settling tail (within 30 m of it and within 5 m of the fix before it), then ends the trip at its position.
     public static func split(_ points: [FilteredPoint], maxGap: TimeInterval = 600, maxJump: Double = 500) -> [Trip] {
         var trips: [Trip] = []
@@ -25,7 +26,7 @@ public enum Trips {
             trips.append(Trip(points: run, start: run[0].t, end: run[run.count - 1].t, distance: distance, movingTime: time))
         }
         for p in points {
-            guard p.kind == .moving else {
+            guard p.kind != .still else {
                 let lastFix = run.last  // gap/jump are judged from the real last fix, not the trimmed one
                 while run.count > 1, let last = run.last,
                       Geo.distance(last.lat, last.lon, p.lat, p.lon) <= 30,
@@ -39,7 +40,8 @@ public enum Trips {
                 flush(); continue
             }
             if let last = run.last,
-               p.t.timeIntervalSince(last.t) > maxGap || Geo.distance(last.lat, last.lon, p.lat, p.lon) > maxJump {
+               p.t.timeIntervalSince(last.t) > maxGap
+                || (p.kind == .moving && last.kind == .moving && Geo.distance(last.lat, last.lon, p.lat, p.lon) > maxJump) {
                 flush()
             }
             run.append(p)
@@ -53,7 +55,7 @@ public enum Trips {
         let all = carry + chunk
         var trips = split(all, maxGap: maxGap, maxJump: maxJump)
         carry = []
-        guard let last = all.last, last.kind == .moving else { return trips }
+        guard let last = all.last, last.kind != .still else { return trips }
         // The open run starts fresh after a flush, so re-splitting it with the next chunk gives the same trips as one pass.
         if let open = trips.last, open.end == last.t { carry = open.points; trips.removeLast() } else { carry = [last] }
         return trips
