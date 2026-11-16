@@ -10,27 +10,24 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.3.0-preview.1 | Stage 2b: learned places as pins (time-density shapes, dynamic hiding, pins per period, outlines, rename), calm resting at pins, confirmed presence for still points, Save a backup, "Not saving since" status, resume after first unlock, clearer settings, walking steps keep a resumed walk awake. |
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## In progress: stage 2b, learned places
+## In progress: v0.3.1, tracking under pressure
 
-Plan: `docs/superpowers/plans/2026-11-15-stage-2b-places.md`. Ledger: `ledger-current-stage.md` (copy of `.superpowers/sdd/2026-11-15-stage-2b-places/progress.md`; its last section lists everything from the final session). Active branch: **`places`** (pushed to GitHub). All task branches are merged into `places`; the old `places-t*` branches and worktrees can be deleted.
+Spec: `docs/superpowers/specs/2026-11-16-tracking-under-pressure-design.md`. Plan: `docs/superpowers/plans/2026-11-16-v0.3.1-tracking-under-pressure.md`. Branch: **`pressure`** (from `places` after v0.3.0). Source: the owner's reports of 16 Nov (walking gaps at the Neude, home pottering keeps GPS on, trains drop every fix although the 1 km circle is centred right, canyon zigzag, bus spike, map line late/jumpy/flickering).
 
 | Task | Status at last update |
 |---|---|
-| 1. Places core (time-density shapes, density-peak pin, learning, merging) | Done, reviewed, merged into `places`. |
-| 2. Diary v4 (place, placeCell, visit, meta tables) | Done, reviewed, merged into `places`. |
-| 3. Learning service (folds finished rests into places while open or charging) | Done: reviewed, fixed (Places.settle in Core, atomic Diary.saveLearned), re-reviewed, on `places`. |
-| 4b. Still points need confirmed presence | Done: reviewed twice, merged into `places`. Deep sleep keeps the low-accuracy keep-alive on and runs a spot check every 15 min; no reading means a gap. |
-| 1b. Pin rules (points, real visits, dynamic hide rule) | Done: reviewed, fixed (84ff6fd), merged into `places` (d428145); 150 Core tests pass locally. |
-| 1c. Diary stores realDays + recentDurations | Not started. Needed right after 1b: additive migration v5 (or rebuild from the visit table), else a reloaded place has no real days and stays hidden. |
-| R. Robustness + settings (owner priority) | Audit done: [robustness-audit.md](robustness-audit.md). Next task after 1c: fix its Critical items (minimal "Save a backup" button, visible "Not saving since" status, 1c) and Important items 4-8, and apply the proposed setting names and descriptions. Keep it lean (owner: tests only at critical moments). |
-| 4. Resting at a known place (engine uses visible pins) | Not started; after 1b. |
-| 5. Places on the map (pins, outlines, rename, visibility by period) | Not started; after 1b/1c. |
-| 6. Final review and release v0.3.0-preview.1 (version 0.3.0, build 7) | Later. |
+| 1. Rough fixes kept (`PointKind.rough`, raw, never in the live filter, no heat, no jump splits) | Done on `pressure` (fae7c47), 163 Core tests pass. |
+| 2. Smoother: rough weighted by consistency, spike removal, walking pace from the pedometer, smoothing version 2 | Subagent on `pressure-t2`. |
+| 3. Pottering or leaving (walked distance vs drift vs noise; keep-alive first at a pin) | Not started (engine; after 2 and 5 merge). |
+| 4. Struggle mode in vehicles (hundred-metre GPS after 3 rough minutes, 5-min probes, `.otherNavigation`) | Not started (engine). |
+| 5. Steady live map (live reload, overlay diffing, power-of-two detail, rough dashed) | Subagent on `pressure-t5`. |
+| 6. Review and release v0.3.1-preview.1 (0.3.1, build 8) | Later. |
 
-CI: GitHub's anonymous API limit was exhausted during the last session, so the newest commits on `places` (0109835 through d428145) had no confirmed CI result yet. Run `bash scripts/ci-wait.sh <sha>` on the branch head first and fix any build errors (PlaceService, Diary.saveLearned and the Recorder changes compile only on CI).
+Stage 2b (learned places, robustness, Neude wander fix) is released as v0.3.0-preview.1; its decisions are in `docs/decisions/stage-2b.md`.
 
 ## Owner decision on places (made 2026-11-15)
 
