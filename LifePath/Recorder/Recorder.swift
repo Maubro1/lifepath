@@ -270,7 +270,7 @@ import UIKit
         let reason: String? = settings.deepSleep ? "manual"
             : t.rawValue >= ProcessInfo.ThermalState.serious.rawValue || (t == .fair && !onCharge) ? "thermal"
             : low ? "lowPower"
-            : battery >= 0 && battery < 0.2 ? "battery" : nil
+            : battery >= 0 && battery < 0.2 && !onCharge ? "battery" : nil   // on the charger a low battery costs nothing
         deepSleepReason = reason ?? ""
         if (reason != nil) != deepSleep {
             deepSleep = reason != nil
