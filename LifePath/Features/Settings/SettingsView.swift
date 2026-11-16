@@ -74,7 +74,9 @@ struct SettingsView: View {
                             do { backup = try await recorder.backup(); movingBackup = true } catch { backupError = error.localizedDescription }
                         }
                     }
-                    .fileMover(isPresented: $movingBackup, file: backup) { _ in }
+                    .fileMover(isPresented: $movingBackup, file: backup) { result in
+                        if case .failure = result, let backup { try? FileManager.default.removeItem(at: backup) }   // cancelled: no copy left in tmp
+                    }
                 } footer: {
                     Text("A copy of your whole diary. Keep it in Files or iCloud Drive: deleting LifePath deletes everything stored inside it.")
                 }

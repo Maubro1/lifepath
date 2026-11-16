@@ -274,11 +274,12 @@ public struct MotionEngine: Sendable {
         while stepLog.count > 1, stepLog[1].t < now.addingTimeInterval(-40) { stepLog.removeFirst() }
     }
 
-    /// At least 15 steps in the last 30 s (walking pace is ~50): someone walking, not browsing.
+    /// At least 35 steps in the last 30 s (walking pace is ~50), within 3 min of the wake: someone walking, not cooking or
+    /// cleaning; after 3 min the positions decide alone, so busy pottering cannot hold GPS on.
     private func walking(_ now: Date) -> Bool {
         guard let last = stepLog.last else { return false }
         let before = stepLog.last { $0.t <= now.addingTimeInterval(-30) }?.n ?? stepLog[0].n
-        return last.n - before >= 15
+        return last.n - before >= 35 && now.timeIntervalSince(wanderSince) <= 180
     }
 
     private mutating func wake(_ reason: String, _ now: Date, wander: Bool = false) -> [Command] {

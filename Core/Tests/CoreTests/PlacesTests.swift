@@ -244,7 +244,7 @@ final class PlacesTests: XCTestCase {
         XCTAssertFalse(old.isCandidate)
         XCTAssertEqual(old.visits, 5)
         XCTAssertEqual(old.lastVisit, home[0].lastVisit)
-        XCTAssertLessThan(old.cells.values.reduce(0, +), 0.02 * before)   // 0.5^(365/60) ≈ 1.5%
+        XCTAssertEqual(old.cells.values.reduce(0, +), before)   // lazy decay: untouched places keep their stored weights
         XCTAssertEqual(old.region(), home[0].region())   // fading keeps the shape
     }
 

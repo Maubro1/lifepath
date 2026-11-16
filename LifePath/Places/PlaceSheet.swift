@@ -28,7 +28,8 @@ struct PlaceSheet: View {
                 LabeledContent("Last visit", value: place.lastVisit.formatted(date: .abbreviated, time: .omitted))
             }
             .navigationTitle(place.name ?? "Place")
-            .toolbar { Button("Done") { save(); dismiss() }.accessibilityLabel("Save and close") }
+            .toolbar { Button("Done") { dismiss() }.accessibilityLabel("Save and close") }
+            .onDisappear(perform: save)   // a swipe-down keeps the edit too
         }
         .presentationDetents([.medium])
     }
@@ -36,6 +37,13 @@ struct PlaceSheet: View {
     private func save() {
         let new = name.trimmingCharacters(in: .whitespaces)
         guard new != (place.name ?? "") else { return }
-        try? Recorder.shared.readDiary?.renamePlace(place.id, to: new.isEmpty ? nil : new)
+        do {
+            try Recorder.shared.readDiary?.renamePlace(place.id, to: new.isEmpty ? nil : new)
+            if let i = PlaceService.shared.places.firstIndex(where: { $0.id == place.id }) {   // the map reads this copy
+                PlaceService.shared.places[i].name = new.isEmpty ? nil : new
+            }
+        } catch {
+            Recorder.shared.log("rename", "failed")
+        }
     }
 }

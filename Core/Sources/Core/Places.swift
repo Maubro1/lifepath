@@ -150,13 +150,14 @@ public enum Places {
 
     /// Folds one finished visit into the places. Not idempotent: the caller must not feed the same visit twice.
     public static func learn(_ places: [Place], visit: (start: Date, end: Date, points: [FilteredPoint]), now: Date, nextId: Int64) -> (places: [Place], visit: Visit) {
-        var places = places.map { p -> Place in
-            let dt = now.timeIntervalSince(p.updatedAt)
-            guard dt > 0 else { return p }
-            var p = p
+        var places = places
+        // Lazy decay: pin and region depend only on weight ratios within a place, so a place catches up when it is touched.
+        func decay(_ i: Int) {
+            let dt = now.timeIntervalSince(places[i].updatedAt)
+            guard dt > 0 else { return }
             let f = pow(0.5, dt / halfLife), fr = pow(0.5, dt / recentHalfLife)
-            p.cells = p.cells.mapValues { $0 * f }; p.recent = p.recent.mapValues { $0 * fr }; p.updatedAt = now
-            return p
+            places[i].cells = places[i].cells.mapValues { $0 * f }; places[i].recent = places[i].recent.mapValues { $0 * fr }
+            places[i].updatedAt = now
         }
         let pts = visit.points.sorted { $0.t < $1.t }
         guard !pts.isEmpty else { return (places, Visit(start: visit.start, end: visit.end, placeId: nil)) }
@@ -175,6 +176,7 @@ public enum Places {
             places.append(Place(id: nextId, name: nil, cells: [:], updatedAt: now, lastVisit: visit.end, totalSeconds: 0, visits: 0, isCandidate: true))
             k = places.count - 1
         }
+        decay(k)
         let added = PlaceGrid.splat(pts)
         places[k].cells.merge(added, uniquingKeysWith: +)
         places[k].recent.merge(added, uniquingKeysWith: +)
@@ -194,6 +196,7 @@ public enum Places {
         while let o = places.indices.first(where: {
             $0 != k && PlaceGrid.bounds(places[$0].cells.keys).near(box) && !PlaceGrid.dilate(places[$0].region(), by: 1).isDisjoint(with: region)
         }) {
+            decay(o)
             let (keep, gone) = places[o].totalSeconds > places[k].totalSeconds ? (o, k) : (k, o)
             let g = places[gone]
             places[keep].cells.merge(g.cells, uniquingKeysWith: +)

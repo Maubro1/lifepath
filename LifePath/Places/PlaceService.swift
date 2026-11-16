@@ -48,7 +48,8 @@ final class PlaceService: @unchecked Sendable {
                 visits += try diary.visits(from: .distantPast, to: .distantFuture).filter { $0.placeId.map { remap[$0] != nil } ?? false }
                     .map { Visit(start: $0.start, end: $0.end, placeId: final($0.placeId)) }
             }
-            try diary.saveLearned(places: fresh.isEmpty ? [] : changed, removing: Array(Set(places.map(\.id)).subtracting(changed.map(\.id))),
+            let before = Dictionary(places.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            try diary.saveLearned(places: changed.filter { before[$0.id] != $0 },   // untouched places are not rewritten removing: Array(Set(places.map(\.id)).subtracting(changed.map(\.id))),
                                   visits: visits, meta: "placesProcessedUntil", String(settled.next.timeIntervalSince1970))
             places = changed
             if isLast || settled.next <= cursor { break }

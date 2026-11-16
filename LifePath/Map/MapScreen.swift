@@ -59,6 +59,7 @@ struct MapOptions: Equatable {
         var minLat, maxLat, minLon, maxLon, tolerance: Double
         var from, to: Date
         var heat, recorded, street, zoomedOut: Bool
+        var places: [Place]   // in memory, refreshed by each places run; the loader never reads them per pan
     }
 
     private nonisolated static let budget = 400_000   // vertices per load and points per read chunk: memory guards that coarsen, never drop a trip
@@ -83,7 +84,7 @@ struct MapOptions: Equatable {
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
                       tolerance: max(3, 2 * metresPerPoint),
                       from: range.from, to: range.to, heat: options.heat, recorded: options.recorded,
-                      street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5)   // half the cache's 15 m tolerance per screen point
+                      street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5, places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
         generation += 1
         let gen = generation
         task = Task {
@@ -134,7 +135,7 @@ struct MapOptions: Equatable {
         }
         try add(Trips.split(carry))
         // Pins as they stood at the end of the range: a past period shows the pins of that time.
-        out.places = try diary.places().filter { p in
+        out.places = q.places.filter { p in
             guard p.isVisible(at: q.to), let pin = p.pin else { return false }
             return (q.minLat...q.maxLat).contains(pin.lat) && (q.minLon...q.maxLon).contains(pin.lon)
         }

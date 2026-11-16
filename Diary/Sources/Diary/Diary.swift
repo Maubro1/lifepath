@@ -245,12 +245,12 @@ public final class Diary: Sendable {
         }
         for p in places {
             let pin = p.pin   // cache only: loading recomputes it
-            // A stored name wins: the owner may rename a place while a learning run holds an older copy.
+            // The stored name always wins (set, changed or cleared): the owner may rename while a run holds an older copy.
             try db.execute(sql: """
                 INSERT INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit,
                                   realDays, recentDurations)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET name = COALESCE(place.name, excluded.name), updatedAt = excluded.updatedAt,
+                ON CONFLICT(id) DO UPDATE SET updatedAt = excluded.updatedAt,
                     totalSeconds = excluded.totalSeconds, visits = excluded.visits, isCandidate = excluded.isCandidate,
                     pinLat = excluded.pinLat, pinLon = excluded.pinLon, visitDays = excluded.visitDays, lastVisit = excluded.lastVisit,
                     realDays = excluded.realDays, recentDurations = excluded.recentDurations
@@ -296,9 +296,10 @@ public final class Diary: Sendable {
         }
     }
 
-    /// A consistent, compacted copy of the whole diary at `url` (which must not exist yet), taken while recording goes on.
+    /// A consistent copy of the whole diary at `url` (which must not exist yet), read through a reader connection so
+    /// recording's writes are never blocked while it runs.
     public func backup(to url: URL) throws {
-        try pool.vacuum(into: url.path)
+        try pool.backup(to: DatabaseQueue(path: url.path))
     }
 
     public func setMeta(_ key: String, _ value: String) throws {
