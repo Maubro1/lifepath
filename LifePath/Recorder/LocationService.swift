@@ -46,15 +46,19 @@ import CoreLocation
     func requestWhenInUse() { safety.requestWhenInUseAuthorization() }
     func requestAlways() { safety.requestAlwaysAuthorization() }
 
-    func configure(quality: Quality, spotCheck: Bool, distanceFilter: CLLocationDistance, automotive: Bool, showsIndicator: Bool) {
+    /// Struggle (a vehicle where GPS yields only rough fixes): hundred-metre accuracy and a 50 m filter; spot checks and probes stay full.
+    func configure(quality: Quality, spotCheck: Bool, distanceFilter: CLLocationDistance, automotive: Bool, struggle: Bool, showsIndicator: Bool) {
         // Spot checks ignore quality: km accuracy can never prove a departure.
         let byQuality = switch quality {
         case .saver: kCLLocationAccuracyKilometer
         case .balanced, .precise: kCLLocationAccuracyBest
         case .max: kCLLocationAccuracyBestForNavigation
         }
-        let accuracy = spotCheck ? kCLLocationAccuracyBest : byQuality
-        let type: CLActivityType = automotive ? .automotiveNavigation : .fitness
+        let struggling = struggle && !spotCheck
+        let accuracy = spotCheck ? kCLLocationAccuracyBest : struggling ? kCLLocationAccuracyHundredMeters : byQuality
+        let distanceFilter = struggling ? 50 : distanceFilter
+        // Motorised rides are trains, trams and waterbuses as much as cars: no road-network assumption.
+        let type: CLActivityType = automotive ? .otherNavigation : .fitness
         // Called after every event: only touch what changed.
         if recording.desiredAccuracy != accuracy { recording.desiredAccuracy = accuracy }
         if recording.distanceFilter != distanceFilter { recording.distanceFilter = distanceFilter }

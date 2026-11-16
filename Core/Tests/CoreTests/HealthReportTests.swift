@@ -67,6 +67,15 @@ final class HealthReportTests: XCTestCase {
         XCTAssertTrue(out.contains("GPS on: 0.5 h"), out)
     }
 
+    func testReportStruggleMinutesAndWakeOutcomes() {
+        let out = render(events: [ev(at(15, 9, 30), "struggle", "on"), ev(at(15, 10, 15), "struggle", "off"),
+                                  ev(at(15, 9, 40), "wake", "steps"), ev(at(15, 9, 41), "wake", "potter-return"),
+                                  ev(at(15, 9, 42), "wake", "leave-drift")])
+        XCTAssertTrue(row(out, "09:00").contains("struggle 30"), row(out, "09:00"))
+        XCTAssertTrue(row(out, "10:00").contains("struggle 15"), row(out, "10:00"))
+        XCTAssertTrue(out.contains("Wakes by reason: steps=1\nWake outcomes: leave-drift=1, potter-return=1\n"), out)
+    }
+
     func testReportThermalCarriesIntoHour() {
         let out = render(events: [ev(at(15, 9, 10), "thermal", "serious"), ev(at(15, 10, 20), "thermal", "nominal")])
         XCTAssertTrue(row(out, "10:00").contains("serious"), row(out, "10:00"))
