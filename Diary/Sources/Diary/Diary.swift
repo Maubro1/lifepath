@@ -44,6 +44,10 @@ public final class Diary: Sendable {
                 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
                 """)
         }
+        migrator.registerMigration("v5") { db in
+            // Additive: places saved before v5 load with no real days and are refilled by the next real visit.
+            try db.execute(sql: "ALTER TABLE place ADD COLUMN realDays TEXT; ALTER TABLE place ADD COLUMN recentDurations TEXT;")
+        }
         try migrator.migrate(pool)
     }
 
@@ -194,10 +198,15 @@ public final class Diary: Sendable {
                     if let w: Double = c["weight"] { weight[cell] = w }
                     if let w: Double = c["recent"] { recent[cell] = w }
                 }
-                let days = (r["visitDays"] as String? ?? "").split(separator: ",").compactMap { Int($0) }
-                return Place(id: id, name: r["name"], cells: weight, recent: recent, visitDays: Set(days),
-                             updatedAt: Date(timeIntervalSince1970: r["updatedAt"]), lastVisit: Date(timeIntervalSince1970: r["lastVisit"]),
-                             totalSeconds: r["totalSeconds"], visits: r["visits"], isCandidate: r["isCandidate"])
+                func list<T: LosslessStringConvertible>(_ column: String) -> [T] {
+                    (r[column] as String? ?? "").split(separator: ",").compactMap { T(String($0)) }
+                }
+                var place = Place(id: id, name: r["name"], cells: weight, recent: recent, visitDays: Set(list("visitDays") as [Int]),
+                                  updatedAt: Date(timeIntervalSince1970: r["updatedAt"]), lastVisit: Date(timeIntervalSince1970: r["lastVisit"]),
+                                  totalSeconds: r["totalSeconds"], visits: r["visits"], isCandidate: r["isCandidate"],
+                                  realDays: Set(list("realDays") as [Int]))
+                place.recentDurations = list("recentDurations")
+                return place
             }
         }
     }
@@ -228,11 +237,13 @@ public final class Diary: Sendable {
         for p in places {
             let pin = p.pin   // cache only: loading recomputes it
             try db.execute(sql: """
-                INSERT OR REPLACE INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                INSERT OR REPLACE INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit,
+                                             realDays, recentDurations)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                 """, arguments: [p.id, p.name, p.updatedAt.timeIntervalSince1970, p.totalSeconds, p.visits, p.isCandidate,
                                  pin?.lat, pin?.lon, p.visitDays.sorted().map(String.init).joined(separator: ","),
-                                 p.lastVisit.timeIntervalSince1970])
+                                 p.lastVisit.timeIntervalSince1970, p.realDays.sorted().map(String.init).joined(separator: ","),
+                                 p.recentDurations.map(String.init).joined(separator: ",")])
             try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [p.id])
             for c in Set(p.cells.keys).union(p.recent.keys) {
                 try db.execute(sql: "INSERT INTO placeCell(placeId, x, y, weight, recent) VALUES (?,?,?,?,?)",

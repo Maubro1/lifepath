@@ -210,8 +210,10 @@ final class DiaryTests: XCTestCase {
     }
 
     private func place(_ id: Int64, name: String? = nil, cells: [PlaceCell: Double]) -> Place {
-        Place(id: id, name: name, cells: cells, recent: [PlaceCell(x: 1, y: 1): 0.5], visitDays: [20_000, 20_003],
-              updatedAt: d(500), lastVisit: d(400), totalSeconds: 900, visits: 3, isCandidate: false)
+        var p = Place(id: id, name: name, cells: cells, recent: [PlaceCell(x: 1, y: 1): 0.5], visitDays: [20_000, 20_003],
+                      updatedAt: d(500), lastVisit: d(400), totalSeconds: 900, visits: 3, isCandidate: false, realDays: [20_000, 20_003])
+        p.recentDurations = [18_000.5, 0.1 + 0.2, 21_600]   // awkward doubles must survive the text column exactly
+        return p
     }
 
     func testPlacesRoundTripMergeRenameVisitsMeta() throws {
