@@ -229,6 +229,15 @@ public final class Diary: Sendable {
         }
     }
 
+    /// Built step by step: one 12-value literal is too much for the type checker.
+    private static func placeRow(_ p: Place, _ pin: (lat: Double, lon: Double)?) -> StatementArguments {
+        func list(_ xs: [some LosslessStringConvertible]) -> String { xs.map(String.init).joined(separator: ",") }
+        var row: StatementArguments = [p.id, p.name, p.updatedAt.timeIntervalSince1970, p.totalSeconds, p.visits, p.isCandidate]
+        row += [pin?.lat, pin?.lon, list(p.visitDays.sorted()), p.lastVisit.timeIntervalSince1970]
+        row += [list(p.realDays.sorted()), list(p.recentDurations)]
+        return row
+    }
+
     private static func writePlaces(_ db: Database, _ places: [Place], removing ids: [Int64]) throws {
         for id in ids {
             try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [id])
@@ -245,10 +254,7 @@ public final class Diary: Sendable {
                     totalSeconds = excluded.totalSeconds, visits = excluded.visits, isCandidate = excluded.isCandidate,
                     pinLat = excluded.pinLat, pinLon = excluded.pinLon, visitDays = excluded.visitDays, lastVisit = excluded.lastVisit,
                     realDays = excluded.realDays, recentDurations = excluded.recentDurations
-                """, arguments: [p.id, p.name, p.updatedAt.timeIntervalSince1970, p.totalSeconds, p.visits, p.isCandidate,
-                                 pin?.lat, pin?.lon, p.visitDays.sorted().map(String.init).joined(separator: ","),
-                                 p.lastVisit.timeIntervalSince1970, p.realDays.sorted().map(String.init).joined(separator: ","),
-                                 p.recentDurations.map(String.init).joined(separator: ",")])
+                """, arguments: Self.placeRow(p, pin))
             try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [p.id])
             for c in Set(p.cells.keys).union(p.recent.keys) {
                 try db.execute(sql: "INSERT INTO placeCell(placeId, x, y, weight, recent) VALUES (?,?,?,?,?)",
