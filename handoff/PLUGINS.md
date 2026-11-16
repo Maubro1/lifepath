@@ -15,7 +15,7 @@ The real plugin files sit on the owner's laptop in `handoff/private/plugins/` (g
 
 | Plugin | What it does |
 |---|---|
-| `limit-pacer` (zip in the owner's Downloads folder and in `private/plugins/installed/`) | Paces work against the Claude plan limits in any project. Two hooks count actions (user messages and tool calls); burn is measured per 100 actions, not per hour; check-ins come every 80 actions when both limits are far and down to every 5 when one is close. Readings live in `<project>/.claude/limit-pacer/<account hash>.json` (git-ignored, per account). Pace levels: watch (≥ 60% or < ~400 actions left: milestones, skip optional rounds), tight (≥ 85% or < ~150: ship a testable release before the limit), nearly out (≥ 95% or < ~40: commit, push, refresh the handoff). In the desktop app Claude refreshes readings with `get_usage` and `pacer.mjs record`. Limits never lower the project's goals. |
+| `limit-pacer` 1.5.0 (the owner edits it themselves; newest zip in the Downloads folder, copy in `private/plugins/installed/`) | Paces work against the Claude plan limits in any project. Two hooks count actions (user messages and tool calls); burn is measured per 100 actions, not per hour; check-ins come every 80 actions when both limits are far and down to every 5 when one is close. Readings live in `<project>/.claude/limit-pacer/<account hash>.json` (git-ignored, per account). Pace levels: watch (≥ 60% or < ~400 actions left: milestones, skip optional rounds), tight (≥ 85% or < ~150: ship a testable release before the limit), nearly out (≥ 95% or < ~40: commit, push, refresh the handoff). In the desktop app Claude refreshes readings with `get_usage` and `pacer.mjs record`. Limits never lower the project's goals. |
 
 ## Used so far
 
