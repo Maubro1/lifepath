@@ -38,7 +38,11 @@ import UIKit
     @ObservationIgnored private var thermal: String?
     @ObservationIgnored private var lowPower: Bool?
     @ObservationIgnored private var charging: Bool?
-    @ObservationIgnored private var flushFailedAt: Date?     // nil while writes succeed
+    @ObservationIgnored private var flushFailedAt: Date?     // last failed write; nil while writes succeed
+    /// First failed write of the current failure run; the status box shows it.
+    private(set) var notSavingSince: Date?
+    @ObservationIgnored private var diaryError: String?      // why the diary didn't open, for the health report
+    @ObservationIgnored private var resumed = false          // the relaunch work that needs the diary has run
     @ObservationIgnored private var lastWakeReason = ""
 
     private static let log = Logger(subsystem: "app.lifepath.LifePath", category: "recorder")
@@ -59,10 +63,6 @@ import UIKit
         guard !started else { return }
         started = true
         let now = Date()
-        openDiary()
-        try? diary?.pruneEvents(olderThan: now.addingTimeInterval(-14 * 86400))
-        let last = try? diary?.lastPoint()
-        lastPoint = last?.t
         buffer.add(LoggedEvent(t: now, kind: "launch", detail: Self.version))
         buffer.add(LoggedEvent(t: now, kind: "state", detail: "moving"))   // the engine starts in Moving
         for name in [ProcessInfo.thermalStateDidChangeNotification, .NSProcessInfoPowerStateDidChange,
@@ -71,14 +71,29 @@ import UIKit
                 MainActor.assumeIsolated { self.refreshConditions() }
             }
         }
+        // Launched before the first unlock after a reboot: the diary opens, and the relaunch backfill runs, once data is available.
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { self.flushFailedAt = nil; self.flush() }
+        }
         location.start()
         location.setKeepAlive(true)
         motion.startActivity()
         refreshConditions()
         applyGPS()
+        openDiary()
+    }
+
+    /// Runs once, when the diary first opens (at launch, or after the first unlock).
+    private func resume() {
+        guard let diary, !resumed else { return }
+        resumed = true
+        let now = Date()
+        try? diary.pruneEvents(olderThan: now.addingTimeInterval(-14 * 86400))
+        let last = try? diary.lastPoint()
+        if lastPoint == nil { lastPoint = last?.t }
         // Relaunched after a rest (swiped away, phone off, a fence exit while suspended): backfill it up to the departure,
         // at most 30 min past the last still point, the longest any reading can have confirmed it.
-        if let p = last, p.kind == .still {
+        if let p = last, p.kind == .still, lastStill == nil {
             lastStill = p
             lastWakeReason = "relaunch"
             execute(.resolveDeparture(stillSince: p.t, until: min(now, p.t.addingTimeInterval(1800))), now)
@@ -175,6 +190,7 @@ import UIKit
                 if departure == nil, ["geofence", "slc", "relaunch", "spotcheck"].contains(reason) { return }
                 for p in Backfill.stillPoints(fence: fence, from: still.t, to: min(departure ?? now, until)) { buffer.add(p, at: Date()) }
                 flush()
+                rewindPlaces(to: still.t)
             }
         case .fillUnconfirmed(let from, let to):
             guard let still = lastStill else { break }
@@ -187,6 +203,7 @@ import UIKit
                 // The engine writes the point at `to` itself.
                 for p in Backfill.stillPoints(fence: fence, from: from, to: to) where p.t < to { buffer.add(p, at: Date()) }
                 flush()
+                rewindPlaces(to: from)
             }
         case .log(var e):
             if e.kind == "deepSleep", e.detail == "on" { e.detail = "on \(deepSleepReason)" }
@@ -269,9 +286,29 @@ import UIKit
     var readDiary: Diary? { diary }
 
     private func openDiary() {
-        do { diary = try Diary(path: Diary.defaultPath()) } catch {
+        do { diary = try Diary(path: Diary.defaultPath()); diaryError = nil; resume() } catch {
+            diaryError = error.localizedDescription
             Self.log.error("diary open failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Filled points older than the places cursor would never become visits otherwise.
+    // shortcut: a places run saving its cursor at the same moment can win the race; the next fill or a rebuild catches it.
+    private func rewindPlaces(to t: Date) {
+        guard notSavingSince == nil else { return }   // the fill is still in memory
+        try? diary?.rewindMeta("placesProcessedUntil", to: t)
+    }
+
+    /// A compacted copy of the diary in the temporary folder, for the system file mover; off the main thread.
+    func backup() async throws -> URL {
+        flush()
+        guard let diary else { throw CocoaError(.fileReadNoPermission) }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd-HHmm"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("LifePath-backup-\(f.string(from: Date())).lifepath")
+        try? FileManager.default.removeItem(at: url)
+        try await Task.detached { try diary.backup(to: url) }.value
+        return url
     }
 
     func flush() {
@@ -288,9 +325,10 @@ import UIKit
             try diary.append(points)
             try diary.log(events)
             flushFailedAt = nil
+            notSavingSince = nil
         } catch {
             buffer.putBack(points: points, events: events)
-            if flushFailedAt == nil { buffer.add(LoggedEvent(t: Date(), kind: "flush", detail: "failed")) }
+            if notSavingSince == nil { buffer.add(LoggedEvent(t: Date(), kind: "flush", detail: "failed")); notSavingSince = Date() }
             flushFailedAt = Date()
         }
     }
@@ -310,6 +348,7 @@ import UIKit
             "showsIndicator": "\(settings.showsIndicator)", "deepSleep": deepSleep ? "on \(deepSleepReason)" : "off",
             "authorization": authorization.rawValue, "preciseLocation": "\(preciseLocation)",
             "motion": "\(MotionService.available)", "state": state.rawValue,
+            "diary": diary == nil ? "failed \(diaryError ?? "not opened")" : notSavingSince.map { "write failed since \($0)" } ?? "open",
         ]
         return HealthReport.render(HealthInput(now: now, events: (try? diary?.events(from: from, to: now)) ?? [],
                                                points: (try? diary?.points(from: from, to: now)) ?? [], settings: info))

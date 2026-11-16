@@ -277,6 +277,19 @@ public final class Diary: Sendable {
         try pool.read { db in try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [key]) }
     }
 
+    /// Moves a time cursor (seconds since 1970) back to `t` when it is past it, so late-arriving points get processed.
+    public func rewindMeta(_ key: String, to t: Date) throws {
+        try pool.write { db in
+            try db.execute(sql: "UPDATE meta SET value = ? WHERE key = ? AND CAST(value AS REAL) > ?",
+                           arguments: [String(t.timeIntervalSince1970), key, t.timeIntervalSince1970])
+        }
+    }
+
+    /// A consistent, compacted copy of the whole diary at `url` (which must not exist yet), taken while recording goes on.
+    public func backup(to url: URL) throws {
+        try pool.vacuum(into: url.path)
+    }
+
     public func setMeta(_ key: String, _ value: String) throws {
         try pool.write { db in try db.execute(sql: "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)", arguments: [key, value]) }
     }

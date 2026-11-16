@@ -216,6 +216,23 @@ final class DiaryTests: XCTestCase {
         return p
     }
 
+    func testRewindMetaOnlyMovesBackAndBackupReopens() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.setMeta("cursor", "1000.0")
+        try diary.rewindMeta("cursor", to: d(2000))
+        XCTAssertEqual(try diary.meta("cursor"), "1000.0")
+        try diary.rewindMeta("cursor", to: Date(timeIntervalSince1970: 400))
+        XCTAssertEqual(try diary.meta("cursor"), "400.0")
+        try diary.rewindMeta("missing", to: d(0))
+        XCTAssertNil(try diary.meta("missing"))
+
+        let a = place(1, cells: [PlaceCell(x: 1, y: 1): 2])
+        try diary.savePlaces([a], removing: [])
+        let copy = URL(fileURLWithPath: tempPath())
+        try diary.backup(to: copy)
+        XCTAssertEqual(try Diary(path: copy.path).places(), [a])
+    }
+
     func testPlacesRoundTripMergeRenameVisitsMeta() throws {
         let diary = try Diary(path: tempPath())
         let a = place(1, name: "Home", cells: [PlaceCell(x: 1, y: 1): 2, PlaceCell(x: 2, y: 1): 1])

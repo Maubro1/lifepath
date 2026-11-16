@@ -17,6 +17,9 @@ struct SettingsView: View {
     @State private var pointsToday = 0
     @State private var report = ReportDocument(text: "")
     @State private var exporting = false
+    @State private var backup: URL?
+    @State private var movingBackup = false
+    @State private var backupError: String?
     @Environment(\.scenePhase) private var scenePhase
 
     private var expiry: Date? { SigningReminder.expiry }
@@ -35,7 +38,7 @@ struct SettingsView: View {
     var body: some View {
         let s = TrackingStatus.evaluate(
             authorization: recorder.authorization, preciseLocation: recorder.preciseLocation, state: recorder.state,
-            stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn, deepSleep: recorder.deepSleep,
+            stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn, notSavingSince: recorder.notSavingSince,
             signingExpiry: expiry, now: now)
         NavigationStack {
             List {
@@ -44,29 +47,61 @@ struct SettingsView: View {
                         .foregroundStyle(s.level == .problem ? .red : s.level == .resting ? .secondary : .green)
                     if let hint = s.hint { Text(hint) }
                     LabeledContent("Last point", value: time(recorder.lastPoint))
-                    LabeledContent("Last check-in", value: time(recorder.lastCheckIn))
-                    LabeledContent("Signing expires", value: expiry.map { time($0) } ?? "unknown")
+                    LabeledContent("Last location check", value: time(recorder.lastCheckIn))
+                    LabeledContent("SideStore refresh due", value: expiry.map { time($0) } ?? "unknown")
                     LabeledContent("Points today", value: "\(pointsToday)")
                 }
                 Section {
-                    Picker("Quality", selection: settings.$quality) {
-                        ForEach(Quality.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+                    Picker("Recording detail", selection: settings.$quality) {
+                        ForEach(Quality.allCases, id: \.self) { Text(Self.label($0)).tag($0) }
                     }
-                    Toggle("Show blue location bar", isOn: settings.$showsIndicator)
-                    Toggle("Deep sleep", isOn: settings.$deepSleep)
                 } footer: {
-                    Text("Rests even more deeply while you're still; the first part of a trip may be missed.")
+                    Text("How closely trips are traced while you move. Higher uses more battery. Drops a step by itself when the phone is hot or in Low Power Mode.")
                 }
                 Section {
-                    Button("Create health report") { report = ReportDocument(text: recorder.healthReport()); exporting = true }
-                    LabeledContent("Version", value: version)
+                    Toggle("Show blue location bar", isOn: settings.$showsIndicator)
+                } footer: {
+                    Text("Helps keep iOS from pausing LifePath. Off hides the bar, but recording may stop more often.")
                 }
+                Section {
+                    Toggle("Always rest deeply", isOn: settings.$deepSleep)
+                } footer: {
+                    Text("LifePath already rests deeply by itself when the battery is low, the phone is warm or Low Power Mode is on. On: checks every 15 min instead of 5, so the start of a trip may be missed.")
+                }
+                Section {
+                    Button("Save a backup") {
+                        Task {
+                            do { backup = try await recorder.backup(); movingBackup = true } catch { backupError = error.localizedDescription }
+                        }
+                    }
+                    .fileMover(isPresented: $movingBackup, file: backup) { _ in }
+                } footer: {
+                    Text("A copy of your whole diary. Keep it in Files or iCloud Drive: deleting LifePath deletes everything stored inside it.")
+                }
+                Section {
+                    Button("Save health report") { report = ReportDocument(text: recorder.healthReport()); exporting = true }
+                } footer: {
+                    Text("A text file of the last 3 days, for troubleshooting.")
+                }
+                Section { LabeledContent("Version", value: version) }
             }
             .navigationTitle("LifePath")
             .refreshable { refresh() }
             .onAppear { refresh() }
             .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
             .fileExporter(isPresented: $exporting, document: report, contentType: .plainText, defaultFilename: filename) { _ in }
+            .alert("Backup failed", isPresented: Binding { backupError != nil } set: { if !$0 { backupError = nil } }) {} message: {
+                Text(backupError ?? "")
+            }
+        }
+    }
+
+    private static func label(_ q: Quality) -> String {
+        switch q {
+        case .saver: "Battery saver"
+        case .balanced: "Balanced"
+        case .precise: "Precise"
+        case .max: "Maximum"
         }
     }
 

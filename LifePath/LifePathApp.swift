@@ -22,9 +22,11 @@ struct LifePathApp: App {
 
 private struct Root: View {
     let settings = AppSettings()
+    /// Same test as `init`: settings read before the first unlock can come back as defaults, but the permission can't.
+    @State private var startedBefore = AppSettings().onboarded || CLLocationManager().authorizationStatus != .notDetermined
 
     var body: some View {
-        if settings.onboarded {
+        if settings.onboarded || startedBefore {
             TabView {
                 Tab("Map", systemImage: "map") { MapScreen() }
                 Tab("Settings", systemImage: "gear") { SettingsView() }
