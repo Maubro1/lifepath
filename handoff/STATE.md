@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-15 (update this line and the sections below whenever the handoff is refreshed).
+Last updated: 2026-11-16 (update this line and the sections below whenever the handoff is refreshed).
 
 ## Released (installable from GitHub Releases, all pre-releases)
 
@@ -52,5 +52,8 @@ The app and its data must survive crashes, updates and iOS kills, and the app mu
 See `docs/decisions/*.md` (every ruling and deferred minor per stage) and the ledger. Notable: Recorded-line mode at "All" reads all history (correct but unmeasured on the phone); still-dot cells in degrees vs heat's Mercator cells; first trip-line build is chunked monthly.
 
 ## Things only the phone can show (ask the owner for health reports)
+
+First health reports (v0.2.1, evening of 14 Nov to 01:43 on 15 Nov): thermal nominal throughout, GPS on 0.5 h in an evening, resting 82–100% in quiet hours, spot checks every 5 min through the night, 94% of moving points within 20 m, fidget wakes returned to rest within a minute. The only two gaps (15 and 19 min) each ended at the launch of a newly installed version: a SideStore update stops the app until the owner opens it (robustness-audit item 5). Deep sleep on v0.2.1 stopped spot checks entirely; the code on `places` keeps one every 15 min.
+
 
 Battery per day, warmth, wake counts per hour, spot checks per hour, gaps and their reasons, whether the 8-steps fidget threshold and the pin rules (100 points, dynamic hiding) feel right, and whether the deep-sleep keep-alive with 15-minute spot checks stays cool and battery-light overnight.

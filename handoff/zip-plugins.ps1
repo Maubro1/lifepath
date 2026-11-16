@@ -13,7 +13,7 @@ $cli = @{
 }
 foreach ($k in $cli.Keys) { if ($cli[$k] -and (Test-Path $cli[$k])) { Compress-Archive -Path "$($cli[$k])\*" -DestinationPath "$out\installed\$k.zip" -Force } else { "missing: $k" } }
 $dl = "$env:USERPROFILE\Downloads"
-'claude-skills-main','deepread','enso-seo','enso-SEO-GEO-main','impeccable','litreview','logic-reasoning','logic-reasoning-skills-main','reflect','superpowers-main','claude-code-kit-1.35.1' |
+'claude-skills-main','deepread','enso-seo','enso-SEO-GEO-main','impeccable','litreview','logic-reasoning','logic-reasoning-skills-main','reflect','superpowers-main','claude-code-kit-1.35.1','limit-pacer' |
   ForEach-Object { if (Test-Path "$dl\$_.zip") { Copy-Item "$dl\$_.zip" "$out\downloads-originals\" -Force } }
 if (Test-Path "$dl\plugins") { Copy-Item "$dl\plugins\*.zip" "$out\downloads-originals\" -Force }
 "plugins zipped into $out"
