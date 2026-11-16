@@ -6,8 +6,8 @@ import Foundation
 final class PlaceService: @unchecked Sendable {
     @MainActor static let shared = PlaceService()
     static let changed = Notification.Name("app.lifepath.placesChanged")   // posted on the main actor after a run changed places or visits
-    /// What the last run saw, for the Recorder.
-    @MainActor private(set) var places: [Place] = []
+    /// What the last run saw (or the Recorder loaded at launch), for the Recorder.
+    @MainActor var places: [Place] = []
 
     private static let overlap: TimeInterval = 3600, chunk: TimeInterval = 30 * 86_400
 
