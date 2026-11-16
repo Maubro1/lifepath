@@ -7,6 +7,7 @@
 - Wants many design questions, but only in the design stage (stage 6).
 - **Top priority: accuracy, efficiency (battery) and a cool phone, together.** Every design, ruling and review checks these three first; when they conflict, look for a design that serves all three before trading one away, and tell the owner what any trade costs.
 - Wants the strongest proven algorithms that stay lightweight ("very smart, efficient, high level").
+- Wants short heads-ups without asking: one or two plain sentences when something starts (and roughly how long it takes), waits or stalls (and why), fails (and what's being done), when a limit gets close, and when something is ready to try. "There's a human behind all this."
 - Values honesty: never claim work is running unless an agent or background job really is; if you stop, say "nothing is running until you reply".
 - When away, keep building stage after stage; collect phone checks and big decisions for their return.
 - Wants speed and token efficiency: tests and reviews only at critical periodic moments (before merging a stage, before a release, for risky data or recording-engine logic), not after every change. Skip scoped re-reviews when fixes are precise.
