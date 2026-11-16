@@ -85,6 +85,13 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(h.realDays.max(), Places.day(back))
     }
 
+    func testPastPeriodCountsOnlyEarlierRealVisits() {
+        let p = known([100, 101])
+        func at(_ d: Int) -> Date { Date(timeIntervalSince1970: Double(d) * 86_400 + 43_200 - Double(TimeZone.current.secondsFromGMT())) }   // local noon
+        XCTAssertFalse(p.isVisible(at: at(99)))   // a map period before the place existed shows no pin
+        XCTAssertTrue(p.isVisible(at: at(150)))
+    }
+
     func testShortGymVisitsKeepGymVisible() throws {
         let weekly = (0..<30).map { visit(at: day0 + Double($0) * 7 * day, minutes: 90) }
         let gym = try XCTUnwrap(fold([], weekly).first)

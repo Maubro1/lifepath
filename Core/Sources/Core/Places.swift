@@ -1,7 +1,7 @@
 import Foundation
 
 /// A place learned from still time: a decaying time-density grid; the pin is derived from it.
-public struct Place: Sendable, Equatable, Codable {
+public struct Place: Sendable, Equatable, Codable, Identifiable {
     public var id: Int64
     public var name: String?
     public var cells: [PlaceCell: Double]     // decayed weight (seconds·confidence), 60-day half-life
@@ -33,10 +33,12 @@ public struct Place: Sendable, Equatable, Codable {
         return min(730, max(180, 3 * (gaps.isEmpty ? 0 : gaps[(gaps.count - 1) / 2])) + 30 * min(6, years))
     }
 
-    /// A pin, shown while its last real visit is within `hideAfterDays`; no real visit yet means hidden.
+    /// A pin, shown while its last real visit up to `now` is within `hideAfterDays`; no real visit by then means hidden.
+    // shortcut: for a past date, hideAfterDays and isCandidate use the whole history; replay them per date if old periods look wrong.
     public func isVisible(at now: Date) -> Bool {
-        guard let last = realDays.max() else { return false }
-        return !isCandidate && Places.day(now) - last <= hideAfterDays
+        let today = Places.day(now)
+        guard let last = realDays.filter({ $0 <= today }).max() else { return false }
+        return !isCandidate && today - last <= hideAfterDays
     }
 
     /// Density peak: the cell with the most 3×3-smoothed weight; peaks within 10% of it go to the one with more recent weight.
