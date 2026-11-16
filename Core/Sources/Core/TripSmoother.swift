@@ -13,7 +13,7 @@ public enum TripSmoother {
 
     /// Time-weighted median speed: valid Doppler, and each rough stretch at its end-to-end speed (a train ride of rough
     /// fixes is not a walk). Below 2.5 m/s the trip counts as walking.
-    public static func medianSpeed(_ fixes: [Sample], rough: Set<Int> = []) -> Double {
+    public static func medianSpeed(_ fixes: [Sample], rough: Set<Int>) -> Double {
         var v: [(speed: Double, w: Double)] = []
         var i = 0
         while i < fixes.count {
