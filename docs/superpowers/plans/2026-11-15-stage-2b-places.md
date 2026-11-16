@@ -49,6 +49,15 @@ public enum Places {
 ```
 - [ ] Failing tests: `testCellSizeIs5m`, `testRegionHolds90PercentAndFillsHoles`, `testPinIsDensityPeakNotMean` (L-shaped region: pin inside the L, mean outside), `testContainsAllowsAccuracy`, `testFirstVisitIsCandidate`, `testThreeDaysPromote`, `testOneLongStayStaysCandidate` (6 h on one day → still a candidate), `testThreeVisitsSameDayStaysCandidate`, `testNeighbourSixtyMetresStaysSeparate`, `testGardenJoinsHouse`, `testDecayFollowsMove` (8 weeks at desk A then 8 weeks at desk B → pin at B), `testOldHomeFadesNotDeleted`, `testLearnIsIdempotentPerVisit` (same visit twice via a processed-until guard in the caller is fine; document), `testVisitsNeedTenMinutes`. RED → GREEN; commit `Core: learned places`.
 
+### Task 1b: Pin rules (Core)
+
+**Files:** Modify `Core/Sources/Core/Places.swift`, `PlacesTests.swift`
+- `Place.points: Double` = 4 · visitDays.count + totalSeconds / 3600 (computed). Promotion: `isCandidate = points < 100`, re-evaluated after every joined visit and after a merge (replace the 5-days/7-apart rule).
+- `Place.recentDurations: [Double]` (last 20 visit durations, seconds) and `Place.realDays: Set<Int>` (local day numbers any real visit touches, start through end; life-long, merge = union). A visit is real when it lasts ≥ 5 h or ≥ 0.5 × lower median(recentDurations before this visit); the first visit counts as real if ≥ 5 h.
+- `Place.hideAfterDays: Int` = min(730, max(180, 3 × typicalGap) + 30 × min(6, yearsKnown)). Stays are runs of consecutive days in `realDays`; a gap is the next stay's start day − the previous stay's end day; typicalGap = lower median of the last 8 gaps (0 with none); yearsKnown = (last real day − first visit day) / 365, whole years.
+- `Place.isVisible(at now: Date) -> Bool` = !isCandidate && day(now) − realDays.max() ≤ hideAfterDays; a place with no real day is hidden.
+- [ ] Tests: `testHomeBecomesPinInAboutSixDays` (14 h/day), `testSchoolTwoWeeks` (6 h × 10 days), `testOneLongStayNeverPins` (10 h once), `testBenchNeverPins`, `testHiddenAfterSixMonthsWithoutRealVisit`, `testHideAfterDays` (home 360, former home 330, school 300, gym 240, parents 360, grandparents 450, holiday home 730, café 270, internship 180), `testBreaksDoNotHideAndARealVisitBringsItBack`, `testOneRealVisitBringsItBack`, `testShortGymVisitsKeepGymVisible` (1.5 h visits weekly keep it visible), `testShortDropInDoesNotCount` (10 min at home after 7 months away → still hidden), `testMergeReevaluatesPoints`. Remove the 5-days tests. RED → GREEN; commit.
+
 ### Task 2: Diary v4
 
 **Files:** Modify `Diary/Sources/Diary/Diary.swift`, tests. Migration `v4` (additive): `place(id INTEGER PRIMARY KEY, name TEXT, updatedAt REAL, totalSeconds REAL, visits INTEGER, isCandidate INTEGER, pinLat REAL, pinLon REAL)`, `placeCell(placeId INTEGER, x INTEGER, y INTEGER, weight REAL, PRIMARY KEY(placeId, x, y))`, `visit(start REAL PRIMARY KEY, end REAL, placeId INTEGER)`, `meta(key TEXT PRIMARY KEY, value TEXT)`.
@@ -69,7 +78,7 @@ public func meta(_ key: String) throws -> String?;  public func setMeta(_ key: S
 ### Task 4: Resting at a known place (engine)
 
 **Files:** Modify `Core/Sources/Core/MotionEngine.swift`, `LifePath/Recorder/Recorder.swift`; Test `MotionEngineTests.swift`
-- Engine gains `case enteredPlace(PlaceShape?)` where `public struct PlaceShape: Sendable, Equatable { public var region: Set<PlaceCell>; public var pin: (lat: Double, lon: Double) }` (built from `Place`, non-candidates only).
+- Known places for the engine = visible pins only (`isVisible(at:)`). Engine gains `case enteredPlace(PlaceShape?)` where `public struct PlaceShape: Sendable, Equatable { public var region: Set<PlaceCell>; public var pin: (lat: Double, lon: Double) }` (built from `Place`, non-candidates only).
 - While Settling/Still with a known place: the Still fence test uses `shape.contains` (accuracy-aware) instead of the circle; still points use the pin; the steps-wake threshold starts at 50; a steps wake returns to Still after 60 s when fixes stay inside the shape; after 30 min Still at a known place the spot-check cap rises from 300 to 900 s. A fix outside the shape (allowing accuracy), the geofence or vehicle motion wakes as before.
 - Recorder: on entering Settling and at launch while Still, finds the known place whose shape contains the fence centre (from the places the PlaceService last loaded, kept in memory) and sends `.enteredPlace`.
 - [ ] Failing tests: `testKnownPlaceUsesShapeNotCircle`, `testStillPointAtPin`, `testPotteringAtPlaceNeedsFiftySteps`, `testSpotCheckCapRisesAtPlace`, `testLeavingPlaceStillWakesFast` (fix 80 m outside the shape with hAcc 10 → wake), `testCandidateIsNotAPlace`. RED → GREEN; CI build; commit.

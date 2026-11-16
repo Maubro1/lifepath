@@ -6,9 +6,9 @@ final class TrackingStatusTests: XCTestCase {
 
     func eval(auth: Authorization = .always, precise: Bool = true, state: MotionState = .moving,
               stillSince: Date? = nil, checkIn: Date? = nil, expiry: Date? = nil,
-              deepSleep: Bool = false) -> TrackingStatus {
+              notSaving: Date? = nil) -> TrackingStatus {
         TrackingStatus.evaluate(authorization: auth, preciseLocation: precise, state: state, stillSince: stillSince,
-                                lastCheckIn: checkIn ?? now.addingTimeInterval(-60), deepSleep: deepSleep,
+                                lastCheckIn: checkIn ?? now.addingTimeInterval(-60), notSavingSince: notSaving,
                                 signingExpiry: expiry ?? now.addingTimeInterval(86400 * 5), now: now)
     }
 
@@ -38,14 +38,21 @@ final class TrackingStatusTests: XCTestCase {
         XCTAssertEqual(eval(checkIn: now.addingTimeInterval(-59 * 60)).level, .healthy)
     }
 
-    func testDeepSleepSkipsCheckInRule() {
-        // Deep sleep stops the keep-alive, so hours without a check-in are expected.
-        XCTAssertEqual(eval(state: .still, checkIn: now.addingTimeInterval(-3 * 3600), deepSleep: true).level, .resting)
+    func testRestingStillNeedsCheckIns() {
+        // Deep sleep keeps the keep-alive and a spot check every 15 min, so an hour of silence is a dead recorder.
+        XCTAssertEqual(eval(state: .still, checkIn: now.addingTimeInterval(-3 * 3600)).level, .problem)
+    }
+
+    func testFailedWritesAreProblemFirst() {
+        let since = Calendar.current.date(from: DateComponents(year: 2027, month: 1, day: 15, hour: 9, minute: 5))!
+        let s = eval(auth: .whenInUse, notSaving: since)
+        XCTAssertEqual(s.level, .problem)
+        XCTAssertEqual(s.headline, "Not saving since 09:05")
     }
 
     func testSigningExpirySoonIsProblem() {
         XCTAssertEqual(eval(expiry: now.addingTimeInterval(23 * 3600)).level, .problem)
-        XCTAssertEqual(eval(expiry: now.addingTimeInterval(23 * 3600)).hint, "Open SideStore and tap Refresh All.")
+        XCTAssertEqual(eval(expiry: now.addingTimeInterval(23 * 3600)).hint, "Open SideStore and tap Refresh All, then open LifePath once.")
         XCTAssertEqual(eval(expiry: now.addingTimeInterval(25 * 3600)).level, .healthy)
     }
 }

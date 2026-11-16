@@ -7,12 +7,19 @@ final class TrackLine: MKPolyline {
     var line: MapLine!
 }
 
+/// A learned place's pin; the marker size follows the time spent there.
+final class PlaceAnnotation: MKPointAnnotation {
+    var placeId: Int64 = 0
+    var totalSeconds = 0.0
+}
+
 struct TrackMapView: UIViewRepresentable {
     let data: MapData?
     let bySpeed: Bool
     let satellite: Bool
     let visible: Bool
     let onRegion: @MainActor (MKCoordinateRegion, Double) -> Void   // region, view width in points
+    let onPlace: @MainActor (Int64) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -54,7 +61,28 @@ struct TrackMapView: UIViewRepresentable {
             return poly
         })
         map.addOverlays(data.still.map { MKCircle(center: CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon), radius: 3) })
+        map.addOverlays(data.outlines.values.map { cells in
+            MKMultiPolygon(cells.map { c in   // one square per 5 m cell; one shape, so the fill has no seams
+                let a = PlaceGrid.center(of: c), b = PlaceGrid.center(of: PlaceCell(x: c.x + 1, y: c.y + 1))
+                let h = ((b.lat - a.lat) / 2, (b.lon - a.lon) / 2)
+                var corners = [(-1.0, -1.0), (-1, 1), (1, 1), (1, -1)].map {
+                    CLLocationCoordinate2D(latitude: a.lat + $0.0 * h.0, longitude: a.lon + $0.1 * h.1)
+                }
+                return MKPolygon(coordinates: &corners, count: 4)
+            })
+        })
         map.removeOverlays(old)
+        let pins = data.places.map { p -> PlaceAnnotation in
+            let a = PlaceAnnotation()
+            let pin = p.pin!   // the loader keeps only places with a pin
+            a.coordinate = CLLocationCoordinate2D(latitude: pin.lat, longitude: pin.lon)
+            a.title = p.name ?? String(format: "Place near %.4f, %.4f", pin.lat, pin.lon)
+            a.placeId = p.id
+            a.totalSeconds = p.totalSeconds
+            return a
+        }
+        map.removeAnnotations(map.annotations.filter { $0 is PlaceAnnotation })
+        map.addAnnotations(pins)
     }
 
     @MainActor final class Coordinator: NSObject, MKMapViewDelegate {
@@ -76,7 +104,33 @@ struct TrackMapView: UIViewRepresentable {
             map.setRegion(MKCoordinateRegion(center: loc.coordinate, latitudinalMeters: 1500, longitudinalMeters: 1500), animated: false)
         }
 
+        func mapView(_ map: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard let a = annotation as? PlaceAnnotation else { return nil }   // nil keeps the system's own location dot
+            let v = map.dequeueReusableAnnotationView(withIdentifier: "place") as? MKMarkerAnnotationView
+                ?? MKMarkerAnnotationView(annotation: a, reuseIdentifier: "place")
+            v.annotation = a
+            v.markerTintColor = .systemIndigo
+            v.glyphImage = UIImage(systemName: "mappin")
+            v.displayPriority = .required   // every pin at every zoom
+            let scale = a.totalSeconds < 10 * 3600 ? 0.7 : a.totalSeconds < 100 * 3600 ? 0.85 : 1.0
+            v.transform = CGAffineTransform(scaleX: scale, y: scale)
+            v.accessibilityLabel = a.title
+            v.accessibilityHint = "Shows this place's details"
+            return v
+        }
+
+        func mapView(_ map: MKMapView, didSelect annotation: MKAnnotation) {
+            guard let a = annotation as? PlaceAnnotation else { return }
+            map.deselectAnnotation(a, animated: false)
+            parent.onPlace(a.placeId)
+        }
+
         func mapView(_ map: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let shape = overlay as? MKMultiPolygon {
+                let r = MKMultiPolygonRenderer(multiPolygon: shape)
+                r.fillColor = UIColor.systemIndigo.withAlphaComponent(0.15)
+                return r
+            }
             if let heat = overlay as? HeatOverlay { return HeatRenderer(heat) }
             if let circle = overlay as? MKCircle {
                 let r = MKCircleRenderer(circle: circle)

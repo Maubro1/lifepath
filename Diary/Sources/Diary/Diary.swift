@@ -32,6 +32,22 @@ public final class Diary: Sendable {
                 CREATE INDEX tripLine_end ON tripLine(end);
                 """)
         }
+        migrator.registerMigration("v4") { db in
+            // weight / recent are NULL when the cell is absent from that map.
+            try db.execute(sql: """
+                CREATE TABLE place(
+                    id INTEGER PRIMARY KEY, name TEXT, updatedAt REAL, totalSeconds REAL, visits INTEGER, isCandidate INTEGER,
+                    pinLat REAL, pinLon REAL, visitDays TEXT, lastVisit REAL);
+                CREATE TABLE placeCell(
+                    placeId INTEGER, x INTEGER, y INTEGER, weight REAL, recent REAL, PRIMARY KEY(placeId, x, y));
+                CREATE TABLE visit(start REAL PRIMARY KEY, end REAL, placeId INTEGER);
+                CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
+                """)
+        }
+        migrator.registerMigration("v5") { db in
+            // Additive: places saved before v5 load with no real days and are refilled by the next real visit.
+            try db.execute(sql: "ALTER TABLE place ADD COLUMN realDays TEXT; ALTER TABLE place ADD COLUMN recentDurations TEXT;")
+        }
         try migrator.migrate(pool)
     }
 
@@ -168,6 +184,126 @@ public final class Diary: Sendable {
             Double(bitPattern: UInt64(littleEndian: d.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: i * 8, as: UInt64.self) }))
         }
         return (0..<vals.count / 3).map { (vals[$0 * 3], vals[$0 * 3 + 1], vals[$0 * 3 + 2]) }
+    }
+
+    public func places() throws -> [Place] {
+        try pool.read { db in
+            var cells: [Int64: [Row]] = [:]
+            for r in try Row.fetchAll(db, sql: "SELECT * FROM placeCell") { cells[r["placeId"], default: []].append(r) }
+            return try Row.fetchAll(db, sql: "SELECT * FROM place ORDER BY id").map { r in
+                let id: Int64 = r["id"]
+                var weight: [PlaceCell: Double] = [:], recent: [PlaceCell: Double] = [:]
+                for c in cells[id] ?? [] {
+                    let cell = PlaceCell(x: c["x"], y: c["y"])
+                    if let w: Double = c["weight"] { weight[cell] = w }
+                    if let w: Double = c["recent"] { recent[cell] = w }
+                }
+                func list<T: LosslessStringConvertible>(_ column: String) -> [T] {
+                    (r[column] as String? ?? "").split(separator: ",").compactMap { T(String($0)) }
+                }
+                var place = Place(id: id, name: r["name"], cells: weight, recent: recent, visitDays: Set(list("visitDays") as [Int]),
+                                  updatedAt: Date(timeIntervalSince1970: r["updatedAt"]), lastVisit: Date(timeIntervalSince1970: r["lastVisit"]),
+                                  totalSeconds: r["totalSeconds"], visits: r["visits"], isCandidate: r["isCandidate"],
+                                  realDays: Set(list("realDays") as [Int]))
+                place.recentDurations = list("recentDurations")
+                return place
+            }
+        }
+    }
+
+    /// One transaction. `removing` = ids merged away (their cells already live in the survivor).
+    public func savePlaces(_ places: [Place], removing ids: [Int64]) throws {
+        try pool.write { db in try Self.writePlaces(db, places, removing: ids) }
+    }
+
+    public func saveVisits(_ visits: [Visit]) throws {
+        try pool.write { db in try Self.writeVisits(db, visits) }
+    }
+
+    /// Places, merged-away ids, visits and the learning cursor in one transaction, so a crash can never count a visit twice.
+    public func saveLearned(places: [Place], removing ids: [Int64], visits: [Visit], meta key: String, _ value: String) throws {
+        try pool.write { db in
+            try Self.writePlaces(db, places, removing: ids)
+            try Self.writeVisits(db, visits)
+            try db.execute(sql: "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)", arguments: [key, value])
+        }
+    }
+
+    /// Built step by step: one 12-value literal is too much for the type checker.
+    private static func placeRow(_ p: Place, _ pin: (lat: Double, lon: Double)?) -> StatementArguments {
+        func list(_ xs: [some LosslessStringConvertible]) -> String { xs.map(String.init).joined(separator: ",") }
+        var row: StatementArguments = [p.id, p.name, p.updatedAt.timeIntervalSince1970, p.totalSeconds, p.visits, p.isCandidate]
+        row += [pin?.lat, pin?.lon, list(p.visitDays.sorted()), p.lastVisit.timeIntervalSince1970]
+        row += [list(p.realDays.sorted()), list(p.recentDurations)]
+        return row
+    }
+
+    private static func writePlaces(_ db: Database, _ places: [Place], removing ids: [Int64]) throws {
+        for id in ids {
+            try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM place WHERE id = ?", arguments: [id])
+        }
+        for p in places {
+            let pin = p.pin   // cache only: loading recomputes it
+            // The stored name always wins (set, changed or cleared): the owner may rename while a run holds an older copy.
+            try db.execute(sql: """
+                INSERT INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit,
+                                  realDays, recentDurations)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET updatedAt = excluded.updatedAt,
+                    totalSeconds = excluded.totalSeconds, visits = excluded.visits, isCandidate = excluded.isCandidate,
+                    pinLat = excluded.pinLat, pinLon = excluded.pinLon, visitDays = excluded.visitDays, lastVisit = excluded.lastVisit,
+                    realDays = excluded.realDays, recentDurations = excluded.recentDurations
+                """, arguments: Self.placeRow(p, pin))
+            try db.execute(sql: "DELETE FROM placeCell WHERE placeId = ?", arguments: [p.id])
+            for c in Set(p.cells.keys).union(p.recent.keys) {
+                try db.execute(sql: "INSERT INTO placeCell(placeId, x, y, weight, recent) VALUES (?,?,?,?,?)",
+                               arguments: [p.id, c.x, c.y, p.cells[c], p.recent[c]])
+            }
+        }
+    }
+
+    private static func writeVisits(_ db: Database, _ visits: [Visit]) throws {
+        for v in visits {
+            try db.execute(sql: "INSERT OR REPLACE INTO visit(start, end, placeId) VALUES (?,?,?)",
+                           arguments: [v.start.timeIntervalSince1970, v.end.timeIntervalSince1970, v.placeId])
+        }
+    }
+
+    /// Visits overlapping the range.
+    public func visits(from: Date, to: Date) throws -> [Visit] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM visit WHERE end >= ? AND start <= ? ORDER BY start",
+                             arguments: [from.timeIntervalSince1970, to.timeIntervalSince1970]).map {
+                Visit(start: Date(timeIntervalSince1970: $0["start"]), end: Date(timeIntervalSince1970: $0["end"]), placeId: $0["placeId"])
+            }
+        }
+    }
+
+    public func renamePlace(_ id: Int64, to name: String?) throws {
+        try pool.write { db in try db.execute(sql: "UPDATE place SET name = ? WHERE id = ?", arguments: [name, id]) }
+    }
+
+    public func meta(_ key: String) throws -> String? {
+        try pool.read { db in try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?", arguments: [key]) }
+    }
+
+    /// Moves a time cursor (seconds since 1970) back to `t` when it is past it, so late-arriving points get processed.
+    public func rewindMeta(_ key: String, to t: Date) throws {
+        try pool.write { db in
+            try db.execute(sql: "UPDATE meta SET value = ? WHERE key = ? AND CAST(value AS REAL) > ?",
+                           arguments: [String(t.timeIntervalSince1970), key, t.timeIntervalSince1970])
+        }
+    }
+
+    /// A consistent copy of the whole diary at `url` (which must not exist yet), read through a reader connection so
+    /// recording's writes are never blocked while it runs.
+    public func backup(to url: URL) throws {
+        try pool.backup(to: DatabaseQueue(path: url.path))
+    }
+
+    public func setMeta(_ key: String, _ value: String) throws {
+        try pool.write { db in try db.execute(sql: "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)", arguments: [key, value]) }
     }
 
     public func events(from: Date, to: Date) throws -> [LoggedEvent] {

@@ -57,7 +57,7 @@ final class MotionEngineTests: XCTestCase {
                     file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(e.state, .moving, file: file, line: line)
         let expected: [Command] = [.startRecording, .disarmGeofence, .setKeepAlive(true),
-                                   .resolveDeparture(stillSince: at(stillAt)), log(t, "wake", reason), log(t, "state", "moving")]
+                                   .resolveDeparture(stillSince: at(stillAt), until: at(t)), log(t, "wake", reason), log(t, "state", "moving")]
         for c in expected { XCTAssert(out.contains(c), "missing \(c) in \(out)", file: file, line: line) }
     }
 
@@ -422,6 +422,24 @@ final class MotionEngineTests: XCTestCase {
         assertWoke(send(&e, .steps(15), still + 10), e, reason: "steps", stillAt: still, when: still + 10)
     }
 
+    /// A walk resumed after a short pause, between buildings where fixes barely move: steps at walking pace are no wander.
+    func testSteadyStepsBlockWanderReturn() throws {
+        var (e, s, _) = try stillEngine()
+        var rng = SeededRandom(seed: 28)
+        send(&e, .steps(15), s + 30)
+        for i in 1...150 {
+            let t = s + 30 + Double(i)
+            if i % 5 == 0 { send(&e, .steps(15 + i * 2), t) }                // ~2 steps/s, reported every 5 s
+            send(&e, .fix(standing(t, east: 168, rng: &rng)), t)
+            XCTAssertNotEqual(e.state, .still, "wander-return while walking at \(t - s)")
+        }
+        // The steps stop (a real browse): back to Still once 30 s pass without walking.
+        var t = s + 181
+        while e.state != .still && t < s + 300 { send(&e, .fix(standing(t, east: 168, rng: &rng)), t); t += 1 }
+        XCTAssertEqual(e.state, .still)
+        XCTAssertLessThanOrEqual(t - s, 181 + 31)
+    }
+
     func testLateFirstFixIsNoWanderReturn() throws {
         var (e, s, _) = try stillEngine()
         var rng = SeededRandom(seed: 26)
@@ -497,24 +515,224 @@ final class MotionEngineTests: XCTestCase {
         assertWoke(out, e, reason: "spotcheck", stillAt: s, when: s + 60)
     }
 
-    func testDeepSleepDisablesKeepAliveAndSpotChecks() throws {
+    func testDeepSleepKeepsKeepAliveAndSlowsSpotChecks() throws {
         var (e, s, entry) = try stillEngine(deepSleep: true)
-        XCTAssert(entry.contains(.setKeepAlive(false)))
-        XCTAssertEqual(scheduled(entry), [])
-        XCTAssertEqual(send(&e, .spotCheckDue, s + 30), [])
-        XCTAssertEqual(scheduled(send(&e, .spotCheckEnded, s + 50)), [])
+        XCTAssertFalse(entry.contains(.setKeepAlive(false)))                 // keeps the app alive for spot checks
+        XCTAssertEqual(scheduled(entry), [900])                              // spot checks go on, every 15 min
+        XCTAssertEqual(send(&e, .spotCheckDue, s + 900), [.startSpotCheck])
+        XCTAssertEqual(scheduled(send(&e, .spotCheckEnded, s + 920)), [900])
         XCTAssertEqual(e.state, .still)
     }
 
     func testDeepSleepToggleWhileStill() throws {
         var (e, s, _) = try stillEngine()
         let on = send(&e, .deepSleepChanged(true), s + 10)
-        XCTAssert(on.contains(.setKeepAlive(false)))
+        XCTAssertFalse(on.contains(.setKeepAlive(false)))
         XCTAssert(on.contains(log(s + 10, "deepSleep", "on")))
-        XCTAssertEqual(send(&e, .spotCheckDue, s + 30), [])
+        XCTAssertEqual(scheduled(on), [900])
         let off = send(&e, .deepSleepChanged(false), s + 100)
         XCTAssert(off.contains(.setKeepAlive(true)))
         XCTAssertEqual(scheduled(off), [30])
         XCTAssertEqual(send(&e, .spotCheckDue, s + 130), [.startSpotCheck])
+    }
+
+    // MARK: confirmed presence
+
+    /// A reading `north` m from the fence centre, as keep-alive (`.confirmFix`) or spot check (`.wakeFix`).
+    func reading(_ f: Fence, north: Double, hAcc: Double, _ t: TimeInterval, wake: Bool = false) -> MotionEvent {
+        let p = Geo.offset(lat: f.lat, lon: f.lon, north: north, east: 0)
+        let s = Sample(t: at(t), lat: p.lat, lon: p.lon, hAcc: hAcc, speed: -1, course: -1)
+        return wake ? .wakeFix(s, reason: "spotcheck") : .confirmFix(s)
+    }
+    func fills(_ out: [Command]) -> [(Date, Date)] { out.compactMap { if case .fillUnconfirmed(let a, let b) = $0 { (a, b) } else { nil } } }
+
+    func testNoConfirmationStopsStillPoints() throws {
+        var (e, s, entry) = try stillEngine()
+        var points = stillPoints(entry), logs: [Command] = []
+        for i in 1...90 {                                                     // 45 min, no reading
+            let out = send(&e, .tick, s + Double(i) * 30)
+            points += stillPoints(out); logs += out.filter { if case .log = $0 { true } else { false } }
+        }
+        XCTAssertEqual(points.map(\.t), stride(from: 0.0, through: 1800, by: 300).map { at(s + $0) })
+        XCTAssertEqual(e.state, .still)
+        XCTAssertEqual(logs.filter { $0 == log(s + 2100, "still", "unconfirmed") }.count, 1)   // logged once, at the first missed point
+    }
+
+    func testConfirmFixInsideAreaKeepsStillPoints() throws {
+        var (e, s, entry) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        var points = stillPoints(entry), out: [Command] = []
+        for i in 1...180 {                                                    // 90 min; a keep-alive reading every 10 min
+            let t = s + Double(i) * 30
+            let c = i % 20 == 0 ? send(&e, reading(f, north: 60, hAcc: 65, t), t) : send(&e, .tick, t)
+            points += stillPoints(c); out += c
+        }
+        XCTAssertEqual(points.map(\.t), stride(from: 0.0, through: 5400, by: 300).map { at(s + $0) })
+        XCTAssert(fills(out).isEmpty)
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testInaccurateReadingDoesNotConfirm() throws {
+        var (e, s, entry) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        var points = stillPoints(entry), out: [Command] = []
+        for i in 1...120 {
+            let t = s + Double(i) * 30
+            let c = i % 20 == 0 ? send(&e, reading(f, north: 0, hAcc: 2000, t), t) : send(&e, .tick, t)
+            points += stillPoints(c); out += c
+        }
+        XCTAssertEqual(points.last?.t, at(s + 1800))
+        XCTAssert(fills(out).isEmpty)
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testConfirmationAfterGapRequestsFill() throws {
+        var (e, s, _) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        for i in 1...90 { send(&e, .tick, s + Double(i) * 30) }
+        let out = send(&e, reading(f, north: 10, hAcc: 30, s + 2710), s + 2710)
+        XCTAssertEqual(out, [.fillUnconfirmed(from: at(s + 1800), to: at(s + 2710)), .writeStillPoint(f.stillPoint(at: at(s + 2710)))])
+        XCTAssertEqual(stillPoints(send(&e, .tick, s + 3010)).map(\.t), [at(s + 3010)])   // live points resume
+        // A spot-check fix inside the area confirms too.
+        for i in 1...70 { send(&e, .tick, s + 3010 + Double(i) * 30) }
+        let spot = send(&e, reading(f, north: 0, hAcc: 15, s + 6000, wake: true), s + 6000)
+        XCTAssertEqual(fills(spot).map(\.0), [at(s + 4510)])
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testReadingElsewhereAfterGapWakes() throws {
+        var (e, s, _) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        for i in 1...90 { send(&e, .tick, s + Double(i) * 30) }
+        let out = send(&e, reading(f, north: 300, hAcc: 20, s + 2710, wake: true), s + 2710)
+        XCTAssertEqual(e.state, .moving)
+        XCTAssert(out.contains(.startRecording))
+        XCTAssert(out.contains(log(s + 2710, "wake", "spotcheck")))
+        XCTAssert(fills(out).isEmpty)
+        // Nothing confirmed the unconfirmed stretch: the departure backfill stops at the confirmed window.
+        XCTAssert(out.contains(.resolveDeparture(stillSince: at(s), until: at(s + 1800))), "\(out)")
+    }
+
+    func testAirplaneModeNightIsNotAssumed() throws {
+        var (e, s, _) = try stillEngine()
+        let f = try XCTUnwrap(e.fence)
+        XCTAssertEqual(stillPoints(send(&e, .tick, s + 3600)), [])            // a stray tick in the night writes nothing
+        let out = send(&e, reading(f, north: 0, hAcc: 20, s + 28800), s + 28800)
+        XCTAssertEqual(fills(out).map(\.0), [at(s)])
+        XCTAssertEqual(fills(out).map(\.1), [at(s + 28800)])
+    }
+
+    func testFallbackAfterWakeDoesNotConfirm() throws {
+        var (e, s, _) = try stillEngine()
+        for i in 1...90 { send(&e, .tick, s + Double(i) * 30) }               // 45 min, no reading
+        send(&e, .steps(15), s + 2730)                                        // a bathroom trip, no fix indoors
+        XCTAssertEqual(e.state, .moving)
+        var out: [Command] = []
+        for i in 1...80 { out += send(&e, .tick, s + 2730 + Double(i) * 30) }
+        XCTAssertEqual(e.state, .still)                                       // back by the no-fix fallback
+        XCTAssertEqual(stillPoints(out), [])
+    }
+
+    func testDeepSleepDuringUnconfirmedStretchWritesNothing() throws {
+        var (e, s, _) = try stillEngine()
+        for i in 1...90 { send(&e, .tick, s + Double(i) * 30) }
+        var out = send(&e, .deepSleepChanged(true), s + 2730)
+        for i in 1...80 { out += send(&e, .tick, s + 2730 + Double(i) * 30) }
+        XCTAssertEqual(stillPoints(out), [])
+        let wake = send(&e, .geofenceExit, s + 6000)
+        XCTAssert(wake.contains(.resolveDeparture(stillSince: at(s), until: at(s + 1800))), "\(wake)")
+    }
+
+    // MARK: known places
+
+    /// The stop of `walkThenStand` (168 m east) plus a garden reaching 60 m north; pin 10 m north of the stop.
+    func home() -> PlaceShape {
+        var cells = Set<PlaceCell>()
+        for n in stride(from: -10.0, through: 60, by: 5) { for east in stride(from: 153.0, through: 183, by: 5) {
+            let p = Geo.offset(lat: 52.37, lon: 4.90, north: n, east: east)
+            cells.insert(PlaceGrid.cell(lat: p.lat, lon: p.lon))
+        } }
+        let pin = Geo.offset(lat: 52.37, lon: 4.90, north: 10, east: 168)
+        return PlaceShape(region: cells, pin: (pin.lat, pin.lon))
+    }
+    /// `walkThenStand`, with the Recorder's `.enteredPlace` when Settling begins.
+    func stillAtHome() throws -> (MotionEngine, TimeInterval, [Command]) {
+        var e = MotionEngine(deepSleep: false)
+        var rng = SeededRandom(seed: 11)
+        let fixes = route(to: 168, speed: 1.4, seed: 1) + (121...300).map { standing(TimeInterval($0), east: 168, rng: &rng) }
+        for p in fixes {
+            let before = e.state
+            let out = e.handle(.fix(p), at: p.t)
+            if e.state == .settling && before == .moving { _ = e.handle(.enteredPlace(home()), at: p.t) }
+            if e.state == .still { return (e, p.t.timeIntervalSince(t0), out) }
+        }
+        XCTFail("never went Still")
+        throw CocoaError(.featureUnsupported)
+    }
+    func sample(north: Double, east: Double = 168, hAcc: Double, _ t: TimeInterval) -> Sample {
+        let p = Geo.offset(lat: 52.37, lon: 4.90, north: north, east: east)
+        return Sample(t: at(t), lat: p.lat, lon: p.lon, hAcc: hAcc, speed: -1, course: -1)
+    }
+
+    func testKnownPlaceUsesShapeNotCircle() throws {
+        var (e, s, _) = try stillAtHome()
+        XCTAssertEqual(try XCTUnwrap(e.fence).radius, 20)
+        XCTAssertEqual(send(&e, .wakeFix(sample(north: 50, hAcc: 5, s + 60), reason: "spotcheck"), s + 60), [])   // the garden
+        XCTAssertEqual(e.state, .still)
+        // Unconfirmed after 30 min, then a reading in the garden confirms presence again.
+        for i in 1...80 { send(&e, .tick, s + 60 + Double(i) * 30) }
+        let out = send(&e, .confirmFix(sample(north: 50, hAcc: 5, s + 2500)), s + 2500)
+        XCTAssert(out.contains(.fillUnconfirmed(from: at(s + 1800), to: at(s + 2500))), "\(out)")
+    }
+
+    func testStillPointAtPin() throws {
+        var (e, s, entry) = try stillAtHome()
+        let pin = home().pin
+        let points = stillPoints(entry) + stillPoints(send(&e, .tick, s + 300))
+        XCTAssertEqual(points.count, 2)
+        XCTAssert(points.allSatisfy { $0.lat == pin.lat && $0.lon == pin.lon && $0.kind == .still }, "\(points)")
+    }
+
+    func testPotteringAtPlaceNeedsFiftySteps() throws {
+        var (e, s, _) = try stillAtHome()
+        XCTAssertEqual(send(&e, .steps(15), s + 30), [])
+        send(&e, .activity(.walking, confident: true), s + 35)
+        XCTAssertEqual(send(&e, .steps(49), s + 40), [])
+        XCTAssertEqual(e.state, .still)
+        send(&e, .steps(50), s + 60)
+        XCTAssertEqual(e.state, .moving)
+        var rng = SeededRandom(seed: 31)
+        for i in 1...61 { send(&e, .fix(standing(s + 60 + Double(i), north: 45, east: 168, rng: &rng)), s + 60 + Double(i)) }   // garden
+        XCTAssertEqual(e.state, .still)
+    }
+
+    func testSpotCheckCapRisesAtPlace() throws {
+        var (e, s, entry) = try stillAtHome()
+        var delays = scheduled(entry)
+        var t = s
+        for _ in 0..<10 {
+            t += delays.last ?? 30
+            send(&e, .spotCheckDue, t)
+            t += 20
+            delays += scheduled(send(&e, .spotCheckEnded, t))
+        }
+        XCTAssertEqual(delays, [30, 60, 120, 240, 300, 300, 300, 300, 600, 900, 900])
+    }
+
+    func testLeavingPlaceStillWakesFast() throws {
+        var (e, s, _) = try stillAtHome()
+        let out = send(&e, .wakeFix(sample(north: 140, hAcc: 10, s + 60), reason: "spotcheck"), s + 60)   // 80 m past the garden
+        assertWoke(out, e, reason: "spotcheck", stillAt: s, when: s + 60)
+    }
+
+    func testCandidateIsNotAPlace() throws {
+        let now = t0, c = PlaceGrid.cell(lat: 52.37, lon: 4.90)
+        var p = Place(id: 1, name: nil, cells: [c: 100], updatedAt: now, lastVisit: now, totalSeconds: 3600, visits: 1,
+                      isCandidate: true, realDays: [Places.day(now)])
+        XCTAssertNil(PlaceShape(p, at: now))
+        p.isCandidate = false
+        XCTAssertEqual(try XCTUnwrap(PlaceShape(p, at: now)).region, [c])
+        p.realDays = []                                                       // a hidden pin
+        XCTAssertNil(PlaceShape(p, at: now))
     }
 }

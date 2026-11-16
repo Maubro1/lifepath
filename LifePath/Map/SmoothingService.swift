@@ -62,6 +62,7 @@ enum SmoothingService {
             Recorder.shared.log("smooth", detail); Recorder.shared.flush()
             if wroteLines { NotificationCenter.default.post(name: linesChanged, object: nil) }   // the map reloads once if visible
         }
+        await PlaceService.execute(diary)   // same cancellation: a cancelled smooth run returned above, and the places run checks it too
     }
 
     /// At most once per foreground and never two at once; the work never touches the main actor.

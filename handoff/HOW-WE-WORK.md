@@ -5,12 +5,14 @@
 - Not a programmer. Claude makes every technical decision (including git: branches, merges, releases) and never asks about them. Ask only what the owner can answer: things on the phone, accounts, how something should look or feel, and big product decisions.
 - Writes in English or Dutch; answer in the language of their message. Dutch is Netherlands Dutch (load the `dutch-native` skill).
 - Wants many design questions, but only in the design stage (stage 6).
+- **Top priority: accuracy, efficiency (battery) and a cool phone, together.** Every design, ruling and review checks these three first; when they conflict, look for a design that serves all three before trading one away, and tell the owner what any trade costs.
 - Wants the strongest proven algorithms that stay lightweight ("very smart, efficient, high level").
 - Values honesty: never claim work is running unless an agent or background job really is; if you stop, say "nothing is running until you reply".
 - When away, keep building stage after stage; collect phone checks and big decisions for their return.
 - Wants speed and token efficiency: tests and reviews only at critical periodic moments (before merging a stage, before a release, for risky data or recording-engine logic), not after every change. Skip scoped re-reviews when fixes are precise.
 - The app and its data must survive crashes, updates and iOS kills; every setting needs a clear name and, where needed, a one-line description.
 - Uses the `limit-pacer` plugin (see PLUGINS.md) to plan releases and handoffs around the 5-hour and weekly limits, so a testable build is ready before a limit hits and the owner can try it while waiting.
+- Wants Claude to keep an eye on the limits throughout. The routine: read usage (`get_usage`) and record it with the pacer at the start of a session and at every milestone (after a task merge, before a release); tell the owner the numbers when asked (percent used, time to reset, roughly how many actions are left). When the 5-hour window runs low, publish a working build first so the owner can test while it resets. At about 95% of the weekly limit (not the 5-hour window, which only pauses work until it resets), refresh this folder: `bash handoff/update.sh`, update STATE.md, commit on `places` and `main`.
 - Publishes an installable pre-release on GitHub at every milestone that changes what the phone app does.
 - Their writing preferences (tone, banned phrases, structure) are in `private/preferences.md` (from the `prefskill` plugin). Follow them in every message.
 

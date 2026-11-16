@@ -18,7 +18,7 @@ enum SigningReminder {
         guard let fire = expiry?.addingTimeInterval(-24 * 3600), fire > now else { return }
         let content = UNMutableNotificationContent()
         content.title = "LifePath needs a refresh"
-        content.body = "Open SideStore and tap Refresh All."
+        content.body = "Open SideStore and tap Refresh All, then open LifePath once."
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: fire.timeIntervalSince(now), repeats: false)
         center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
     }

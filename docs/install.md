@@ -8,6 +8,7 @@ Free signing lasts 7 days. Before it runs out:
 
 1. Open **LocalDevVPN** and tap **Connect**.
 2. Open **SideStore** → **My Apps** → **Refresh All**.
+3. Open **LifePath** once. A refresh stops it, and iOS may not restart it by itself.
 
 LifePath shows the current expiry date. If it lapses, LifePath won't open or record until you refresh. Your history is kept.
 
@@ -16,6 +17,7 @@ LifePath shows the current expiry date. If it lapses, LifePath won't open or rec
 1. Connect **LocalDevVPN**.
 2. In Safari, open <https://github.com/Maubro1/lifepath/releases> and tap **LifePath.ipa** under the newest version.
 3. SideStore → **My Apps** → **+** → pick the downloaded `LifePath.ipa`.
+4. Open **LifePath** once, so it starts recording again.
 
 Installing over the existing app keeps all data and doesn't use one of SideStore's weekly app IDs.
 
