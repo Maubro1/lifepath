@@ -14,6 +14,10 @@ final class SimplifyTests: XCTestCase {
         XCTAssertEqual(Simplify.douglasPeucker(l, tolerance: 5), [0, 10, 20])
     }
 
+    func testStepSnapsToPowersOfTwoFromThree() {
+        XCTAssertEqual([0, 3, 3.1, 6, 7, 15, 100].map(Simplify.step), [3, 3, 6, 6, 12, 24, 192])
+    }
+
     func testDPEndpointsKept() {
         XCTAssertEqual(Simplify.douglasPeucker([], tolerance: 5), [])
         XCTAssertEqual(Simplify.douglasPeucker([(50, 4)], tolerance: 5), [0])

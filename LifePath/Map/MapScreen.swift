@@ -4,6 +4,8 @@ import MapKit
 import SwiftUI
 
 struct MapLine: Sendable {
+    var key: String           // trip start, segment, rough flag, tolerance and a content hash: equal keys draw the same line
+    var rough: Bool           // a stretch of rough fixes, drawn thin and dashed
     var coords: [(lat: Double, lon: Double)]
     var speeds: [Double]      // per coord, unknowns filled with the trip median
     var locations: [Double]   // per coord, 0...1 along the line, for the speed gradient
@@ -54,6 +56,8 @@ struct MapOptions: Equatable {
     @ObservationIgnored private var active = false
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var lastLoad = Date.distantPast
+    @ObservationIgnored private var liveTask: Task<Void, Never>?
 
     private struct Query: Sendable {
         var minLat, maxLat, minLon, maxLon, tolerance: Double
@@ -66,7 +70,18 @@ struct MapOptions: Equatable {
 
     func setActive(_ on: Bool) {
         active = on
-        if on { reload() } else { task?.cancel(); task = nil }
+        if on { reload() } else { task?.cancel(); task = nil; liveTask?.cancel(); liveTask = nil }
+    }
+
+    /// New points were saved: redraw at most every 15 s, only while on screen.
+    func pointsSaved() {
+        guard active, liveTask == nil else { return }
+        let wait = max(0, 15 - Date().timeIntervalSince(lastLoad))
+        liveTask = Task {
+            do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+            liveTask = nil
+            reload()
+        }
     }
 
     func regionChanged(_ r: MKCoordinateRegion, width w: Double) {
@@ -77,12 +92,13 @@ struct MapOptions: Equatable {
     func reload(debounce: Bool = false) {
         task?.cancel()
         guard active, let r = region, width > 0 else { return }
+        lastLoad = Date()
         let c = r.center, range = options.range(now: Date())
         let metresPerPoint = r.span.longitudeDelta * 111_320 * cos(c.latitude * .pi / 180) / width
         // shortcut: no antimeridian wrap; fine unless the owner maps across 180°
         let q = Query(minLat: max(-90, c.latitude - r.span.latitudeDelta * 0.6), maxLat: min(90, c.latitude + r.span.latitudeDelta * 0.6),
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
-                      tolerance: max(3, 2 * metresPerPoint),
+                      tolerance: Simplify.step(2 * metresPerPoint),
                       from: range.from, to: range.to, heat: options.heat, recorded: options.recorded,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5, places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
         generation += 1
@@ -99,12 +115,13 @@ struct MapOptions: Equatable {
 
     private nonisolated static func load(_ diary: Diary, _ q: Query, generation: Int) throws -> MapData {
         var out = MapData(generation: generation)
-        var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], start: Date)] = []
+        var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], start: Date, segment: Int, rough: Bool)] = []
         var after = q.from.addingTimeInterval(-0.001)   // reads are `t > after`: keep a point exactly at `from`
         // Zoomed out, trips up to the cache's end come from the trip-line cache (smoothed lines only); points resume where those trips end, never mid-trip.
         if q.zoomedOut, !q.recorded, let until = try diary.tripLinesUntil() {
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: min(until, q.to))
-            trips = cached.map { (coords: $0.coords.map { (lat: $0.lat, lon: $0.lon) }, speeds: MapColors.filledSpeeds($0.coords.map(\.speed)), start: $0.start) }
+            // shortcut: cached lines carry no rough flag and draw solid; upgrade when stage 3 stores rail-matched lines
+            trips = cached.map { (coords: $0.coords.map { (lat: $0.lat, lon: $0.lon) }, speeds: MapColors.filledSpeeds($0.coords.map(\.speed)), start: $0.start, segment: 0, rough: false) }
             after = max(after, min(until, q.to), cached.map(\.end).max() ?? after)
         }
         let tripsAfter = after
@@ -116,11 +133,23 @@ struct MapOptions: Equatable {
                 if !q.recorded {
                     let smooth = try diary.smoothed(from: trip.start, to: trip.end)
                     let byT = Dictionary(smooth.map { ($0.t, (lat: $0.lat, lon: $0.lon)) }, uniquingKeysWith: { a, _ in a })
-                    for (i, p) in trip.points.enumerated() { if let s = byT[p.t] { coords[i] = s } }
+                    for (i, p) in trip.points.enumerated() where p.kind != .rough { if let s = byT[p.t] { coords[i] = s } }   // rough points stay raw
                 }
                 let speeds = MapColors.filledSpeeds(trip.points.map(\.speed))
-                let keep = Simplify.douglasPeucker(coords, tolerance: q.tolerance)   // keep only the drawn shape: memory follows the output
-                trips.append((coords: keep.map { coords[$0] }, speeds: keep.map { speeds[$0] }, start: trip.start))
+                // Runs of rough and precise points become separate lines; a rough run takes its precise neighbours, so every edge touching a rough point is dashed.
+                let rough = trip.points.map { $0.kind == .rough }
+                var first = 0, segment = 0
+                while first < rough.count {
+                    var e = first
+                    while e < rough.count, rough[e] == rough[first] { e += 1 }
+                    let run = rough[first] ? max(0, first - 1)..<min(rough.count, e + 1) : first..<e
+                    if run.count > 1 || rough.count == 1 {
+                        let c = Array(coords[run]), sp = Array(speeds[run])
+                        let keep = Simplify.douglasPeucker(c, tolerance: q.tolerance)   // keep only the drawn shape: memory follows the output
+                        trips.append((coords: keep.map { c[$0] }, speeds: keep.map { sp[$0] }, start: trip.start, segment: segment, rough: rough[first]))
+                    }
+                    first = e; segment += 1
+                }
             }
         }
         // Every point in range, oldest first, one chunk at a time; the open trip carries across chunk edges.
@@ -155,9 +184,15 @@ struct MapOptions: Equatable {
                 along.append(along[along.count - 1] + Geo.distance(coords[a].lat, coords[a].lon, coords[b].lat, coords[b].lon))
             }
             let total = along[along.count - 1]
-            out.lines.append(MapLine(coords: keep.map { coords[$0] }, speeds: keep.map { trip.speeds[$0] },
+            let fraction = trip.start.timeIntervalSince(lo) / span
+            var h = Hasher()   // content and colour: a grown or re-smoothed line gets a new key
+            for i in keep { h.combine(coords[i].lat); h.combine(coords[i].lon); h.combine(trip.speeds[i]) }
+            h.combine(Int(fraction * 64))   // shortcut: date colour in 64 steps, so a live reload keeps old lines; finer only if steps show
+            out.lines.append(MapLine(key: "\(trip.start.timeIntervalSince1970)-\(trip.segment)\(trip.rough ? "r" : "")-\(q.tolerance)-\(h.finalize())",
+                                     rough: trip.rough,
+                                     coords: keep.map { coords[$0] }, speeds: keep.map { trip.speeds[$0] },
                                      locations: along.enumerated().map { total > 0 ? $1 / total : Double($0) / Double(max(1, keep.count - 1)) },
-                                     dateFraction: trip.start.timeIntervalSince(lo) / span))
+                                     dateFraction: fraction))
         }
         return out
     }
@@ -186,6 +221,7 @@ struct MapScreen: View {
         .onChange(of: loader.options) { loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: SmoothingService.linesChanged)) { _ in loader.reload() }   // no-op unless visible
         .onReceive(NotificationCenter.default.publisher(for: PlaceService.changed)) { _ in loader.reload() }
+        .onReceive(NotificationCenter.default.publisher(for: Recorder.pointsSaved)) { _ in loader.pointsSaved() }   // no-op unless visible
         .sheet(item: $openPlace, onDismiss: { loader.reload() }) { PlaceSheet(place: $0) }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
