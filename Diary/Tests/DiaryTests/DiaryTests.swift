@@ -247,6 +247,8 @@ final class DiaryTests: XCTestCase {
 
         try diary.renamePlace(1, to: "Flat")
         XCTAssertEqual(try diary.places().first?.name, "Flat")
+        try diary.savePlaces([merged], removing: [])   // a learning run with the copy from before the rename
+        XCTAssertEqual(try diary.places().first?.name, "Flat")
         try diary.renamePlace(1, to: nil)
         XCTAssertNil(try diary.places().first?.name)
 

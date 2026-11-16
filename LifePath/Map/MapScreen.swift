@@ -15,6 +15,8 @@ struct MapData: Sendable {
     var lines: [MapLine] = []
     var heat: [HeatCell: TimeInterval] = [:]
     var still: [(lat: Double, lon: Double)] = []
+    var places: [Place] = []                    // pins visible at the end of the range, in the visible region
+    var outlines: [Int64: Set<PlaceCell>] = [:] // their regions, at street zoom only
 }
 
 enum TimeFilter: String, CaseIterable {
@@ -131,6 +133,12 @@ struct MapOptions: Equatable {
             after = last.t
         }
         try add(Trips.split(carry))
+        // Pins as they stood at the end of the range: a past period shows the pins of that time.
+        out.places = try diary.places().filter { p in
+            guard p.isVisible(at: q.to), let pin = p.pin else { return false }
+            return (q.minLat...q.maxLat).contains(pin.lat) && (q.minLon...q.maxLon).contains(pin.lon)
+        }
+        if q.street { for p in out.places { out.outlines[p.id] = p.region() } }
         if q.street {
             let cell = 0.000225   // ~25 m of latitude: one dot per place, not one per check-in
             out.still = try diary.stillPoints(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: q.to,
@@ -160,6 +168,7 @@ struct MapScreen: View {
     @State private var satellite = false
     @State private var onScreen = false
     @State private var choosingDates = false
+    @State private var openPlace: Place?
     @Environment(\.scenePhase) private var scenePhase
 
     private var visible: Bool { onScreen && scenePhase == .active }
@@ -167,7 +176,7 @@ struct MapScreen: View {
     var body: some View {
         TrackMapView(data: loader.data, bySpeed: bySpeed, satellite: satellite, visible: visible) { region, width in
             loader.regionChanged(region, width: width)
-        }
+        } onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } }
         .ignoresSafeArea(edges: .top)
         .overlay(alignment: .bottom) { controls }
         .onAppear { onScreen = true }
@@ -175,6 +184,8 @@ struct MapScreen: View {
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
         .onChange(of: loader.options) { loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: SmoothingService.linesChanged)) { _ in loader.reload() }   // no-op unless visible
+        .onReceive(NotificationCenter.default.publisher(for: PlaceService.changed)) { _ in loader.reload() }
+        .sheet(item: $openPlace, onDismiss: { loader.reload() }) { PlaceSheet(place: $0) }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
     }

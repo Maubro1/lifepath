@@ -236,10 +236,15 @@ public final class Diary: Sendable {
         }
         for p in places {
             let pin = p.pin   // cache only: loading recomputes it
+            // A stored name wins: the owner may rename a place while a learning run holds an older copy.
             try db.execute(sql: """
-                INSERT OR REPLACE INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit,
-                                             realDays, recentDurations)
+                INSERT INTO place(id, name, updatedAt, totalSeconds, visits, isCandidate, pinLat, pinLon, visitDays, lastVisit,
+                                  realDays, recentDurations)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET name = COALESCE(place.name, excluded.name), updatedAt = excluded.updatedAt,
+                    totalSeconds = excluded.totalSeconds, visits = excluded.visits, isCandidate = excluded.isCandidate,
+                    pinLat = excluded.pinLat, pinLon = excluded.pinLon, visitDays = excluded.visitDays, lastVisit = excluded.lastVisit,
+                    realDays = excluded.realDays, recentDurations = excluded.recentDurations
                 """, arguments: [p.id, p.name, p.updatedAt.timeIntervalSince1970, p.totalSeconds, p.visits, p.isCandidate,
                                  pin?.lat, pin?.lon, p.visitDays.sorted().map(String.init).joined(separator: ","),
                                  p.lastVisit.timeIntervalSince1970, p.realDays.sorted().map(String.init).joined(separator: ","),
