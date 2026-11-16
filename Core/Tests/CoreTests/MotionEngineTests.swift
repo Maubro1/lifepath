@@ -799,9 +799,11 @@ final class MotionEngineTests: XCTestCase {
     func ride(_ e: inout MotionEngine, activity: Activity = .automotive, until end: TimeInterval = 3600) -> [(TimeInterval, Command)] {
         var out: [(TimeInterval, Command)] = []
         out += send(&e, .activity(activity, confident: true), 0).map { (0, $0) }
-        for p in route(to: 60 * 30, speed: 30, seed: 5) { out += send(&e, .fix(p), p.t.timeIntervalSince(t0)).map { (p.t.timeIntervalSince(t0), $0) } }
+        let precise = route(to: 60 * 30, speed: 30, seed: 5)
+        for p in precise { out += send(&e, .fix(p), p.t.timeIntervalSince(t0)).map { (p.t.timeIntervalSince(t0), $0) } }
         for t in stride(from: 62.0, through: end, by: 2) {
-            out += send(&e, .roughFix(at(t)), t).map { (t, $0) }
+            let r = Geo.offset(lat: precise[0].lat, lon: precise[0].lon, north: 0, east: 30 * t)   // the train runs on, ~1 km "accuracy"
+            out += send(&e, .roughFix(Sample(t: at(t), lat: r.lat, lon: r.lon, hAcc: 900, speed: -1, course: -1)), t).map { (t, $0) }
             XCTAssertNotEqual(e.state, .still, "Still at \(t) s")
             if e.state == .still { break }
         }
@@ -831,10 +833,18 @@ final class MotionEngineTests: XCTestCase {
         XCTAssert(out.contains(log(300, "struggle", "off")), "\(out)")
     }
 
+    /// CoreMotion often reads a train as stationary: rough fixes running away from the platform still keep the ride alive.
+    func testTrainReadAsStationaryStaysOneRide() {
+        var e = MotionEngine(deepSleep: false)
+        let out = ride(&e, activity: .stationary)
+        XCTAssertNotEqual(e.state, .still)
+        XCTAssert(out.contains { $0.1 == .setStruggle(true) }, "no struggle mode on a stationary-read train")
+    }
+
     func testNoStruggleOnFoot() {
         var e = MotionEngine(deepSleep: false)
         var out: [Command] = send(&e, .activity(.walking, confident: true), 0)
-        for t in stride(from: 2.0, through: 600, by: 2) { out += send(&e, .roughFix(at(t)), t) }
+        for t in stride(from: 2.0, through: 600, by: 2) { out += send(&e, .roughFix(Sample(t: at(t), lat: 52, lon: 5, hAcc: 900, speed: -1, course: -1)), t) }
         XCTAssertFalse(out.contains(.setStruggle(true)), "\(out)")
         XCTAssertEqual(e.state, .still, "rough fixes on foot kept GPS on")   // only a vehicle ride is kept alive by rough fixes
     }

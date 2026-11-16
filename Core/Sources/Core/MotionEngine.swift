@@ -16,7 +16,7 @@ public enum MotionEvent: Sendable {
     case tick                               // keep-alive update or any wake; drives time-based rules
     case steps(Int)                         // cumulative since Still began
     case walked(Double)                     // pedometer metres since Still began, sent with `.steps`
-    case roughFix(Date)                     // a fix above the accuracy ceiling was stored; drives time-based rules like a tick
+    case roughFix(Sample)                   // a fix above the accuracy ceiling was stored; drives time-based rules like a tick
     case activity(Activity, confident: Bool)
     case wakeFix(Sample, reason: String)    // spot check, significant change
     case confirmFix(Sample)                 // keep-alive position: confirms presence while Still, else a tick
@@ -109,7 +109,10 @@ public struct MotionEngine: Sendable {
             wanderFixed = wanderFixed || (wanderFence != nil && now.timeIntervalSince(wanderSince) <= 60)
             return out + (wanderReturn(now) ?? onFix(p, now))
         case .tick, .confirmFix: return struggleCheck(now) + (wanderReturn(now) ?? onTick(now))
-        case .roughFix:
+        case .roughFix(let s):
+            // Far beyond its own error from the last precise fix: travelling, whatever CoreMotion says (trains often read as
+            // stationary). shortcut: 2 × hAcc rules out most bad cell fixes at home; add a second consecutive fix if one slips through.
+            if let k = lastKnown, Geo.distance(s.lat, s.lon, k.lat, k.lon) > max(300, 2 * s.hAcc) { inVehicle = true }
             if inVehicle { quietSince = now }   // a train can bring only rough fixes for an hour: the ride goes on
             roughSince = roughSince ?? now
             return struggleCheck(now) + (wanderReturn(now) ?? onTick(now))
@@ -336,7 +339,10 @@ public struct MotionEngine: Sendable {
         case .tick:
             return stillPointIfDue(now)
         case .confirmFix(let s):
-            if stepsPending, s.hAcc >= 0, let f = fence, outside(s, f) { return wake("keepalive", now) }
+            // Steps older than 5 min no longer count; the keep-alive wake is a wander, so positions can still send it back.
+            if stepsPending, stepLog.last.map({ now.timeIntervalSince($0.t) <= 300 }) == true, s.hAcc >= 0, let f = fence, outside(s, f) {
+                return wake("keepalive", now, wander: true)
+            }
             return (confirm(s, now) ?? []) + stillPointIfDue(now)
         case .fix, .deepSleepChanged, .enteredPlace, .walked, .roughFix:
             return []
