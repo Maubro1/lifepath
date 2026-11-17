@@ -126,6 +126,7 @@ struct MapOptions: Equatable {
         }
         let tripsAfter = after
         if q.heat { after = q.from.addingTimeInterval(-0.001) }   // dwell over the whole range
+        var ways: [Int64: Way] = [:]   // the streets confident stretches use, each read once
         func add(_ split: [Trip]) throws {
             for trip in split {
                 try Task.checkCancellation()
@@ -135,9 +136,29 @@ struct MapOptions: Equatable {
                     let byT = Dictionary(smooth.map { ($0.t, (lat: $0.lat, lon: $0.lon)) }, uniquingKeysWith: { a, _ in a })
                     for (i, p) in trip.points.enumerated() where p.kind != .rough { if let s = byT[p.t] { coords[i] = s } }   // rough points stay raw
                 }
-                let speeds = MapColors.filledSpeeds(trip.points.map(\.speed))
+                var speeds = MapColors.filledSpeeds(trip.points.map(\.speed))
+                var rough = trip.points.map { $0.kind == .rough }
+                if !q.recorded {
+                    let stretches = try diary.matches(tripStart: trip.start).filter { $0.confidence >= MapMatcher.confident }
+                    let missing = Set(stretches.map(\.wayId)).filter { ways[$0] == nil }
+                    if !missing.isEmpty { for w in try diary.ways(ids: Array(missing)) { ways[w.id] = w } }
+                    // Confident stretches draw along their street, rail or ferry line, solid even when the fixes were rough; vertices borrow the nearest fix's speed.
+                    var nc: [(lat: Double, lon: Double)] = [], ns: [Double] = [], nr: [Bool] = [], next = 0
+                    // Stretches are timed, not indexed: this trip's points were read in a box and chunks, so only a stretch whose end points are both here applies.
+                    let at = Dictionary(trip.points.enumerated().map { ($1.t, $0) }, uniquingKeysWith: { a, _ in a })
+                    for m in stretches {
+                        guard let first = at[m.start], let last = at[m.end], first >= next, first <= last, let way = ways[m.wayId] else { continue }
+                        nc += coords[next..<first]; ns += speeds[next..<first]; nr += rough[next..<first]
+                        var j = first   // vertices run in travel order, so the nearest fix only moves forward
+                        for v in way.slice(fromM: m.fromM, toM: m.toM) {
+                            while j < last, Geo.distance(v.lat, v.lon, coords[j + 1].lat, coords[j + 1].lon) < Geo.distance(v.lat, v.lon, coords[j].lat, coords[j].lon) { j += 1 }
+                            nc.append(v); ns.append(speeds[j]); nr.append(false)
+                        }
+                        next = last + 1
+                    }
+                    if next > 0 { nc += coords[next...]; ns += speeds[next...]; nr += rough[next...]; coords = nc; speeds = ns; rough = nr }
+                }
                 // Runs of rough and precise points become separate lines; a rough run takes its precise neighbours, so every edge touching a rough point is dashed.
-                let rough = trip.points.map { $0.kind == .rough }
                 var first = 0, segment = 0
                 while first < rough.count {
                     var e = first

@@ -48,6 +48,19 @@ public final class Diary: Sendable {
             // Additive: places saved before v5 load with no real days and are refilled by the next real visit.
             try db.execute(sql: "ALTER TABLE place ADD COLUMN realDays TEXT; ALTER TABLE place ADD COLUMN recentDurations TEXT;")
         }
+        migrator.registerMigration("v6") { db in
+            // Streets cache: recomputable from OSM and the stored points.
+            try db.execute(sql: """
+                CREATE TABLE way(
+                    id INTEGER PRIMARY KEY, kind TEXT, name TEXT, oneway INTEGER, nodes BLOB, coords BLOB,
+                    minLat REAL, maxLat REAL, minLon REAL, maxLon REAL);
+                CREATE INDEX way_lat ON way(minLat, maxLat);
+                CREATE TABLE tile(x INTEGER, y INTEGER, fetchedAt REAL, PRIMARY KEY(x, y));
+                CREATE TABLE matchedStretch(
+                    tripStart REAL, seq INTEGER, wayId INTEGER, fromM REAL, toM REAL, confidence REAL, start REAL, end REAL,
+                    PRIMARY KEY(tripStart, seq));
+                """)
+        }
         try migrator.migrate(pool)
     }
 
@@ -184,6 +197,87 @@ public final class Diary: Sendable {
             Double(bitPattern: UInt64(littleEndian: d.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: i * 8, as: UInt64.self) }))
         }
         return (0..<vals.count / 3).map { (vals[$0 * 3], vals[$0 * 3 + 1], vals[$0 * 3 + 2]) }
+    }
+
+    /// One transaction, tile row last: a crash never leaves a tile marked fetched without its ways. A way in two tiles is stored once.
+    public func saveTile(_ tile: Tile, ways: [Way]) throws {
+        try pool.write { db in
+            for w in ways {
+                var row: StatementArguments = [w.id, w.kind.rawValue, w.name, w.oneway, Self.pack(w.nodes.map { UInt64(bitPattern: $0) })]
+                row += [Self.pack(w.coords.flatMap { [$0.lat.bitPattern, $0.lon.bitPattern] })]
+                row += [w.coords.map(\.lat).min(), w.coords.map(\.lat).max(), w.coords.map(\.lon).min(), w.coords.map(\.lon).max()]
+                try db.execute(sql: "INSERT OR REPLACE INTO way(id, kind, name, oneway, nodes, coords, minLat, maxLat, minLon, maxLon) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                               arguments: row)
+            }
+            try db.execute(sql: "INSERT OR REPLACE INTO tile(x, y, fetchedAt) VALUES (?,?,?)",
+                           arguments: [tile.x, tile.y, Date().timeIntervalSince1970])
+        }
+    }
+
+    public func hasTile(_ tile: Tile) throws -> Bool {
+        try pool.read { db in try Row.fetchOne(db, sql: "SELECT 1 FROM tile WHERE x = ? AND y = ?", arguments: [tile.x, tile.y]) != nil }
+    }
+
+    /// Ways whose bounding box overlaps the box.
+    public func ways(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) throws -> [Way] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM way WHERE maxLat >= ? AND minLat <= ? AND maxLon >= ? AND minLon <= ? ORDER BY id",
+                             arguments: [minLat, maxLat, minLon, maxLon]).map(Self.way)
+        }
+    }
+
+    /// Ways by id, in id order; ids are bound 500 at a time, under SQLite's argument limit.
+    public func ways(ids: [Int64]) throws -> [Way] {
+        try pool.read { db in
+            var out: [Way] = []
+            for k in stride(from: 0, to: ids.count, by: 500) {
+                let chunk = Array(ids[k..<min(k + 500, ids.count)])
+                let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+                out += try Row.fetchAll(db, sql: "SELECT * FROM way WHERE id IN (\(marks))", arguments: StatementArguments(chunk)).map(Self.way)
+            }
+            return out.sorted { $0.id < $1.id }
+        }
+    }
+
+    private static func way(_ r: Row) -> Way {
+        let ll = unpack(r["coords"]).map { Double(bitPattern: $0) }
+        return Way(id: r["id"], kind: WayKind(rawValue: r["kind"]) ?? .road, name: r["name"], oneway: r["oneway"],
+                   nodes: unpack(r["nodes"]).map { Int64(bitPattern: $0) },
+                   coords: (0..<ll.count / 2).map { (ll[$0 * 2], ll[$0 * 2 + 1]) })
+    }
+
+    /// Derived cache: replaces that trip's rows in one transaction.
+    public func saveMatches(tripStart: Date, _ stretches: [MatchedStretch]) throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM matchedStretch WHERE tripStart = ?", arguments: [tripStart.timeIntervalSince1970])
+            for m in stretches {
+                var row: StatementArguments = [tripStart.timeIntervalSince1970, m.seq, m.wayId, m.fromM, m.toM]
+                row += [m.confidence, m.start.timeIntervalSince1970, m.end.timeIntervalSince1970]
+                try db.execute(sql: "INSERT INTO matchedStretch(tripStart, seq, wayId, fromM, toM, confidence, start, end) VALUES (?,?,?,?,?,?,?,?)",
+                               arguments: row)
+            }
+        }
+    }
+
+    public func matches(tripStart: Date) throws -> [MatchedStretch] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM matchedStretch WHERE tripStart = ? ORDER BY seq",
+                             arguments: [tripStart.timeIntervalSince1970]).map {
+                MatchedStretch(seq: $0["seq"], wayId: $0["wayId"], fromM: $0["fromM"], toM: $0["toM"], confidence: $0["confidence"],
+                               start: Date(timeIntervalSince1970: $0["start"]), end: Date(timeIntervalSince1970: $0["end"]))
+            }
+        }
+    }
+
+    /// Little-endian 64-bit words (Float64 bit patterns or Int64 node ids).
+    private static func pack(_ words: [UInt64]) -> Data {
+        var d = Data(capacity: words.count * 8)
+        for w in words { withUnsafeBytes(of: w.littleEndian) { d.append(contentsOf: $0) } }
+        return d
+    }
+
+    private static func unpack(_ d: Data) -> [UInt64] {
+        (0..<d.count / 8).map { i in UInt64(littleEndian: d.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: i * 8, as: UInt64.self) }) }
     }
 
     public func places() throws -> [Place] {
