@@ -41,7 +41,7 @@ enum StreetService {
             : diary.meta("streetsUntil").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? .distantPast
         var backoff = try diary.meta("streetsBackoff").flatMap(TimeInterval.init) ?? 0
         var retryAt = try diary.meta("streetsRetryAt").flatMap(TimeInterval.init) ?? 0
-        var tiles = 0, matched = 0, modeCount = 0, unsure = 0, waiting = false
+        var tiles = 0, matched = 0, modeCount = 0, unsure = 0, waiting = false, borders = true
         let session = download ? makeSession(cellular: cellular) : nil
         defer { session?.finishTasksAndInvalidate() }
         var fetching = session != nil
@@ -80,6 +80,16 @@ enum StreetService {
                 tiles += 1
                 if backoff > 0 { backoff = 0; try diary.setMeta("streetsBackoff", "0") }
             }
+            // Borders for progress per place; a failure only stops border downloads for this run, never matching.
+            if fetching, !waiting, borders, let session {
+                for tile in try needed.filter({ try diary.hasTile($0, version: OSM.version) && !diary.hasAreas($0) }) {
+                    do { try diary.saveAreas(await fetchAreas(tile, session, diary), tile: tile); tiles += 1 } catch {
+                        if Task.isCancelled { throw CancellationError() }
+                        borders = false   // no more border requests this run; the next run tries again
+                        break
+                    }
+                }
+            }
             // Ways and stops overlapping the trip's tiles, which already reach the candidate radius past every point.
             var byId: [Int64: Way] = [:], stopById: [Int64: Stop] = [:]
             for tile in needed {
@@ -105,8 +115,16 @@ enum StreetService {
         if matched > 0 || tiles > 0 {
             try Task.checkCancellation()
             // shortcut: coverage is recomputed over every downloaded street after each run that matched or fetched, upgrade to per-tile if the run time or memory shows it
-            let coverage = Coverage.streets(ways: try diary.countableWays(), hits: try diary.segmentHits())
+            let ways = try diary.countableWays()
+            let coverage = Coverage.streets(ways: ways, hits: try diary.segmentHits())
             try diary.saveCoverage(coverage)
+            // Progress per city and neighbourhood, for both counting rules so the cycling setting switches at once.
+            let areas = try diary.areas(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180), dated = try diary.segmentHitsDated()
+            for bike in [false, true] {
+                try Task.checkCancellation()
+                let p = Coverage.progress(ways: ways, hits: dated, areas: areas, bike: bike)
+                try diary.saveProgress(p.areas, covered: p.covered, bike: bike)
+            }
             walked = " walked=\(coverage.onFoot)/\(coverage.total)"
         }
         if matched > 0 { await MainActor.run { NotificationCenter.default.post(name: SmoothingService.linesChanged, object: nil) } }   // the map redraws on the matched streets
@@ -128,8 +146,21 @@ enum StreetService {
 
     private static func fetch(_ tile: Tile, _ session: URLSession) async throws -> (ways: [Way], stops: [Stop]) {
         let b = tile.bounds
+        return try OSM.parse(await post(OSM.query(minLat: b.minLat, minLon: b.minLon, maxLat: b.maxLat, maxLon: b.maxLon), session))
+    }
+
+    /// A tile's borders: the light index first, then the shape of each relation not stored yet, in one request.
+    private static func fetchAreas(_ tile: Tile, _ session: URLSession, _ diary: Diary) async throws -> [Area] {
+        let b = tile.bounds
+        let index = try OSM.parseAreas(await post(OSM.areaIndexQuery(minLat: b.minLat, minLon: b.minLon, maxLat: b.maxLat, maxLon: b.maxLon), session))
+        let stored = try diary.storedAreaIds(index.missing)
+        let needed = index.missing.filter { !stored.contains($0) }
+        guard !needed.isEmpty else { return index.areas }
+        return try index.areas + OSM.parseAreas(await post(OSM.areaGeometryQuery(ids: needed), session)).areas
+    }
+
+    private static func post(_ query: String, _ session: URLSession) async throws -> Data {
         var allowed = CharacterSet.alphanumerics; allowed.insert(charactersIn: "-._~")
-        let query = OSM.query(minLat: b.minLat, minLon: b.minLon, maxLat: b.maxLat, maxLon: b.maxLon)
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"   // the rectangle travels in the body, not the URL
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -139,6 +170,6 @@ enum StreetService {
         guard (response as? HTTPURLResponse)?.statusCode == 200, try JSONDecoder().decode(Remark.self, from: data).remark == nil else {
             throw URLError(.badServerResponse)
         }
-        return try OSM.parse(data)
+        return data
     }
 }

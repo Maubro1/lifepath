@@ -112,6 +112,21 @@ public final class Diary: Sendable {
                 CREATE TABLE daySteps(day TEXT PRIMARY KEY, steps INTEGER, distance REAL, floorsUp INTEGER);
                 """)
         }
+        migrator.registerMigration("v10") { db in
+            // Additive, and a cache: borders are downloaded again when missing, so a backup never carries them.
+            try db.execute(sql: """
+                CREATE TABLE area(id INTEGER PRIMARY KEY, level INTEGER, name TEXT, minLat REAL, maxLat REAL, minLon REAL, maxLon REAL,
+                                  rings BLOB, holes BLOB);
+                CREATE TABLE areaTile(x INTEGER, y INTEGER, PRIMARY KEY(x, y));
+                """)
+        }
+        migrator.registerMigration("v11") { db in
+            // Additive caches, recomputed after every matching run.
+            try db.execute(sql: """
+                CREATE TABLE areaProgress(areaId INTEGER, bike INTEGER, covered INTEGER, total INTEGER, PRIMARY KEY(areaId, bike));
+                CREATE TABLE streetCovered(key TEXT, bike INTEGER, at REAL, PRIMARY KEY(key, bike));
+                """)
+        }
         return migrator
     }
 
@@ -436,6 +451,54 @@ public final class Diary: Sendable {
         }
     }
 
+    /// Hits with the start of the trip that made them, oldest first.
+    public func segmentHitsDated() throws -> [(hit: SegmentHit, tripStart: Date)] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT tripStart, wayId, seg, bike FROM segmentHit ORDER BY tripStart").map {
+                (SegmentHit(wayId: $0["wayId"], seg: $0["seg"], bike: $0["bike"]), Date(timeIntervalSince1970: $0["tripStart"]))
+            }
+        }
+    }
+
+    /// Replaces the progress per area and the street covered dates for one counting rule (with or without cycling).
+    public func saveProgress(_ areas: [AreaProgress], covered: [String: Date], bike: Bool) throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM areaProgress WHERE bike = ?", arguments: [bike])
+            try db.execute(sql: "DELETE FROM streetCovered WHERE bike = ?", arguments: [bike])
+            for a in areas {
+                try db.execute(sql: "INSERT INTO areaProgress(areaId, bike, covered, total) VALUES (?,?,?,?)", arguments: [a.areaId, bike, a.covered, a.total])
+            }
+            for (k, t) in covered {
+                try db.execute(sql: "INSERT INTO streetCovered(key, bike, at) VALUES (?,?,?)", arguments: [k, bike, t.timeIntervalSince1970])
+            }
+        }
+    }
+
+    public func areaProgress(bike: Bool) throws -> [AreaProgress] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM areaProgress WHERE bike = ? ORDER BY areaId", arguments: [bike]).map {
+                AreaProgress(areaId: $0["areaId"], covered: $0["covered"], total: $0["total"])
+            }
+        }
+    }
+
+    /// Streets that became walked during trips starting in `from..<to`.
+    public func newStreets(from: Date, to: Date, bike: Bool) throws -> Int {
+        try pool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM streetCovered WHERE bike = ? AND at >= ? AND at < ?",
+                             arguments: [bike, from.timeIntervalSince1970, to.timeIntervalSince1970]) ?? 0
+        }
+    }
+
+    /// Name and level of every stored area, for labelling progress.
+    public func areaNames() throws -> [Int64: (name: String, level: Int)] {
+        try pool.read { db in
+            Dictionary(uniqueKeysWithValues: try Row.fetchAll(db, sql: "SELECT id, name, level FROM area").map { r -> (Int64, (name: String, level: Int)) in
+                (r["id"], (r["name"], r["level"]))
+            })
+        }
+    }
+
     public func countableWays() throws -> [Way] {
         try pool.read { db in try Row.fetchAll(db, sql: "SELECT * FROM way WHERE countable = 1 ORDER BY id").map(Self.way) }
     }
@@ -505,6 +568,59 @@ public final class Diary: Sendable {
     }
 
     /// Little-endian 64-bit words (Float64 bit patterns or Int64 node ids).
+    /// Borders found for a tile; the tile is then marked so its borders are not asked for again.
+    public func saveAreas(_ areas: [Area], tile: Tile) throws {
+        try pool.write { db in
+            for a in areas {
+                let b = a.bounds
+                var row: StatementArguments = [a.id, a.level, a.name, b.minLat, b.maxLat, b.minLon, b.maxLon]
+                row += [Self.packRings(a.rings), Self.packRings(a.holes)]
+                try db.execute(sql: "INSERT OR REPLACE INTO area(id, level, name, minLat, maxLat, minLon, maxLon, rings, holes) VALUES (?,?,?,?,?,?,?,?,?)",
+                               arguments: row)
+            }
+            try db.execute(sql: "INSERT OR REPLACE INTO areaTile(x, y) VALUES (?, ?)", arguments: [tile.x, tile.y])
+        }
+    }
+
+    public func hasAreas(_ tile: Tile) throws -> Bool {
+        try pool.read { db in try Row.fetchOne(db, sql: "SELECT 1 FROM areaTile WHERE x = ? AND y = ?", arguments: [tile.x, tile.y]) != nil }
+    }
+
+    /// Which of these relation ids already have a stored shape.
+    public func storedAreaIds(_ ids: [Int64]) throws -> Set<Int64> {
+        guard !ids.isEmpty else { return [] }
+        return try pool.read { db in
+            Set(try Int64.fetchAll(db, sql: "SELECT id FROM area WHERE id IN (\(ids.map { _ in "?" }.joined(separator: ",")))",
+                                   arguments: StatementArguments(ids)))
+        }
+    }
+
+    public func areas(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) throws -> [Area] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM area WHERE maxLat >= ? AND minLat <= ? AND maxLon >= ? AND minLon <= ? ORDER BY id",
+                             arguments: [minLat, maxLat, minLon, maxLon]).map { r in
+                Area(id: r["id"], level: r["level"], name: r["name"], rings: Self.unpackRings(r["rings"]), holes: Self.unpackRings(r["holes"]))
+            }
+        }
+    }
+
+    /// Rings as words: per ring its point count, then lat and lon bit patterns.
+    private static func packRings(_ rings: [[(lat: Double, lon: Double)]]) -> Data {
+        pack(rings.flatMap { r in [UInt64(r.count)] + r.flatMap { [$0.lat.bitPattern, $0.lon.bitPattern] } })
+    }
+
+    private static func unpackRings(_ d: Data) -> [[(lat: Double, lon: Double)]] {
+        let w = unpack(d)
+        var out: [[(lat: Double, lon: Double)]] = [], i = 0
+        while i < w.count {
+            let n = Int(w[i]); i += 1
+            guard i + 2 * n <= w.count else { break }
+            out.append((0..<n).map { k in (Double(bitPattern: w[i + 2 * k]), Double(bitPattern: w[i + 2 * k + 1])) })
+            i += 2 * n
+        }
+        return out
+    }
+
     private static func pack(_ words: [UInt64]) -> Data {
         var d = Data(capacity: words.count * 8)
         for w in words { withUnsafeBytes(of: w.littleEndian) { d.append(contentsOf: $0) } }

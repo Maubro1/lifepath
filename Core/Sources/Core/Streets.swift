@@ -63,7 +63,9 @@ public enum OSM {
     private struct Doc: Decodable {
         struct El: Decodable {
             struct P: Decodable { var lat: Double; var lon: Double }
+            struct M: Decodable { var type: String; var role: String?; var geometry: [P]? }
             var type: String; var id: Int64; var lat: Double?; var lon: Double?; var nodes: [Int64]?; var geometry: [P]?; var tags: [String: String]?
+            var members: [M]?
         }
         var elements: [El]
     }
@@ -116,6 +118,37 @@ public enum OSM {
                        countable: countable(tags, kind))
         }
         return (ways, stops)
+    }
+
+    /// Borders touching a tile: cities and finer admin areas as tags only (their shapes come once each from `areaGeometryQuery`), place areas drawn as ways with their shape.
+    public static func areaIndexQuery(minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) -> String {
+        let b = "(\(minLat),\(minLon),\(maxLat),\(maxLon))"
+        return "[out:json][timeout:60];(rel[\"boundary\"=\"administrative\"][\"admin_level\"~\"^(8|9|10|11)$\"]\(b);rel[\"boundary\"=\"place\"][\"place\"~\"^(suburb|quarter|neighbourhood)$\"]\(b););out tags;way[\"place\"~\"^(suburb|quarter|neighbourhood)$\"]\(b);out tags geom;"
+    }
+
+    public static func areaGeometryQuery(ids: [Int64]) -> String {
+        "[out:json][timeout:90];rel(id:\(ids.map(String.init).joined(separator: ",")));out tags geom;"
+    }
+
+    /// Areas with a shape, and the relation ids whose shape still has to be fetched.
+    public static func parseAreas(_ data: Data) throws -> (areas: [Area], missing: [Int64]) {
+        var areas: [Area] = [], missing: [Int64] = []
+        for e in try JSONDecoder().decode(Doc.self, from: data).elements {
+            guard let t = e.tags, let name = t["name"] else { continue }
+            let level = t["boundary"] == "administrative" ? Int(t["admin_level"] ?? "") ?? 0 : 12
+            if e.type == "relation" {
+                guard (8...12).contains(level) else { continue }
+                guard let members = e.members else { missing.append(e.id); continue }
+                let r = Areas.assemble(members.compactMap { m in
+                    m.type == "way" ? m.geometry.map { (m.role ?? "outer", $0.map { ($0.lat, $0.lon) }) } : nil
+                })
+                if !r.outer.isEmpty { areas.append(Area(id: e.id, level: level, name: name, rings: r.outer, holes: r.inner)) }
+            } else if e.type == "way", t["place"] != nil, let g = e.geometry, g.count >= 4,
+                      g.first!.lat == g.last!.lat, g.first!.lon == g.last!.lon {
+                areas.append(Area(id: -e.id, level: 12, name: name, rings: [g.map { ($0.lat, $0.lon) }], holes: []))
+            }
+        }
+        return (areas, missing)
     }
 
     public static func query(minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) -> String {

@@ -22,6 +22,7 @@ struct SettingsView: View {
     @State private var backupError: String?
     @State private var exportingTracks = false
     @AppStorage("lastBackup") private var lastBackup: Double = 0   // seconds since 1970; 0 = never
+    @AppStorage("appearance") private var appearance: Appearance = .system
     @Environment(\.scenePhase) private var scenePhase
 
     private var expiry: Date? { SigningReminder.expiry }
@@ -42,7 +43,7 @@ struct SettingsView: View {
             authorization: recorder.authorization, preciseLocation: recorder.preciseLocation, state: recorder.state,
             stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn, notSavingSince: recorder.notSavingSince,
             signingExpiry: expiry, now: now)
-        NavigationStack {
+        Group {   // pushed from the You tab, inside its navigation stack
             List {
                 Section("Status") {
                     Label(s.headline, systemImage: s.level == .problem ? "exclamationmark.triangle" : s.level == .resting ? "moon" : "checkmark.circle")
@@ -50,8 +51,6 @@ struct SettingsView: View {
                     if let hint = s.hint { Text(hint) }
                     LabeledContent("Last point", value: time(recorder.lastPoint))
                     LabeledContent("Last location check", value: time(recorder.lastCheckIn))
-                    LabeledContent("SideStore refresh due", value: expiry.map { time($0) } ?? "unknown")
-                    LabeledContent("Points today", value: "\(pointsToday)")
                     let stepCounting = MotionService.stepCounting
                     LabeledContent("Step counting", value: stepCounting)
                     if ["Off", "Not set up"].contains(stepCounting) {
@@ -65,7 +64,7 @@ struct SettingsView: View {
                     Picker("Recording detail", selection: settings.$quality) {
                         ForEach(Quality.allCases, id: \.self) { Text(Self.label($0)).tag($0) }
                     }
-                } footer: {
+                } header: { Text("Recording") } footer: {
                     Text("How closely trips are traced while you move. Higher uses more battery. Drops a step by itself when the phone is hot or in Low Power Mode.")
                 }
                 Section {
@@ -79,8 +78,16 @@ struct SettingsView: View {
                     Text("LifePath already rests deeply by itself when the battery is low, the phone is warm or Low Power Mode is on. On: checks every 15 min instead of 5, so the start of a trip may be missed.")
                 }
                 Section {
+                    Picker("Appearance", selection: $appearance) {
+                        ForEach(Appearance.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                } header: { Text("Appearance") } footer: {
+                    Text("System follows your iPhone's light or dark setting.")
+                }
+                Section {
                     Toggle("Download street maps automatically", isOn: settings.$downloadStreets)
-                } footer: {
+                } header: { Text("Street maps") } footer: {
                     Text("Fetches the streets around your trips from OpenStreetMap. Each request sends only a map rectangle, never your track.")
                 }
                 Section {
@@ -105,9 +112,14 @@ struct SettingsView: View {
                         case .failure: if let backup { try? FileManager.default.removeItem(at: backup) }   // cancelled: no copy left in tmp
                         }
                     }
-                    LabeledContent("Last backup", value: lastBackup == 0 ? "never"
-                                   : Date(timeIntervalSince1970: lastBackup).formatted(date: .abbreviated, time: .shortened))
-                } footer: {
+                    LabeledContent {
+                        HStack(spacing: 6) {
+                            if backupOld { Circle().fill(Color.satsuma).frame(width: 8, height: 8).accessibilityHidden(true) }
+                            Text(lastBackup == 0 ? "never" : Date(timeIntervalSince1970: lastBackup).formatted(date: .abbreviated, time: .shortened))
+                        }
+                    } label: { Text("Last backup") }
+                    .accessibilityHint(backupOld ? "A new backup is recommended" : "")
+                } header: { Text("Your data") } footer: {
                     Text("A copy of your whole diary. Keep it in Files or iCloud Drive: deleting LifePath deletes everything stored inside it.")
                 }
                 Section {
@@ -124,12 +136,16 @@ struct SettingsView: View {
                 }
                 Section {
                     Button("Save health report") { report = ReportDocument(text: recorder.healthReport()); exporting = true }
-                } footer: {
+                } header: { Text("Help") } footer: {
                     Text("A text file of the last 3 days, for troubleshooting.")
                 }
-                Section { LabeledContent("Version", value: version) }
+                Section {
+                    NavigationLink("Diagnostics") { DiagnosticsView(pointsToday: pointsToday) }
+                    LabeledContent("SideStore refresh due", value: expiry.map { time($0) } ?? "unknown")
+                    LabeledContent("Version", value: version)
+                }
             }
-            .navigationTitle("LifePath")
+            .navigationTitle("Settings")
             .refreshable { refresh() }
             .onAppear { refresh() }
             .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
@@ -139,6 +155,9 @@ struct SettingsView: View {
             }
         }
     }
+
+    /// Never saved, or more than 30 days ago.
+    private var backupOld: Bool { Date().timeIntervalSince1970 - lastBackup > 30 * 86_400 }
 
     private static func label(_ q: Quality) -> String {
         switch q {
@@ -152,5 +171,31 @@ struct SettingsView: View {
     private func refresh() {
         now = Date()
         pointsToday = recorder.pointsToday()
+    }
+}
+
+/// For checking the tracking: the line as recorded, and how many points are stored.
+private struct DiagnosticsView: View {
+    let pointsToday: Int
+    @AppStorage("recordedLine") private var recordedLine = false
+    @State private var stored: Int?
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("Show recorded line on the map", isOn: $recordedLine)
+            } footer: {
+                Text("Draws the line as the phone recorded it, before smoothing and street matching.")
+            }
+            Section {
+                LabeledContent("Points today", value: pointsToday.formatted())
+                LabeledContent("Points stored", value: stored?.formatted() ?? "…")
+            }
+        }
+        .navigationTitle("Diagnostics")
+        .task {
+            guard let diary = Recorder.shared.readDiary else { return }
+            stored = await Task.detached(priority: .utility) { try? diary.lifeStats().points }.value
+        }
     }
 }

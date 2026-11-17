@@ -697,6 +697,35 @@ final class DiaryTests: XCTestCase {
         let path = tempPath()
         _ = try Diary(path: path)
         let tables = try DatabaseQueue(path: path).read { try String.fetchSet($0, sql: "SELECT name FROM sqlite_master WHERE type = 'table'") }
-        XCTAssertEqual(tables.subtracting(Diary.mergedTables + ["event", "meta", "grdb_migrations", "sqlite_sequence"]), [])
+        // Borders and progress are caches: downloaded and recomputed again after a restore, never merged.
+        let rebuilt = ["area", "areaTile", "areaProgress", "streetCovered"]
+        XCTAssertEqual(tables.subtracting(Diary.mergedTables + rebuilt + ["event", "meta", "grdb_migrations", "sqlite_sequence"]), [])
+    }
+
+    func testAreasRoundTrip() throws {
+        let diary = try Diary(path: tempPath())
+        let ring: [(lat: Double, lon: Double)] = [(52, 5), (52, 5.1), (52.1, 5.1), (52, 5)]
+        let hole: [(lat: Double, lon: Double)] = [(52.01, 5.01), (52.01, 5.02), (52.02, 5.02), (52.01, 5.01)]
+        let a = Area(id: 10, level: 8, name: "Utrecht", rings: [ring], holes: [hole])
+        let tile = Tile(lat: 52.05, lon: 5.05)
+        XCTAssertFalse(try diary.hasAreas(tile))
+        try diary.saveAreas([a], tile: tile)
+        XCTAssertTrue(try diary.hasAreas(tile))
+        XCTAssertEqual(try diary.areas(minLat: 52.04, maxLat: 52.06, minLon: 5.04, maxLon: 5.06), [a])
+        XCTAssertTrue(try diary.areas(minLat: 53, maxLat: 54, minLon: 5, maxLon: 6).isEmpty)
+        XCTAssertEqual(try diary.storedAreaIds([10, 11]), [10])
+    }
+
+    func testProgressRoundTrip() throws {
+        let diary = try Diary(path: tempPath())
+        let t = Date(timeIntervalSince1970: 1_800_000_000)
+        try diary.saveProgress([AreaProgress(areaId: 1, covered: 2, total: 5)], covered: ["7": t, "9": t + 86_400], bike: false)
+        try diary.saveProgress([AreaProgress(areaId: 1, covered: 3, total: 5)], covered: ["7": t], bike: true)
+        XCTAssertEqual(try diary.areaProgress(bike: false), [AreaProgress(areaId: 1, covered: 2, total: 5)])
+        XCTAssertEqual(try diary.areaProgress(bike: true), [AreaProgress(areaId: 1, covered: 3, total: 5)])
+        XCTAssertEqual(try diary.newStreets(from: t, to: t + 3600, bike: false), 1)
+        XCTAssertEqual(try diary.newStreets(from: t, to: t + 2 * 86_400, bike: false), 2)
+        try diary.saveProgress([], covered: [:], bike: false)
+        XCTAssertTrue(try diary.areaProgress(bike: false).isEmpty)
     }
 }
