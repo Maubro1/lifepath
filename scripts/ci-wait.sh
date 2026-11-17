@@ -16,14 +16,15 @@ get() { # get <url> <outfile>: GET with rate-limit wait; prints HTTP status
     echo "$code"; return
   done
 }
-for i in $(seq 1 240); do
+sleep "${CI_FIRST_WAIT:-300}"   # a run takes 10-15 min; the first look comes after 5 (GitHub allows 60 anonymous calls/hour)
+for i in $(seq 1 60); do
   code=$(get "$api/actions/runs?head_sha=$sha&per_page=1" "$tmp/runs")
   if [ "$code" = 200 ]; then
     etag=$(grep -i '^etag:' "$tmp/h" | sed 's/^[^:]*: *//' | tr -d '\r')
     st=$(python -c "import sys,json;r=json.load(open(sys.argv[1])).get('workflow_runs',[]);print(r[0]['status']+' '+str(r[0]['conclusion'])+' '+str(r[0]['id']) if r else 'none')" "$tmp/runs")
     case "$st" in completed*) break;; esac
   fi
-  sleep 30
+  sleep 120
 done
 echo "RUN: $st"
 id=${st##* }; etag=""
