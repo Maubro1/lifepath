@@ -79,7 +79,7 @@ public struct RoadGraph: Sendable {
     let index: [Int64: Int]
     let lens: [[Double]]
     var grid: [PlaceCell: [Int32]] = [:]  // cell -> (way index << 16 | segment), see seg(_:)
-    var edges: [Int64: [(to: Int64, len: Double)]] = [:]
+    var edges: [Int64: [(to: Int64, len: Double, against: Bool)]] = [:]  // against: backwards on a one-way road
 
     // shortcut: a way has < 65536 segments, and metres per degree of longitude are those at 52°N (PlaceGrid); upgrade for far-away travel
     public init(ways: [Way]) {
@@ -88,8 +88,8 @@ public struct RoadGraph: Sendable {
         lens = ways.map { w in (0..<w.nodes.count - 1).map { Geo.distance(w.coords[$0].lat, w.coords[$0].lon, w.coords[$0 + 1].lat, w.coords[$0 + 1].lon) } }
         for (wi, w) in ways.enumerated() {
             for i in 0..<w.nodes.count - 1 {
-                edges[w.nodes[i], default: []].append((w.nodes[i + 1], lens[wi][i]))
-                if !w.oneway { edges[w.nodes[i + 1], default: []].append((w.nodes[i], lens[wi][i])) }
+                edges[w.nodes[i], default: []].append((w.nodes[i + 1], lens[wi][i], false))
+                edges[w.nodes[i + 1], default: []].append((w.nodes[i], lens[wi][i], w.oneway))
                 let a = Self.metres(w.coords[i]), b = Self.metres(w.coords[i + 1])
                 for cx in Self.span(a.x, b.x) { for cy in Self.span(a.y, b.y) {
                     grid[PlaceCell(x: cx, y: cy), default: []].append(Int32(wi << 16 | i))
@@ -122,26 +122,28 @@ public struct RoadGraph: Sendable {
     }
 
     /// Shortest distance along the network in metres (partial segments included), nil beyond `limit` or when unreachable.
-    public func routeDistance(from a: Candidate, to b: Candidate, limit: Double) -> Double? {
+    /// `oneway: false` lets walkers go against one-way roads.
+    public func routeDistance(from a: Candidate, to b: Candidate, limit: Double, oneway: Bool = true) -> Double? {
         guard let ai = index[a.wayId], let bi = index[b.wayId] else { return nil }
         let aw = ways[ai], bw = ways[bi], al = lens[ai][a.segment], bl = lens[bi][b.segment]
+        let aOne = oneway && aw.oneway, bOne = oneway && bw.oneway
         if ai == bi && a.segment == b.segment {
             let d = (b.t - a.t) * al
-            if d >= 0 || !aw.oneway { return abs(d) <= limit ? abs(d) : nil }
+            if d >= 0 || !aOne { return abs(d) <= limit ? abs(d) : nil }
         }
         var dist: [Int64: Double] = [:], heap = MinHeap()
         func push(_ n: Int64, _ d: Double) {
             if d <= limit, d < dist[n, default: .infinity] { dist[n] = d; heap.push(d, n) }
         }
         push(aw.nodes[a.segment + 1], (1 - a.t) * al)
-        if !aw.oneway { push(aw.nodes[a.segment], a.t * al) }
+        if !aOne { push(aw.nodes[a.segment], a.t * al) }
         var tail: [Int64: Double] = [bw.nodes[b.segment]: b.t * bl]
-        if !bw.oneway { tail[bw.nodes[b.segment + 1]] = min(tail[bw.nodes[b.segment + 1]] ?? .infinity, (1 - b.t) * bl) }
+        if !bOne { tail[bw.nodes[b.segment + 1]] = min(tail[bw.nodes[b.segment + 1]] ?? .infinity, (1 - b.t) * bl) }
         var best = Double.infinity
         while let (d, n) = heap.pop(), d < best {
             if d > dist[n]! { continue }
             if let t = tail[n] { best = min(best, d + t) }
-            for e in edges[n] ?? [] { push(e.to, d + e.len) }
+            for e in edges[n] ?? [] where !(oneway && e.against) { push(e.to, d + e.len) }
         }
         return best <= limit ? best : nil
     }
