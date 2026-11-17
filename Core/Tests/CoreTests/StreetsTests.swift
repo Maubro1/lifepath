@@ -78,6 +78,7 @@ final class StreetsTests: XCTestCase {
         let x = try cand(one, north: 0, east: 50), y = try cand(one, north: 0, east: 150)
         XCTAssertNotNil(one.routeDistance(from: x, to: y, limit: 1000))
         XCTAssertNil(one.routeDistance(from: y, to: x, limit: 1000))
+        XCTAssertEqual(try XCTUnwrap(one.routeDistance(from: y, to: x, limit: 1000, oneway: false)), 100, accuracy: 1)  // on foot
     }
 
     func testTileKeyAndBounds() {
