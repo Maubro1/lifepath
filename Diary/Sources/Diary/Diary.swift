@@ -2,11 +2,34 @@ import Foundation
 import GRDB
 import Core
 
+public struct BackupSummary: Sendable, Equatable {
+    public var points: Int
+    public var first: Date?
+    public var last: Date?
+}
+
+public struct MergeResult: Sendable, Equatable {
+    public var addedPoints: Int
+    public var fresh: Bool
+}
+
+public enum DiaryError: Error, Equatable, LocalizedError {
+    case newerBackup
+
+    public var errorDescription: String? {
+        "This backup was made by a newer version of LifePath. Update the app, then restore it again."
+    }
+}
+
 public final class Diary: Sendable {
     private let pool: DatabasePool
 
     public init(path: String) throws {
         pool = try DatabasePool(path: path)   // WAL
+        try Self.migrator().migrate(pool)
+    }
+
+    private static func migrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in
             try db.execute(sql: """
@@ -89,7 +112,7 @@ public final class Diary: Sendable {
                 CREATE TABLE daySteps(day TEXT PRIMARY KEY, steps INTEGER, distance REAL, floorsUp INTEGER);
                 """)
         }
-        try migrator.migrate(pool)
+        return migrator
     }
 
     public static func defaultPath() throws -> String {
@@ -606,6 +629,72 @@ public final class Diary: Sendable {
     /// recording's writes are never blocked while it runs.
     public func backup(to url: URL) throws {
         try pool.backup(to: DatabaseQueue(path: url.path))
+    }
+
+    /// Opens the file with `Diary(path:)`, so it MIGRATES THE FILE IN PLACE: callers pass a private copy, never the picked file.
+    /// Throws when the file is not a diary, or `DiaryError.newerBackup` when a newer app version wrote it.
+    public static func backupSummary(at path: String) throws -> BackupSummary {
+        if try DatabaseQueue(path: path).read({ try migrator().hasBeenSuperseded($0) }) { throw DiaryError.newerBackup }
+        let backup = try Diary(path: path)
+        return try backup.pool.read { db in
+            let r = try Row.fetchOne(db, sql: "SELECT COUNT(*) AS n, MIN(t) AS first, MAX(t) AS last FROM point")!
+            let first: Double? = r["first"], last: Double? = r["last"]
+            return BackupSummary(points: r["n"], first: first.map(Date.init(timeIntervalSince1970:)),
+                                 last: last.map(Date.init(timeIntervalSince1970:)))
+        }
+    }
+
+    /// Every table `merge` handles; `event` is never imported and `meta` is handled apart.
+    public static let mergedTables = ["point", "activity", "way", "tile", "stop", "daySteps", "place", "placeCell", "visit",
+                                      "smoothedPoint", "tripLine", "matchedStretch", "modeStretch", "segmentHit", "coveredWay", "day"]
+
+    /// Merges a backup that `backupSummary` already migrated, in one transaction: nothing here is deleted or overwritten
+    /// (the current row wins on the same key), except the cache versions, which are cleared so the caches rebuild.
+    public func merge(backupAt path: String) throws -> MergeResult {
+        try pool.writeWithoutTransaction { db in
+            try db.execute(sql: "ATTACH DATABASE ? AS b", arguments: [path])   // not allowed inside a transaction
+            defer { try? db.execute(sql: "DETACH DATABASE b") }
+            var result = MergeResult(addedPoints: 0, fresh: false)
+            try db.inTransaction {
+                result.fresh = try Row.fetchOne(db, sql: "SELECT 1 FROM main.point LIMIT 1") == nil
+                let placeless = try Row.fetchOne(db, sql: "SELECT 1 FROM main.place LIMIT 1") == nil
+                // By the current diary's column names: a newer backup's extra columns are ignored.
+                func copy(_ table: String) throws {
+                    let cols = try Row.fetchAll(db, sql: "PRAGMA main.table_info(\"\(table)\")")
+                        .map { "\"\($0["name"] as String)\"" }.joined(separator: ", ")
+                    try db.execute(sql: "INSERT OR IGNORE INTO main.\"\(table)\"(\(cols)) SELECT \(cols) FROM b.\"\(table)\"")
+                }
+                try copy("point")
+                result.addedPoints = db.changesCount
+                for t in ["activity", "way", "tile", "stop"] { try copy(t) }
+                // Same rule as saveSteps: a stored count is never lowered.
+                try db.execute(sql: """
+                    INSERT INTO main.daySteps(day, steps, distance, floorsUp) SELECT day, steps, distance, floorsUp FROM b.daySteps WHERE true
+                    ON CONFLICT(day) DO UPDATE SET
+                        steps = MAX(steps, excluded.steps),
+                        distance = COALESCE(MAX(distance, excluded.distance), distance, excluded.distance),
+                        floorsUp = COALESCE(MAX(floorsUp, excluded.floorsUp), floorsUp, excluded.floorsUp)
+                    """)
+                // shortcut: a backup place's name is not carried into a diary that already has places, upgrade if the owner merges old phones
+                if placeless { for t in ["place", "placeCell", "visit"] { try copy(t) } }
+                if result.fresh {
+                    // The backup's caches and cursors describe exactly its points.
+                    for t in ["smoothedPoint", "tripLine", "matchedStretch", "modeStretch", "segmentHit", "coveredWay", "day"] { try copy(t) }
+                    try db.execute(sql: "INSERT OR REPLACE INTO main.meta(key, value) SELECT key, value FROM b.meta")
+                } else {
+                    try db.execute(sql: "DELETE FROM main.meta WHERE key IN ('smoothingVersion', 'matcherVersion', 'daysVersion')")
+                    // Visits already stored are skipped by Places.settle, so the rewind cannot count a visit twice.
+                    let cursor = try placeless
+                        ? Double.fetchOne(db, sql: "SELECT CAST(value AS REAL) FROM b.meta WHERE key = 'placesProcessedUntil'") : nil
+                    if let target = try cursor ?? Double.fetchOne(db, sql: "SELECT MIN(t) FROM b.point") {
+                        try db.execute(sql: "UPDATE main.meta SET value = ? WHERE key = 'placesProcessedUntil' AND CAST(value AS REAL) > ?",
+                                       arguments: [String(target), target])
+                    }
+                }
+                return .commit
+            }
+            return result
+        }
     }
 
     public func setMeta(_ key: String, _ value: String) throws {

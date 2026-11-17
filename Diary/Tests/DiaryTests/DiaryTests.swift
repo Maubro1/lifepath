@@ -499,4 +499,193 @@ final class DiaryTests: XCTestCase {
         XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(100)])
         XCTAssertEqual(try diary.matches(tripStart: d(100)), [m])
     }
+
+    // MARK: Backup and merge
+
+    /// A closed diary file at a new path, filled by `fill`.
+    private func backupFile(_ fill: (Diary) throws -> Void) throws -> String {
+        let path = tempPath()
+        do { try fill(try Diary(path: path)) }
+        return path
+    }
+
+    private var home: Place { place(1, name: "Home", cells: [PlaceCell(x: 1, y: 1): 2]) }
+
+    private func fillRich(_ b: Diary) throws {
+        try b.append([pt(100), pt(200), pt(300)])
+        try b.saveSmoothed([(d(100), 7, 8)])
+        try b.saveTripLines([line(100, 300)], replacingFrom: d(0))
+        try b.saveLearned(places: [home], removing: [], visits: [Visit(start: d(100), end: d(300), placeId: 1)], meta: "placesProcessedUntil", "300.0")
+        try b.saveSteps([DaySteps(day: "1970-01-01", steps: 4000, distance: nil, floorsUp: nil)])
+        try b.saveActivities([(d(100), .walking)])
+        try b.setMeta("smoothingVersion", "3")
+        try b.log([LoggedEvent(t: d(100), kind: "a", detail: "")])
+    }
+
+    private func count(_ path: String, _ table: String) throws -> Int {
+        try DatabaseQueue(path: path).read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM \"\(table)\"")! }
+    }
+
+    func testSummary() throws {
+        let path = try backupFile { try $0.append([pt(300), pt(100), pt(200)]) }
+        XCTAssertEqual(try Diary.backupSummary(at: path), BackupSummary(points: 3, first: d(100), last: d(300)))
+        XCTAssertEqual(try Diary.backupSummary(at: try backupFile { _ in }), BackupSummary(points: 0, first: nil, last: nil))
+    }
+
+    func testNotADatabaseThrows() throws {
+        let path = tempPath()
+        try Data((0..<1024).map { _ in UInt8.random(in: 0...255) }).write(to: URL(fileURLWithPath: path))
+        XCTAssertThrowsError(try Diary.backupSummary(at: path))
+    }
+
+    func testNewerBackupRefused() throws {
+        let path = try backupFile { try $0.append([pt(100)]) }
+        try DatabaseQueue(path: path).write { try $0.execute(sql: "INSERT INTO grdb_migrations VALUES ('v99')") }
+        XCTAssertThrowsError(try Diary.backupSummary(at: path)) { XCTAssertEqual($0 as? DiaryError, .newerBackup) }
+    }
+
+    func testMergeIntoEmptyCopiesEverything() throws {
+        let path = try backupFile(fillRich)
+        let diary = try Diary(path: tempPath())
+        XCTAssertEqual(try diary.merge(backupAt: path), MergeResult(addedPoints: 3, fresh: true))
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(100), pt(200), pt(300)])
+        XCTAssertEqual(try diary.smoothed(from: d(0), to: d(1000)).map(\.lat), [7])
+        XCTAssertEqual(try diary.tripLines(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90, from: d(0), to: d(1000)), [line(100, 300)])
+        XCTAssertEqual(try diary.places(), [home])
+        XCTAssertEqual(try diary.visits(from: d(0), to: d(1000)), [Visit(start: d(100), end: d(300), placeId: 1)])
+        XCTAssertEqual(try diary.lifeStats().steps, 4000)
+        XCTAssertEqual(try diary.activities(from: d(0), to: d(1000)).map(\.activity), [.walking])
+        XCTAssertEqual(try diary.meta("smoothingVersion"), "3")
+        XCTAssertEqual(try diary.meta("placesProcessedUntil"), "300.0")
+        XCTAssertEqual(try diary.events(from: d(0), to: d(1000)), [])
+    }
+
+    func testMergeKeepsCurrentRows() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.append((0...9).map { pt(Double($0), lat: 1) })
+        let path = try backupFile { try $0.append((5...14).map { pt(Double($0), lat: 9) }) }
+        XCTAssertEqual(try diary.merge(backupAt: path), MergeResult(addedPoints: 5, fresh: false))
+        let got = try diary.points(from: d(0), to: d(100))
+        XCTAssertEqual(got.map(\.t), (0...14).map { d(Double($0)) })
+        XCTAssertEqual(got.map(\.lat), Array(repeating: 1, count: 10) + Array(repeating: 9, count: 5))
+    }
+
+    func testMergeMarksCachesStale() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.append([pt(1)])
+        try diary.saveTripLines([line(1, 2)], replacingFrom: d(0))
+        for k in ["smoothingVersion", "matcherVersion", "daysVersion"] { try diary.setMeta(k, "1") }
+        let path = try backupFile { try $0.append([pt(100)]); try $0.saveTripLines([line(100, 200)], replacingFrom: d(0)) }
+        XCTAssertFalse(try diary.merge(backupAt: path).fresh)
+        for k in ["smoothingVersion", "matcherVersion", "daysVersion"] { XCTAssertNil(try diary.meta(k)) }
+        XCTAssertEqual(try diary.tripLines(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90, from: d(0), to: d(1000)), [line(1, 2)])
+    }
+
+    func testMergePlacesOnlyIntoPlacelessDiary() throws {
+        func backup() throws -> String {
+            try backupFile { b in
+                try b.append([pt(100), pt(200)])
+                try b.saveLearned(places: [home], removing: [], visits: [Visit(start: d(100), end: d(200), placeId: 1)],
+                                  meta: "placesProcessedUntil", "200.0")
+            }
+        }
+        // (a) The current diary has a place: kept as it is, the backup's place is not taken, the cursor goes back to the backup's first point.
+        let a = try Diary(path: tempPath())
+        let flat = place(2, name: "Flat", cells: [PlaceCell(x: 5, y: 5): 1])
+        try a.append([pt(1000)])
+        try a.saveLearned(places: [flat], removing: [], visits: [], meta: "placesProcessedUntil", "1000.0")
+        _ = try a.merge(backupAt: try backup())
+        XCTAssertEqual(try a.places(), [flat])
+        XCTAssertEqual(try a.meta("placesProcessedUntil").flatMap(Double.init), 100)
+        // (b) Points but no place: the backup's named place and visits come in, the cursor is the earlier of the two.
+        let b = try Diary(path: tempPath())
+        try b.append([pt(1000)])
+        try b.setMeta("placesProcessedUntil", "1000.0")
+        _ = try b.merge(backupAt: try backup())
+        XCTAssertEqual(try b.places(), [home])
+        XCTAssertEqual(try b.visits(from: d(0), to: d(1000)), [Visit(start: d(100), end: d(200), placeId: 1)])
+        XCTAssertEqual(try b.meta("placesProcessedUntil").flatMap(Double.init), 200)
+    }
+
+    func testMergeStepsNeverLowered() throws {
+        let mainPath = tempPath()
+        let diary = try Diary(path: mainPath)
+        try diary.saveSteps([DaySteps(day: "2026-11-01", steps: 5000, distance: nil, floorsUp: nil)])
+        let path = try backupFile {
+            try $0.saveSteps([DaySteps(day: "2026-11-01", steps: 4000, distance: nil, floorsUp: nil),
+                              DaySteps(day: "2026-11-02", steps: 3000, distance: nil, floorsUp: nil)])
+        }
+        _ = try diary.merge(backupAt: path)
+        let rows = try DatabaseQueue(path: mainPath).read { try Row.fetchAll($0, sql: "SELECT day, steps FROM daySteps ORDER BY day") }
+        XCTAssertEqual(rows.map { $0["day"] as String }, ["2026-11-01", "2026-11-02"])
+        XCTAssertEqual(rows.map { $0["steps"] as Int }, [5000, 3000])
+    }
+
+    func testMergeTwiceAddsNothing() throws {
+        let mainPath = tempPath()
+        let diary = try Diary(path: mainPath)
+        let path = try backupFile(fillRich)
+        XCTAssertEqual(try diary.merge(backupAt: path).addedPoints, 3)
+        let before = try Diary.mergedTables.map { try count(mainPath, $0) }
+        XCTAssertEqual(try diary.merge(backupAt: path), MergeResult(addedPoints: 0, fresh: false))
+        XCTAssertEqual(try Diary.mergedTables.map { try count(mainPath, $0) }, before)
+    }
+
+    func testFailedMergeChangesNothing() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.append([pt(1)])
+        try diary.setMeta("smoothingVersion", "3")
+        let path = try backupFile { try $0.append([pt(100), pt(200)]) }
+        try DatabaseQueue(path: path).write { try $0.execute(sql: "DROP TABLE daySteps") }
+        XCTAssertThrowsError(try diary.merge(backupAt: path))
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(1)])
+        XCTAssertEqual(try diary.meta("smoothingVersion"), "3")
+    }
+
+    func testOldBackupMigratesAndMerges() throws {
+        let original = tempPath()
+        do {   // a v4 database exactly as v0.3.0 left it
+            let q = try DatabaseQueue(path: original)
+            try q.write { db in
+                try db.execute(sql: """
+                    CREATE TABLE point(
+                        t REAL PRIMARY KEY, lat REAL, lon REAL, rawLat REAL, rawLon REAL,
+                        hAcc REAL, speed REAL, kind TEXT, course REAL);
+                    CREATE TABLE event(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, t REAL, kind TEXT, detail TEXT);
+                    CREATE INDEX event_t ON event(t);
+                    CREATE TABLE smoothedPoint(t REAL PRIMARY KEY, lat REAL, lon REAL);
+                    CREATE TABLE tripLine(
+                        start REAL PRIMARY KEY, end REAL, minLat REAL, maxLat REAL, minLon REAL, maxLon REAL,
+                        distance REAL, coords BLOB);
+                    CREATE INDEX tripLine_end ON tripLine(end);
+                    CREATE TABLE place(
+                        id INTEGER PRIMARY KEY, name TEXT, updatedAt REAL, totalSeconds REAL, visits INTEGER, isCandidate INTEGER,
+                        pinLat REAL, pinLon REAL, visitDays TEXT, lastVisit REAL);
+                    CREATE TABLE placeCell(
+                        placeId INTEGER, x INTEGER, y INTEGER, weight REAL, recent REAL, PRIMARY KEY(placeId, x, y));
+                    CREATE TABLE visit(start REAL PRIMARY KEY, end REAL, placeId INTEGER);
+                    CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
+                    CREATE TABLE grdb_migrations(identifier TEXT NOT NULL PRIMARY KEY);
+                    INSERT INTO grdb_migrations VALUES ('v1'), ('v2'), ('v3'), ('v4');
+                    INSERT INTO point VALUES (100, 1, 2, 3, 4, 5, 6, 'still', -1), (200, 1, 2, 3, 4, 5, 6, 'still', -1);
+                    """)
+            }
+        }
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: original))
+        let copy = tempPath()
+        try FileManager.default.copyItem(atPath: original, toPath: copy)
+        XCTAssertEqual(try Diary.backupSummary(at: copy).points, 2)
+        let diary = try Diary(path: tempPath())
+        XCTAssertEqual(try diary.merge(backupAt: copy).addedPoints, 2)
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(100), pt(200)])
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: original)), bytes)
+    }
+
+    func testMergeCoversEveryTable() throws {
+        let path = tempPath()
+        _ = try Diary(path: path)
+        let tables = try DatabaseQueue(path: path).read { try String.fetchSet($0, sql: "SELECT name FROM sqlite_master WHERE type = 'table'") }
+        XCTAssertEqual(tables.subtracting(Diary.mergedTables + ["event", "meta", "grdb_migrations", "sqlite_sequence"]), [])
+    }
 }
