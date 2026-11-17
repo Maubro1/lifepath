@@ -305,4 +305,41 @@ final class DiaryTests: XCTestCase {
         XCTAssertEqual(try diary.tripLinesUntil(), d(2))
         XCTAssertEqual(try diary.places(), [])
     }
+
+    private func way(_ id: Int64, lat: Double = 50) -> Way {
+        Way(id: id, kind: .foot, name: id == 1 ? "Lane" : nil, oneway: id == 2, nodes: [id * 10, id * 10 + 1],
+            coords: [(lat, 4.1234567890123), (lat + 0.001, 4.2)])
+    }
+
+    func testTileSavedAtomicallyWithWays() throws {
+        let diary = try Diary(path: tempPath())
+        let tile = Tile(x: 1, y: 2)
+        XCTAssertFalse(try diary.hasTile(tile))
+        try diary.saveTile(tile, ways: [way(1), way(2)])
+        XCTAssertTrue(try diary.hasTile(tile))
+        XCTAssertFalse(try diary.hasTile(Tile(x: 1, y: 3)))
+        try diary.saveTile(Tile(x: 2, y: 2), ways: [way(1)])   // a way shared by two tiles is stored once
+        XCTAssertEqual(try diary.ways(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90).count, 2)
+    }
+
+    func testWaysInBox() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.saveTile(Tile(x: 0, y: 0), ways: [way(1, lat: 50), way(2, lat: 51)])
+        let got = try diary.ways(minLat: 49.9, maxLat: 50.5, minLon: 4, maxLon: 5)
+        XCTAssertEqual(got, [way(1, lat: 50)])
+        XCTAssertEqual(got.first?.coords.first?.lon, 4.1234567890123)
+        XCTAssertTrue(try diary.ways(minLat: 52, maxLat: 53, minLon: 4, maxLon: 5).isEmpty)
+    }
+
+    func testMatchesReplacePerTrip() throws {
+        let diary = try Diary(path: tempPath())
+        func s(_ seq: Int, _ way: Int64) -> MatchedStretch {
+            MatchedStretch(seq: seq, wayId: way, fromM: 1.5, toM: 20, confidence: 0.9, first: seq * 3, last: seq * 3 + 2)
+        }
+        try diary.saveMatches(tripStart: d(100), [s(0, 7), s(1, 8)])
+        try diary.saveMatches(tripStart: d(200), [s(0, 9)])
+        try diary.saveMatches(tripStart: d(100), [s(0, 5)])
+        XCTAssertEqual(try diary.matches(tripStart: d(100)), [s(0, 5)])
+        XCTAssertEqual(try diary.matches(tripStart: d(200)), [s(0, 9)])
+    }
 }
