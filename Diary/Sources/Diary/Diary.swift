@@ -634,7 +634,7 @@ public final class Diary: Sendable {
     /// Opens the file with `Diary(path:)`, so it MIGRATES THE FILE IN PLACE: callers pass a private copy, never the picked file.
     /// Throws when the file is not a diary, or `DiaryError.newerBackup` when a newer app version wrote it.
     public static func backupSummary(at path: String) throws -> BackupSummary {
-        if try DatabaseQueue(path: path).read({ try migrator().hasBeenSuperseded($0) }) { throw DiaryError.newerBackup }
+        try refuseNewer(path)
         let backup = try Diary(path: path)
         return try backup.pool.read { db in
             let r = try Row.fetchOne(db, sql: "SELECT COUNT(*) AS n, MIN(t) AS first, MAX(t) AS last FROM point")!
@@ -644,6 +644,11 @@ public final class Diary: Sendable {
         }
     }
 
+    /// A newer app version's file may hold rows this version would misread: refused before anything opens or copies it.
+    private static func refuseNewer(_ path: String) throws {
+        if try DatabaseQueue(path: path).read({ try migrator().hasBeenSuperseded($0) }) { throw DiaryError.newerBackup }
+    }
+
     /// Every table `merge` handles; `event` is never imported and `meta` is handled apart.
     public static let mergedTables = ["point", "activity", "way", "tile", "stop", "daySteps", "place", "placeCell", "visit",
                                       "smoothedPoint", "tripLine", "matchedStretch", "modeStretch", "segmentHit", "coveredWay", "day"]
@@ -651,7 +656,8 @@ public final class Diary: Sendable {
     /// Merges a backup that `backupSummary` already migrated, in one transaction: nothing here is deleted or overwritten
     /// (the current row wins on the same key), except the cache versions, which are cleared so the caches rebuild.
     public func merge(backupAt path: String) throws -> MergeResult {
-        try pool.writeWithoutTransaction { db in
+        try Self.refuseNewer(path)   // checked here too: callers are not trusted to have run backupSummary
+        return try pool.writeWithoutTransaction { db in
             try db.execute(sql: "ATTACH DATABASE ? AS b", arguments: [path])   // not allowed inside a transaction
             defer { try? db.execute(sql: "DETACH DATABASE b") }
             var result = MergeResult(addedPoints: 0, fresh: false)

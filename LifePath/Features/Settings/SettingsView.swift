@@ -20,6 +20,8 @@ struct SettingsView: View {
     @State private var backup: URL?
     @State private var movingBackup = false
     @State private var backupError: String?
+    @State private var exportingTracks = false
+    @AppStorage("lastBackup") private var lastBackup: Double = 0   // seconds since 1970; 0 = never
     @Environment(\.scenePhase) private var scenePhase
 
     private var expiry: Date? { SigningReminder.expiry }
@@ -98,10 +100,27 @@ struct SettingsView: View {
                         }
                     }
                     .fileMover(isPresented: $movingBackup, file: backup) { result in
-                        if case .failure = result, let backup { try? FileManager.default.removeItem(at: backup) }   // cancelled: no copy left in tmp
+                        switch result {
+                        case .success: lastBackup = Date().timeIntervalSince1970
+                        case .failure: if let backup { try? FileManager.default.removeItem(at: backup) }   // cancelled: no copy left in tmp
+                        }
                     }
+                    LabeledContent("Last backup", value: lastBackup == 0 ? "never"
+                                   : Date(timeIntervalSince1970: lastBackup).formatted(date: .abbreviated, time: .shortened))
                 } footer: {
                     Text("A copy of your whole diary. Keep it in Files or iCloud Drive: deleting LifePath deletes everything stored inside it.")
+                }
+                Section {
+                    RestoreButton(title: "Restore from a backup")
+                } footer: {
+                    Text("Adds the points from a backup file (for example after reinstalling LifePath). Nothing in this diary is removed.")
+                }
+                Section {
+                    Button("Export tracks (GPX, GeoJSON, KML)") { exportingTracks = true }
+                        .accessibilityHint("Choose a format and a period, then where to save the file")
+                        .sheet(isPresented: $exportingTracks) { ExportSheet() }
+                } footer: {
+                    Text("Saves your trips as a file for other map and fitness apps.")
                 }
                 Section {
                     Button("Save health report") { report = ReportDocument(text: recorder.healthReport()); exporting = true }

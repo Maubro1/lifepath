@@ -84,7 +84,9 @@ import UIKit
         motion.startActivity()
         refreshConditions()
         applyGPS()
-        openDiary()
+        // A restore during onboarding opened it already; its resume() ran on the empty diary, so a restored last still point
+        // never triggers a relaunch backfill up to now.
+        if diary == nil { openDiary() }
     }
 
     /// Runs once, when the diary first opens (at launch, or after the first unlock).
@@ -322,6 +324,8 @@ import UIKit
     // shortcut: a places run saving its cursor at the same moment can win the race; the next fill or a rebuild catches it.
     private func rewindPlaces(to t: Date) {
         guard notSavingSince == nil else { return }   // the fill is still in memory
+        // shortcut: a fill during a restore's merge skips this rewind (the merge rewinds to the backup's start); queue it if the log shows missed visits
+        guard !holdWrites else { return }
         try? diary?.rewindMeta("placesProcessedUntil", to: t)
     }
 
@@ -337,7 +341,17 @@ import UIKit
         return url
     }
 
+    /// The diary, opened if needed, so a restore can run during onboarding before `start()`.
+    func diaryForImport() -> Diary? {
+        if diary == nil { openDiary() }
+        return diary
+    }
+
+    /// While true (a restore is merging), points and events stay in the buffer; the merge flushes them when it ends.
+    @ObservationIgnored var holdWrites = false
+
     func flush() {
+        guard !holdWrites else { return }
         if let f = flushFailedAt, Date().timeIntervalSince(f) < 30 { return }   // after a failure, retry at most every 30 s
         if diary == nil { openDiary() }   // before first unlock the protected file can't open yet
         let drops = filter.takeDropCounts()

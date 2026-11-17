@@ -10,12 +10,14 @@ enum DayService {
 
     /// A second caller waits for the running one and returns; cancelling a caller cancels the run it waits on.
     static func run(_ diary: Diary) async {
-        let (task, mine) = await MainActor.run { () -> (Task<Void, Never>, Bool) in
+        let claim = await MainActor.run { () -> (Task<Void, Never>, Bool)? in
+            if ImportService.shared.merging { return nil }   // the restore runs the chain, days included, after its merge
             if let r = running { return (r, false) }
             let t = Task.detached(priority: .utility) { await execute(diary) }
             running = t
             return (t, true)
         }
+        guard case let (task, mine)? = claim else { return }
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
         if mine { await MainActor.run { running = nil } }
     }

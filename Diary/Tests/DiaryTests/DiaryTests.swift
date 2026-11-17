@@ -544,6 +544,15 @@ final class DiaryTests: XCTestCase {
         XCTAssertThrowsError(try Diary.backupSummary(at: path)) { XCTAssertEqual($0 as? DiaryError, .newerBackup) }
     }
 
+    func testMergeRefusesNewerBackup() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.append([pt(1)])
+        let path = try backupFile { try $0.append([pt(100)]) }
+        try DatabaseQueue(path: path).write { try $0.execute(sql: "INSERT INTO grdb_migrations VALUES ('v99')") }
+        XCTAssertThrowsError(try diary.merge(backupAt: path)) { XCTAssertEqual($0 as? DiaryError, .newerBackup) }
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(1)])
+    }
+
     func testMergeIntoEmptyCopiesEverything() throws {
         let path = try backupFile(fillRich)
         let diary = try Diary(path: tempPath())

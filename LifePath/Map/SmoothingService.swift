@@ -62,7 +62,8 @@ enum SmoothingService {
     }
 
     private static func execute() async {
-        guard let diary = await MainActor.run(body: { Recorder.shared.readDiary }) else { return }   // locked before first unlock
+        // Locked before first unlock; during a restore's merge nothing starts (the restore runs the chain after it).
+        guard let diary = await MainActor.run(body: { ImportService.shared.merging ? nil : Recorder.shared.readDiary }) else { return }
         let detail: String, wroteLines: Bool
         do { let r = try await run(diary); detail = "trips=\(r.trips) points=\(r.points) lines=\(r.lines)"; wroteLines = r.lines > 0 }
         catch is CancellationError { return }
@@ -79,11 +80,27 @@ enum SmoothingService {
     /// At most once per foreground and never two at once; the work never touches the main actor.
     @MainActor static func appBecameActive() {
         guard !ranThisForeground, running == nil else { return }
+        start()
+    }
+
+    /// Starts the chain now (or returns the running one), whether or not it already ran this foreground.
+    @MainActor @discardableResult static func start() -> Task<Void, Never> {
         ranThisForeground = true
-        running = Task.detached(priority: .utility) {
+        if let running { return running }
+        let task = Task.detached(priority: .utility) {
             await execute()
             await MainActor.run { running = nil }
         }
+        running = task
+        return task
+    }
+
+    /// Cancels the chain and waits until it and any days run (pull to refresh) have ended.
+    @MainActor static func stop() async {
+        let task = running
+        task?.cancel()
+        await task?.value
+        await DayService.running?.value
     }
 
     /// Re-arms the charging-only background run.
