@@ -113,6 +113,20 @@ final class TravelModesTests: XCTestCase {
         check(TravelModes.classify(pts, graph: graph, stops: [stop(1, .ferry, north: 10, east: 3600)], activities: []), [.boat], "waterbus")
     }
 
+    func testRoughBusOnRoadIsNotBoat() {
+        // 10 min at 6 m/s on a road, mostly rough fixes (a bus with the phone in a pocket), no stops mapped.
+        let pts = ride(path: [(0, 0), (0, 3600)], speed: 6, every: 1, noise: 4, seed: 13, start: t0, rough: true)
+        let s = TravelModes.classify(pts, graph: RoadGraph(ways: [line(1, .road, north: 0, from: 0, to: 3600)]), stops: [], activities: [(t0, .automotive)])
+        XCTAssertFalse(s.contains { $0.mode == .boat }, "\(s.map(\.mode))")
+    }
+
+    func testNoStreetsYetIsNotBoat() {
+        // Streets not downloaded yet: a 6 m/s vehicle ride must not read as boat for lack of nearby ways.
+        let pts = ride(path: [(0, 0), (0, 3600)], speed: 6, every: 1, noise: 4, seed: 14, start: t0)
+        let s = TravelModes.classify(pts, graph: RoadGraph(ways: []), stops: [], activities: [(t0, .automotive)])
+        XCTAssertFalse(s.contains { $0.mode == .boat }, "\(s.map(\.mode))")
+    }
+
     func testNoActivityStillClassifies() {
         let trip = walkBusWalk()
         let s = TravelModes.classify(trip.pts, graph: trip.graph, stops: trip.stops, activities: [])

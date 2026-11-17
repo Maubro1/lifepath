@@ -16,7 +16,7 @@ public struct ModeStretch: Sendable, Equatable, Codable {
 /// Travel mode per stretch: a small Hidden Markov Model over 30 s windows of a trip, decoded with Viterbi in log space.
 /// Features: CoreMotion activity, speed, halts at mapped stops, nearness to each network, share of rough fixes.
 public enum TravelModes {
-    public static let version = 1
+    public static let version = 2
     public static let confident = 0.6
 
     /// What one 30 s window shows.
@@ -110,7 +110,8 @@ public enum TravelModes {
         let votes = choices.map { c in idx.filter { [.stationary, .unknown, nil].contains(act[$0]) ? c == nil : act[$0] == c }.count }
 
         var kinds: [Set<WayKind>] = [], open = 0
-        for i in idx {
+        // No downloaded ways at all says nothing about the network: kinds stay empty and the network is left out of the emission.
+        for i in idx where !g.ways.isEmpty {
             let q = p[i], rough = q.kind == .rough, r = rough ? min(q.hAcc, 300) : 25
             let c = g.candidates(lat: q.lat, lon: q.lon, radius: rough ? r : 50)
             kinds.append(Set(c.filter { $0.distance <= r }.map { g.ways[g.index[$0.wayId]!].kind }))
@@ -143,16 +144,18 @@ public enum TravelModes {
         func near(_ ks: Set<WayKind>) -> Double {
             w.kinds.isEmpty ? 0 : Double(w.kinds.filter { !$0.isDisjoint(with: ks) }.count) / Double(w.kinds.count)
         }
-        switch m {
+        if !w.kinds.isEmpty { switch m {
         case .walk, .run: break   // walkers go anywhere
         case .bike: e += near([.cycle, .foot, .road]) - 1
         case .car, .bus: e += 3 * (near([.road]) - 1)
         case .tram: e += 3 * (near([.tram, .rail]) - 1)
         case .train: e += 3 * (near([.rail]) - 1)
-        case .boat: e += 3 * (max(near([.ferry]), w.open) - 1)
-        }
-        // Trains report rough fixes; cars rarely do.
-        e -= w.rough * (m == .tram ? 1 : m == .train || m == .boat ? 0 : 2)
+        case .boat: e += 4.5 * (max(near([.ferry]), w.open) - 1)   // heavier: boats are rare
+        } }
+        // Trains report rough fixes; cars and boats (open sky) rarely do.
+        e -= w.rough * (m == .tram ? 1 : m == .train ? 0 : 2)
+        // Boats are rare and their narrow speed prior beats bus and car at 3 to 10 m/s: without street data a boat needs more.
+        if m == .boat && w.kinds.isEmpty { e -= 1.5 }
         if let d = w.stopDist {
             func within(_ k: StopKind, _ r: Double) -> Bool { (d[k] ?? .infinity) <= r }
             switch m {
