@@ -280,7 +280,10 @@ struct YouData: Sendable {
         let cities = progress.filter { names[$0.areaId]?.level == 8 && $0.total > 0 }
             .map { (name: names[$0.areaId]!.name, share: Double($0.covered) / Double($0.total), covered: $0.covered) }
             .sorted { $0.covered > $1.covered }.map { (name: $0.name, share: $0.share) }
-        let explored = progress.filter { (names[$0.areaId]?.level ?? 0) > 8 && $0.covered > 0 }.count
+        // Neighbourhoods walked in; an area holding finer ones is left out, as in the place card.
+        let walkedIn = Set(progress.filter { $0.covered > 0 }.map(\.areaId))
+        let fine = try diary.areas(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180).filter { $0.level > 8 && walkedIn.contains($0.id) }
+        let explored = fine.filter { a in !fine.contains { $0.id != a.id && a.contains(lat: $0.rings[0][0].lat, lon: $0.rings[0][0].lon) } }.count
         let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start ?? now
         let days = try diary.days()
         var weeks = [Double](repeating: 0, count: 52)

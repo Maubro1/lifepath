@@ -5,11 +5,13 @@ public struct Area: Sendable, Equatable {
     public var id: Int64          // relation id; a closed way is stored as -way id
     public var level: Int
     public var name: String
-    public var rings: [[(lat: Double, lon: Double)]]   // outer rings, closed
-    public var holes: [[(lat: Double, lon: Double)]]   // inner rings, closed
+    public let rings: [[(lat: Double, lon: Double)]]   // outer rings, closed
+    public let holes: [[(lat: Double, lon: Double)]]   // inner rings, closed
 
     public init(id: Int64, level: Int, name: String, rings: [[(lat: Double, lon: Double)]], holes: [[(lat: Double, lon: Double)]]) {
         self.id = id; self.level = level; self.name = name; self.rings = rings; self.holes = holes
+        let all = rings.joined()
+        bounds = (all.map(\.lat).min() ?? 0, all.map(\.lat).max() ?? 0, all.map(\.lon).min() ?? 0, all.map(\.lon).max() ?? 0)
     }
 
     public static func == (a: Area, b: Area) -> Bool {
@@ -19,13 +21,11 @@ public struct Area: Sendable, Equatable {
         return a.id == b.id && a.level == b.level && a.name == b.name && same(a.rings, b.rings) && same(a.holes, b.holes)
     }
 
-    public var bounds: (minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
-        let all = rings.joined()
-        return (all.map(\.lat).min() ?? 0, all.map(\.lat).max() ?? 0, all.map(\.lon).min() ?? 0, all.map(\.lon).max() ?? 0)
-    }
+    public let bounds: (minLat: Double, maxLat: Double, minLon: Double, maxLon: Double)   // of the outer rings
 
     /// Even-odd test over all rings: inside an outer ring and not inside a hole.
     public func contains(lat: Double, lon: Double) -> Bool {
+        guard lat >= bounds.minLat, lat <= bounds.maxLat, lon >= bounds.minLon, lon <= bounds.maxLon else { return false }
         func inside(_ r: [(lat: Double, lon: Double)]) -> Bool {
             var c = false, j = r.count - 1
             for i in r.indices {

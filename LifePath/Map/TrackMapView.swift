@@ -68,7 +68,7 @@ struct TrackMapView: UIViewRepresentable {
         let c = context.coordinator
         c.parent = self
         if map.showsUserLocation != visible { map.showsUserLocation = visible }   // location only while on screen
-        if let target, target != c.flown {
+        if let target, !(c.flown.map { MKMapRectEqualToRect($0, target) } ?? false) {
             c.flown = target
             map.setVisibleMapRect(target, edgePadding: UIEdgeInsets(top: 60, left: 20, bottom: 160, right: 20), animated: true)
         }
@@ -97,7 +97,7 @@ struct TrackMapView: UIViewRepresentable {
             wanted.append(("h\(heat.hashValue)", .aboveRoads, { HeatOverlay(heat) }))
         }
         for (id, cells) in data.outlines {
-            wanted.append(("o\(id)-\(cells.hashValue)", .aboveRoads, {
+            wanted.append(("o\(id)-\(cells.hashValue)-\(dark)", .aboveRoads, {
                 MKMultiPolygon(cells.map { c in   // one square per 5 m cell; one shape, so the fill has no seams
                     let a = PlaceGrid.center(of: c), b = PlaceGrid.center(of: PlaceCell(x: c.x + 1, y: c.y + 1))
                     let h = ((b.lat - a.lat) / 2, (b.lon - a.lon) / 2)
@@ -109,7 +109,7 @@ struct TrackMapView: UIViewRepresentable {
             }))
         }
         for p in data.still {
-            wanted.append(("s\(p.lat),\(p.lon)", .aboveLabels, { MKCircle(center: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), radius: 3) }))
+            wanted.append(("s\(p.lat),\(p.lon)-\(dark)", .aboveLabels, { MKCircle(center: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), radius: 3) }))
         }
         for w in wanted where c.shown[w.key] == nil {
             let o = w.make()

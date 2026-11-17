@@ -31,6 +31,8 @@ struct MapData: Sendable {
     var fog: [(key: String, stroke: FogStroke)] = []   // what clears the fog, in Fog mode
     var here: Here?                                    // the area under the map centre, for the place chip
     var today: (distance: Double, steps: Int?, newStreets: Int)?
+    var walked: (covered: Int, total: Int)?     // the tally; nil before the first coverage run
+    var bike = false                            // whether the tally counted cycling
 }
 
 /// The neighbourhood (or city) under the map centre and its progress.
@@ -39,8 +41,6 @@ struct Here: Sendable, Equatable {
     var cityId: Int64
     var covered: Int, total: Int
     var share: Double { total > 0 ? Double(covered) / Double(total) : 0 }
-    var walked: (covered: Int, total: Int)?     // the tally; nil before the first coverage run
-    var bike = false                            // whether the tally counted cycling
 }
 
 enum TimeFilter: String, CaseIterable {
@@ -448,8 +448,10 @@ struct MapScreen: View {
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(Color.ink)
                 .accessibilityElement(children: .combine)
+                .frame(minHeight: 44, alignment: .leading)
                 .accessibilityLabel("Today")
                 .accessibilityHint("Opens today")
+                .accessibilityAddTraits(.isButton)
                 .contentShape(.rect)
                 .onTapGesture { openToday = true }
             }

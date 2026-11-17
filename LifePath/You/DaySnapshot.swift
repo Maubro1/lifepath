@@ -10,7 +10,7 @@ import UIKit
 }
 
 /// A small picture of a day: the muted map with that day's lines in satsuma. Made once, kept in Caches.
-enum DaySnapshot {
+@MainActor enum DaySnapshot {
     static func image(key: String, lines: [[(lat: Double, lon: Double)]], dark: Bool, size: CGSize) async -> UIImage? {
         let all = lines.joined()
         guard let first = all.first else { return nil }

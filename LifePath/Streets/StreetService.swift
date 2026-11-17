@@ -41,7 +41,7 @@ enum StreetService {
             : diary.meta("streetsUntil").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? .distantPast
         var backoff = try diary.meta("streetsBackoff").flatMap(TimeInterval.init) ?? 0
         var retryAt = try diary.meta("streetsRetryAt").flatMap(TimeInterval.init) ?? 0
-        var tiles = 0, matched = 0, modeCount = 0, unsure = 0, waiting = false
+        var tiles = 0, matched = 0, modeCount = 0, unsure = 0, waiting = false, borders = true
         let session = download ? makeSession(cellular: cellular) : nil
         defer { session?.finishTasksAndInvalidate() }
         var fetching = session != nil
@@ -81,10 +81,11 @@ enum StreetService {
                 if backoff > 0 { backoff = 0; try diary.setMeta("streetsBackoff", "0") }
             }
             // Borders for progress per place; a failure only stops border downloads for this run, never matching.
-            if fetching, !waiting, let session {
+            if fetching, !waiting, borders, let session {
                 for tile in try needed.filter({ try diary.hasTile($0, version: OSM.version) && !diary.hasAreas($0) }) {
                     do { try diary.saveAreas(await fetchAreas(tile, session, diary), tile: tile); tiles += 1 } catch {
                         if Task.isCancelled { throw CancellationError() }
+                        borders = false   // no more border requests this run; the next run tries again
                         break
                     }
                 }

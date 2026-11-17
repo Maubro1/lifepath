@@ -23,9 +23,10 @@ final class LayerRenderer: MKOverlayRenderer, @unchecked Sendable {
     func set(_ new: LayerContent?) {
         lock.lock(); let old = content; content = new; lock.unlock()
         guard let new, let old, new.style == old.style else { setNeedsDisplay(); return }
+        let was = old.items, now = new.items   // computed: read once, not once per key
         var dirty = MKMapRect.null
-        for (k, r) in new.items where old.items[k] == nil { dirty = dirty.union(r) }
-        for (k, r) in old.items where new.items[k] == nil { dirty = dirty.union(r) }
+        for (k, r) in now where was[k] == nil { dirty = dirty.union(r) }
+        for (k, r) in was where now[k] == nil { dirty = dirty.union(r) }
         if !dirty.isNull { setNeedsDisplay(dirty.insetBy(dx: -dirty.width * 0.02 - 2000, dy: -dirty.height * 0.02 - 2000)) }
     }
 
@@ -86,12 +87,13 @@ struct FogContent: LayerContent {
         ctx.setFillColor(cgColor(Palette.page, dark: dark))
         ctx.fill(renderer.rect(for: rect))
         ctx.setLineCap(.round); ctx.setLineJoin(.round)
+        let near = rect.insetBy(dx: -8 / scale, dy: -8 / scale)   // strokes wider than an item's padding when zoomed out
         let minimum = 2 / scale   // a cleared band never drawn under 2 pt on screen
         // Soft edge first (half cleared, wider), then the band itself fully cleared.
         for (blend, extra, alpha) in [(CGBlendMode.destinationOut, Self.feather, 0.5), (.clear, 0, 1)] {
             ctx.setBlendMode(blend)
             ctx.setStrokeColor(UIColor(white: 0, alpha: alpha).cgColor); ctx.setFillColor(UIColor(white: 0, alpha: alpha).cgColor)
-            for s in strokes where s.rect.intersects(rect) {
+            for s in strokes where s.rect.intersects(near) {
                 let lat = s.stroke.coords[0].lat
                 let w = max(2 * (s.stroke.halfWidth + extra) * pointsPerMetre(lat), minimum)
                 if s.stroke.coords.count == 1 {
@@ -126,11 +128,12 @@ struct StreetsContent: LayerContent {
 
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
         let lat = rect.origin.coordinate.latitude
+        let near = rect.insetBy(dx: -8 / scale, dy: -8 / scale)
         // On-screen length of a 20 m street segment: below 0.5 pt shading only, above 1 pt streets only, cross-faded between.
         let seg = 20 * pointsPerMetre(lat) * Double(scale)
         let streets = min(1, max(0, (seg - 0.5) / 0.5))
         if streets < 1 {
-            for s in shading where s.rect.intersects(rect) {
+            for s in shading where s.rect.intersects(near) {
                 ctx.setFillColor(cgColor(Palette.satsuma, dark: dark, alpha: CGFloat((0.15 + 0.6 * s.share) * (1 - streets))))
                 for r in s.rings { ctx.addPath(renderer.path(r, closed: true)) }
                 for h in s.holes { ctx.addPath(renderer.path(h, closed: true)) }
@@ -140,11 +143,11 @@ struct StreetsContent: LayerContent {
         guard streets > 0 else { return }
         ctx.setLineCap(.round); ctx.setLineJoin(.round)
         ctx.setStrokeColor(cgColor(Palette.muted, dark: dark, alpha: 0.35 * streets)); ctx.setLineWidth(1 / scale)
-        for u in unwalked where u.rect.intersects(rect) { ctx.addPath(renderer.path(u.coords)) }
+        for u in unwalked where u.rect.intersects(near) { ctx.addPath(renderer.path(u.coords)) }
         ctx.strokePath()
         for (width, alpha) in [(6.0, 0.25), (2.5, 1.0)] {   // glow, then the line
             ctx.setStrokeColor(cgColor(Palette.satsuma, dark: dark, alpha: alpha * streets)); ctx.setLineWidth(width / scale)
-            for w in walked where w.rect.intersects(rect) { ctx.addPath(renderer.path(w.coords)) }
+            for w in walked where w.rect.intersects(near) { ctx.addPath(renderer.path(w.coords)) }
             ctx.strokePath()
         }
     }
@@ -180,7 +183,8 @@ struct LinesContent: LayerContent {
 
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
         ctx.setLineCap(.round); ctx.setLineJoin(.round)
-        for (r, l) in lines where r.intersects(rect) && l.coords.count > 1 {
+        let near = rect.insetBy(dx: -8 / scale, dy: -8 / scale)
+        for (r, l) in lines where r.intersects(near) && l.coords.count > 1 {
             let width = (l.rough ? 2.0 : 3.0) / scale
             ctx.setLineDash(phase: 0, lengths: l.rough ? [4 / scale, 4 / scale] : [])
             if edged && hidden.isEmpty {

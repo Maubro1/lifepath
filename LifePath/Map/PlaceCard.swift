@@ -71,9 +71,11 @@ struct PlaceCard: View {
                   let city = all.first(where: { $0.id == id }) else { return nil }
             func share(_ a: Area) -> Double { progress[a.id].map { $0.total > 0 ? Double($0.covered) / Double($0.total) : 0 } ?? 0 }
             // Neighbourhoods with streets whose first corner lies in this city, best first.
-            let parts = all.filter { a in
+            let inCity = all.filter { a in
                 a.level > 8 && progress[a.id] != nil && Areas.locate(lat: a.rings[0][0].lat, lon: a.rings[0][0].lon, in: [city]).city != nil
             }
+            // An area holding finer ones only keeps the streets left over between them: list the finer ones.
+            let parts = inCity.filter { a in !inCity.contains { $0.id != a.id && a.contains(lat: $0.rings[0][0].lat, lon: $0.rings[0][0].lon) } }
             return ((city, share(city)), parts.map { ($0, share($0)) }.sorted { $0.1 > $1.1 })
         }.value
         guard let read else { return }
