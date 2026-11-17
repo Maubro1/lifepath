@@ -156,14 +156,15 @@ struct StreetsContent: LayerContent {
 struct LinesContent: LayerContent {
     var lines: [(rect: MKMapRect, line: MapLine)]
     var colour: LineColour
+    var hidden: Set<TravelMode>   // with colour by mode: modes switched off in the legend
     var edged: Bool   // Streets mode: a dark edge keeps lines apart from the glowing streets
     var dark: Bool
 
-    var style: String { "lines\(colour)\(edged)\(dark)" }
+    var style: String { "lines\(colour)\(edged)\(dark)\(hidden.map(\.rawValue).sorted())" }
     var items: [String: MKMapRect] { Dictionary(lines.map { ($0.line.key, $0.rect) }, uniquingKeysWith: { a, _ in a }) }
 
-    init(_ lines: [MapLine], colour: LineColour, edged: Bool, dark: Bool) {
-        self.colour = colour; self.edged = edged; self.dark = dark
+    init(_ lines: [MapLine], colour: LineColour, hidden: Set<TravelMode>, edged: Bool, dark: Bool) {
+        self.colour = colour; self.hidden = hidden; self.edged = edged; self.dark = dark
         self.lines = lines.map { (mapRect($0.coords, pad: 400), $0) }
     }
 
@@ -182,7 +183,7 @@ struct LinesContent: LayerContent {
         for (r, l) in lines where r.intersects(rect) && l.coords.count > 1 {
             let width = (l.rough ? 2.0 : 3.0) / scale
             ctx.setLineDash(phase: 0, lengths: l.rough ? [4 / scale, 4 / scale] : [])
-            if edged {
+            if edged && hidden.isEmpty {
                 ctx.setStrokeColor(cgColor(Palette.text, dark: dark)); ctx.setLineWidth(width + 2 / scale)
                 ctx.addPath(renderer.path(l.coords)); ctx.strokePath()
             }
@@ -190,8 +191,10 @@ struct LinesContent: LayerContent {
             // Runs of one colour as one path.
             var a = 0
             for b in 1..<l.coords.count where b == l.coords.count - 1 || hex(l, b) != hex(l, a) {
-                ctx.setStrokeColor(cgColor(hex(l, a), dark: dark))
-                ctx.addPath(renderer.path(Array(l.coords[a...b]))); ctx.strokePath()
+                if colour != .mode || !(l.modes[a].map(hidden.contains) ?? false) {
+                    ctx.setStrokeColor(cgColor(hex(l, a), dark: dark))
+                    ctx.addPath(renderer.path(Array(l.coords[a...b]))); ctx.strokePath()
+                }
                 a = b
             }
         }

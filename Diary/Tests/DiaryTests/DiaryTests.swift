@@ -697,7 +697,9 @@ final class DiaryTests: XCTestCase {
         let path = tempPath()
         _ = try Diary(path: path)
         let tables = try DatabaseQueue(path: path).read { try String.fetchSet($0, sql: "SELECT name FROM sqlite_master WHERE type = 'table'") }
-        XCTAssertEqual(tables.subtracting(Diary.mergedTables + ["event", "meta", "grdb_migrations", "sqlite_sequence"]), [])
+        // Borders and progress are caches: downloaded and recomputed again after a restore, never merged.
+        let rebuilt = ["area", "areaTile", "areaProgress", "streetCovered"]
+        XCTAssertEqual(tables.subtracting(Diary.mergedTables + rebuilt + ["event", "meta", "grdb_migrations", "sqlite_sequence"]), [])
     }
 
     func testAreasRoundTrip() throws {

@@ -29,6 +29,16 @@ struct MapData: Sendable {
     var unwalked: [(key: String, coords: [(lat: Double, lon: Double)])] = []  // countable streets not walked yet, in Streets mode
     var shading: [(key: String, rings: [[(lat: Double, lon: Double)]], holes: [[(lat: Double, lon: Double)]], share: Double)] = []   // neighbourhoods, zoomed out
     var fog: [(key: String, stroke: FogStroke)] = []   // what clears the fog, in Fog mode
+    var here: Here?                                    // the area under the map centre, for the place chip
+    var today: (distance: Double, steps: Int?, newStreets: Int)?
+}
+
+/// The neighbourhood (or city) under the map centre and its progress.
+struct Here: Sendable, Equatable {
+    var name: String
+    var cityId: Int64
+    var covered: Int, total: Int
+    var share: Double { total > 0 ? Double(covered) / Double(total) : 0 }
     var walked: (covered: Int, total: Int)?     // the tally; nil before the first coverage run
     var bike = false                            // whether the tally counted cycling
 }
@@ -81,6 +91,7 @@ struct MapOptions: Equatable {
         var mode: MapMode
         var bike: Bool
         var metresPerPoint: Double
+        var centerLat, centerLon: Double
         var places: [Place]   // in memory, refreshed by each places run; the loader never reads them per pan
     }
 
@@ -119,7 +130,7 @@ struct MapOptions: Equatable {
                       tolerance: Simplify.step(2 * metresPerPoint),
                       from: range.from, to: range.to, heat: options.heat, recorded: options.recorded, byMode: options.byMode,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5,
-                      mode: options.mode, bike: UserDefaults.standard.bool(forKey: "countCycling"), metresPerPoint: metresPerPoint,
+                      mode: options.mode, bike: UserDefaults.standard.bool(forKey: "countCycling"), metresPerPoint: metresPerPoint, centerLat: c.latitude, centerLon: c.longitude,
                       places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
         generation += 1
         let gen = generation
@@ -224,6 +235,16 @@ struct MapOptions: Equatable {
         }
         out.bike = q.bike
         out.walked = try diary.streetsWalked(bike: q.bike)
+        let progress = Dictionary(try diary.areaProgress(bike: q.bike).map { ($0.areaId, $0) }, uniquingKeysWith: { a, _ in a })
+        let found = Areas.locate(lat: q.centerLat, lon: q.centerLon,
+                                 in: try diary.areas(minLat: q.centerLat, maxLat: q.centerLat, minLon: q.centerLon, maxLon: q.centerLon))
+        if let city = found.city, let a = found.neighbourhood, let p = progress[a.id] ?? progress[city.id] {
+            out.here = Here(name: progress[a.id] != nil ? a.name : city.name, cityId: city.id, covered: p.covered, total: p.total)
+        }
+        let start = Calendar.current.startOfDay(for: Date())
+        let key = Date().formatted(.iso8601.year().month().day().dateSeparator(.dash))
+        let day = try diary.days().first { $0.summary.day == key }
+        out.today = (day?.summary.distance ?? 0, day?.steps, try diary.newStreets(from: start, to: .distantFuture, bike: q.bike))
         if q.mode == .streets {   // stored by the street run; the map only reads them
             // Streets while a 20 m segment is at least 0.5 pt on screen, neighbourhood shading while it is at most 1 pt.
             if q.metresPerPoint <= 40 {
@@ -239,7 +260,6 @@ struct MapOptions: Equatable {
                 }
             }
             if q.metresPerPoint >= 20 {
-                let progress = Dictionary(try diary.areaProgress(bike: q.bike).map { ($0.areaId, $0) }, uniquingKeysWith: { a, _ in a })
                 let areas = try diary.areas(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon).filter { progress[$0.id] != nil }
                 // Neighbourhoods; a city only where none of its neighbourhoods has streets.
                 let fine = areas.filter { $0.level > 8 }
@@ -298,26 +318,37 @@ struct MapScreen: View {
     @State private var loader = MapLoader()
     @AppStorage("recordedLine") private var recordedLine = false
     @AppStorage("lineColour") private var colour = LineColour.plain
-    @State private var satellite = false
+    @AppStorage("hiddenModes") private var hiddenModes = ""   // comma-separated raw values, used only with colour by mode
+    @AppStorage("mapMode") private var mode = MapMode.streets
+    @AppStorage("satellite") private var satellite = false
     @State private var onScreen = false
     @State private var choosingDates = false
+    @State private var choosingLayers = false
     @State private var openPlace: Place?
+    @State private var openCity: CityRef?
+    @State private var target: MKMapRect?
     @AppStorage("countCycling") private var countCycling = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var scheme
 
     private var visible: Bool { onScreen && scenePhase == .active }
+    private var hidden: Set<TravelMode> {
+        colour == .mode ? Set(hiddenModes.split(separator: ",").compactMap { TravelMode(rawValue: String($0)) }) : []
+    }
 
     var body: some View {
-        TrackMapView(data: loader.data, mode: loader.options.mode, colour: colour, dark: scheme == .dark, satellite: satellite, visible: visible) { region, width in
-            loader.regionChanged(region, width: width)
-        } onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } }
+        TrackMapView(data: loader.data, mode: mode, colour: colour, hidden: hidden, dark: scheme == .dark, satellite: satellite,
+                     visible: visible, onRegion: { region, width in loader.regionChanged(region, width: width) },
+                     onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } },
+                     target: target, onLayers: { choosingLayers = true })
         .ignoresSafeArea(edges: .top)
-        .overlay(alignment: .bottom) { controls }
+        .overlay(alignment: .topLeading) { chip }
+        .overlay(alignment: .bottom) { bottom }
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
-        .onChange(of: colour) { _, c in loader.options.byMode = c == .mode }   // changes options, which reloads
+        .onChange(of: colour, initial: true) { _, c in loader.options.byMode = c == .mode }   // changes options, which reloads
+        .onChange(of: mode, initial: true) { _, m in loader.options.mode = m }
         .onChange(of: loader.options) { loader.reload() }
         .onChange(of: recordedLine, initial: true) { _, r in loader.options.recorded = r }
         .onChange(of: countCycling) { loader.reload() }
@@ -325,76 +356,88 @@ struct MapScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: PlaceService.changed)) { _ in loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: Recorder.pointsSaved)) { _ in loader.pointsSaved() }   // no-op unless visible
         .sheet(item: $openPlace, onDismiss: { loader.reload() }) { PlaceSheet(place: $0) }
+        .sheet(item: $openCity) { ref in PlaceCard(cityId: ref.id) { rect in openCity = nil; target = rect } }
+        .sheet(isPresented: $choosingLayers) {
+            LayersSheet(colour: $colour, hiddenModes: $hiddenModes, satellite: $satellite, heat: $loader.options.heat)
+        }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
     }
 
-    private var controls: some View {
-        VStack(spacing: 8) {
-            Picker("Map", selection: $loader.options.mode) {
-                ForEach(MapMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            Picker("Time range", selection: $loader.options.filter) {
-                ForEach(TimeFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("Time range")
-            HStack {
-                Picker("Colour lines by", selection: $colour) {
-                    ForEach(LineColour.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+    /// Top left: the area under the map centre and how much of it is walked.
+    @ViewBuilder private var chip: some View {
+        if let h = loader.data?.here {
+            Button { openCity = CityRef(id: h.cityId) } label: {
+                HStack(spacing: 6) {
+                    Text(h.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(h.share.formatted(.percent.precision(.fractionLength(0))))
+                        .font(.display(17, relativeTo: .headline))
+                        .foregroundStyle(Color.satsuma)
+                        .contentTransition(.numericText(value: h.share))
                 }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Colour lines by")
-                Picker("Map style", selection: $satellite) {
-                    Text("Standard").tag(false)
-                    Text("Satellite").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Map style")
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .background(Color.card, in: .rect(cornerRadius: 3))
             }
-            if colour == .mode { legend }
-            HStack {
-                Toggle("Heat", isOn: $loader.options.heat)
-                    .accessibilityLabel("Heat map")
-                if loader.options.filter == .custom {
-                    Button("Dates") { choosingDates = true }
-                        .accessibilityLabel("Choose custom dates")
-                }
-            }
-            .toggleStyle(.button)
-            .buttonStyle(.bordered)
-            if loader.options.mode == .streets { Text(Self.tallyText(loader.data?.walked, bike: loader.data?.bike == true)).font(.caption) }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.ink)
+            .animation(.snappy, value: h)
+            .padding(.leading, 8)
+            .padding(.top, 8)
+            .accessibilityLabel("\(h.name), \(Int((h.share * 100).rounded())) percent of streets walked")
+            .accessibilityHint("Shows progress per neighbourhood")
         }
-        .padding(10)
-        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+    }
+
+    /// Bottom: Streets or Fog, the period of your lines, and today in one line.
+    private var bottom: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Picker("Map", selection: $mode) {
+                    ForEach(MapMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("Show streets walked or fog")
+                Menu {
+                    Picker("Your lines", selection: $loader.options.filter) {
+                        ForEach(TimeFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    if loader.options.filter == .custom { Button("Choose dates") { choosingDates = true } }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(loader.options.filter.rawValue)
+                        Image(systemName: "chevron.down").font(.caption2)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 44)
+                    .background(Color.inset, in: .rect(cornerRadius: 3))
+                }
+                .foregroundStyle(Color.ink)
+                .accessibilityLabel("Your lines: \(loader.options.filter.rawValue)")
+            }
+            if let t = loader.data?.today {
+                HStack(spacing: 6) {
+                    Text(Format.distance(t.distance))
+                    if let steps = t.steps {
+                        Text("·")
+                        Text("\(steps.formatted()) steps")
+                    }
+                    if t.newStreets > 0 {
+                        Text("·")
+                        Text("+\(t.newStreets) new \(t.newStreets == 1 ? "street" : "streets")")
+                            .foregroundStyle(Color.satsuma)
+                            .fontWeight(.semibold)
+                    }
+                }
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(Color.ink)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Today")
+            }
+        }
+        .padding(12)
+        .background(Color.card, in: .rect(cornerRadius: 3))
         .padding(8)
-    }
-
-    /// "Streets walked: 42 of 1,310 (3.2%)", in the locale's number format.
-    static func tallyText(_ w: (covered: Int, total: Int)?, bike: Bool) -> String {
-        let title = bike ? "Streets walked or cycled" : "Streets walked"
-        guard let w, w.total > 0 else { return "\(title): no street maps yet" }
-        let percent = (Double(w.covered) / Double(w.total)).formatted(.percent.precision(.fractionLength(1)))
-        return "\(title): \(w.covered.formatted()) of \(w.total.formatted()) (\(percent))"
-    }
-
-    private var legend: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(TravelMode.allCases, id: \.self) { swatch(Color($0.color), $0.label) }
-                swatch(Color(UIColor.systemGray), "Unsure")
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Mode colours")
-    }
-
-    private func swatch(_ c: Color, _ label: String) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(c).frame(width: 8, height: 8)
-            Text(label).font(.caption2)
-        }
     }
 
     private var dates: some View {
@@ -411,3 +454,6 @@ struct MapScreen: View {
         .presentationDetents([.medium])
     }
 }
+
+/// A city to open in a place card.
+struct CityRef: Identifiable { var id: Int64 }
