@@ -12,6 +12,12 @@ Free signing lasts 7 days. Before it runs out:
 
 LifePath shows the current expiry date. If it lapses, LifePath won't open or record until you refresh. Your history is kept.
 
+## Backups (do this now and then)
+
+Settings → **Save a backup** saves your whole diary as one `.lifepath` file; keep it in Files or iCloud Drive. Deleting LifePath deletes everything inside it, so a backup is the only copy that survives that.
+
+To bring a backup back (on a new phone, after reinstalling, or to merge an old diary in): Settings → **Restore from a backup** (or the restore page when you first open LifePath), pick the file, check the preview, confirm. A restore only adds; your current diary is copied first.
+
 ## Installing a new version
 
 1. Connect **LocalDevVPN**.
