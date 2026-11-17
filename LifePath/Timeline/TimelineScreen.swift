@@ -9,9 +9,10 @@ enum Format {
             .formatted(.measurement(width: .abbreviated, usage: .asProvided, numberFormatStyle: .number.precision(.fractionLength(1))))
     }
 
-    /// Under a minute but moving still reads "1 min", never "0 min" or nothing.
+    /// Under a minute but moving still reads "< 1 min", never "0 min" or nothing.
     static func duration(_ s: TimeInterval) -> String {
-        Duration.seconds(max(60, Int(s))).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
+        if s < 60 { return "< 1 min" }
+        return Duration.seconds(Int(s)).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
     }
 
     /// "yyyy-MM-dd" keys are Gregorian; the date is that day's start in the current calendar.

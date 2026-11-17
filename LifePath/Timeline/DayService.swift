@@ -35,20 +35,20 @@ enum DayService {
         let calendar = Calendar.current, now = Date()
         // iOS keeps 7 days: each run copies them; a stored count is never lowered, a failed day is simply left out.
         let steps = await MotionService.daySteps(now: now, calendar: calendar)
-        try diary.saveSteps(steps)
 
         // A new tally, smoother or matcher version rebuilds every day once.
         let smoothingVersion = try diary.meta("smoothingVersion") ?? "", matcherVersion = try diary.meta("matcherVersion") ?? ""
         let version = "\(Days.version).\(smoothingVersion).\(matcherVersion)"
         // shortcut: a cancelled full rebuild starts over next time, upgrade to a resumable cursor if the log shows it never finishing
         let from: Date
+        let streetsUntil = try diary.meta("streetsUntil"), daysStreets = try diary.meta("daysStreets")
         if try diary.meta("daysVersion") != version { from = .distantPast } else {
-            // From yesterday, or from the street cursor this service last saw: trips from there on may have been re-matched since.
+            // From yesterday; only when the street cursor moved since the last run, also from the older cursor: trips from there on were re-matched.
             let yesterday = calendar.date(byAdding: .day, value: -1, to: now) ?? now
-            let streets = try diary.meta("daysStreets").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? yesterday
-            from = calendar.startOfDay(for: min(yesterday, streets))
+            func date(_ s: String?) -> Date { s.flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? yesterday }
+            let back = streetsUntil != daysStreets ? min(yesterday, min(date(daysStreets), date(streetsUntil))) : yesterday
+            from = calendar.startOfDay(for: back)
         }
-        let streetsUntil = try diary.meta("streetsUntil")
 
         var days: [String: DaySummary] = [:]
         func tally(_ trips: [Trip], _ points: [FilteredPoint]) throws {
@@ -73,6 +73,7 @@ enum DayService {
 
         let fromKey = Days.key(from, calendar)
         try diary.saveDays(Array(days.values), from: fromKey)
+        do { try diary.saveSteps(steps) } catch { await MainActor.run { Recorder.shared.log("days", "steps-failed") } }
         if let streetsUntil { try diary.setMeta("daysStreets", streetsUntil) }
         try diary.setMeta("daysVersion", version)
         return "from=\(fromKey) days=\(days.count) steps=\(steps.count)"

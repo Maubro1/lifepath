@@ -50,8 +50,9 @@ struct SettingsView: View {
                     LabeledContent("Last location check", value: time(recorder.lastCheckIn))
                     LabeledContent("SideStore refresh due", value: expiry.map { time($0) } ?? "unknown")
                     LabeledContent("Points today", value: "\(pointsToday)")
-                    LabeledContent("Step counting", value: MotionService.stepCounting)
-                    if ["Off", "Not set up"].contains(MotionService.stepCounting) {
+                    let stepCounting = MotionService.stepCounting
+                    LabeledContent("Step counting", value: stepCounting)
+                    if ["Off", "Not set up"].contains(stepCounting) {
                         Button("Open iOS Settings") {
                             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                         }

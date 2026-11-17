@@ -23,13 +23,13 @@ struct StatsScreen: View {
                         LabeledContent("Points stored", value: s.points.formatted())
                     }
                     Section {
-                        LabeledContent("Steps", value: s.steps?.formatted() ?? "—")
-                        LabeledContent("Flights of stairs", value: s.floorsUp?.formatted() ?? "—")
+                        LabeledContent("Steps", value: s.steps?.formatted() ?? "No data")
+                        LabeledContent("Flights of stairs", value: s.floorsUp?.formatted() ?? "No data")
                         LabeledContent("Distance walked", value: Format.distance(s.walked))
                     } header: {
                         Text("On foot")
                     } footer: {
-                        if s.steps != nil, let since = s.stepsSince.flatMap(Format.date) {
+                        if !["Off", "Not set up"].contains(MotionService.stepCounting), let since = s.stepsSince.flatMap(Format.date) {
                             Text("Steps and stairs counted since \(since.formatted(date: .long, time: .omitted)). Distance walked counts walking and running only, never rides.")
                         } else {
                             Text("Step counting is off. Turn on Motion & Fitness for LifePath in iOS Settings.")
