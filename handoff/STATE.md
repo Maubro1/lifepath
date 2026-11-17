@@ -10,6 +10,8 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.8.0-preview.1 | Stage 6 design: two tabs (Map, You); Streets or Fog map that fills up; progress per city and neighbourhood (OSM borders); flicker-free map layers; the owner's study-page look (palette, Bricolage), appearance switch; day pages with map pictures and the day as a story. |
+| v0.7.2-preview.1 | Bus rides no longer read as boat rides (rough fixes, narrow boat speed prior, missing streets). |
 | v0.7.1-preview.1 | Map matching does one route search per starting point instead of one per pair (same results, about 8× less work while matching). |
 | v0.7.0-preview.1 | Stage 5: Export tracks (GPX, GeoJSON, KML), Save a backup, Restore from a backup (preview, adds only, keeps a copy first, also on the first-launch page), Last backup row. |
 | v0.6.0-preview.1 | Stage 4: Timeline tab (a card per day: route, distance, moving time, steps), Stats tab (where you went, on foot, Streets walked), steps kept permanently. |
@@ -20,9 +22,9 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## Next: stage 6, design (together with the owner)
+## Next: phone check of v0.8.0 with the owner
 
-Stages 0–5 are built, reviewed and released (latest v0.7.0-preview.1; decisions in `docs/decisions/`). Stage 6 is done with the owner: visual direction (they want many design questions here), restyle all screens, rest dots clearly different from pins, mode colours, timeline route drawing (plain line now; a map snapshot is possible), onboarding copy (humanizer pass), settings polish. Use the `impeccable` plugin. Start by asking the owner the questions below plus the design questions, and by collecting their health reports on v0.7.0.
+Stage 6 is built from the agreed spec (`docs/superpowers/specs/2026-11-17-stage-6-design.md`), reviewed and released as v0.8.0-preview.1; decisions in `docs/decisions/stage-6.md`. Nothing is checked on the phone yet: ask the owner to try Streets and Fog, the place chip, Light/Dark, a live walk (no blinking), the You tab and a day page, plus a health report. Then the open questions below.
 
 ## Questions for the owner (collected overnight, 2026-11-17)
 
@@ -65,6 +67,3 @@ First health reports (v0.2.1, evening of 14 Nov to 01:43 on 15 Nov): thermal nom
 
 
 Battery per day, warmth, wake counts per hour, spot checks per hour, gaps and their reasons, whether the 8-steps fidget threshold and the pin rules (100 points, dynamic hiding) feel right, and whether the deep-sleep keep-alive with 15-minute spot checks stays cool and battery-light overnight.
-
-## Next up (17 Nov, owner request)
-Stage 6 design: the owner asked for "an actually good design", checked with the design plugins (impeccable: critique + AI-design tells) for a cool, good experience. Start from the owner's v0.7.1 screenshots (Map, Timeline, Stats, Settings), write a detailed design overview, then build it. Bus-as-boat fixed in 113dad7 (not yet released).
