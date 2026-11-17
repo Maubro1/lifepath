@@ -713,4 +713,17 @@ final class DiaryTests: XCTestCase {
         XCTAssertTrue(try diary.areas(minLat: 53, maxLat: 54, minLon: 5, maxLon: 6).isEmpty)
         XCTAssertEqual(try diary.storedAreaIds([10, 11]), [10])
     }
+
+    func testProgressRoundTrip() throws {
+        let diary = try Diary(path: tempPath())
+        let t = Date(timeIntervalSince1970: 1_800_000_000)
+        try diary.saveProgress([AreaProgress(areaId: 1, covered: 2, total: 5)], covered: ["7": t, "9": t + 86_400], bike: false)
+        try diary.saveProgress([AreaProgress(areaId: 1, covered: 3, total: 5)], covered: ["7": t], bike: true)
+        XCTAssertEqual(try diary.areaProgress(bike: false), [AreaProgress(areaId: 1, covered: 2, total: 5)])
+        XCTAssertEqual(try diary.areaProgress(bike: true), [AreaProgress(areaId: 1, covered: 3, total: 5)])
+        XCTAssertEqual(try diary.newStreets(from: t, to: t + 3600, bike: false), 1)
+        XCTAssertEqual(try diary.newStreets(from: t, to: t + 2 * 86_400, bike: false), 2)
+        try diary.saveProgress([], covered: [:], bike: false)
+        XCTAssertTrue(try diary.areaProgress(bike: false).isEmpty)
+    }
 }

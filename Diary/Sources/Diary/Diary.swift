@@ -120,6 +120,13 @@ public final class Diary: Sendable {
                 CREATE TABLE areaTile(x INTEGER, y INTEGER, PRIMARY KEY(x, y));
                 """)
         }
+        migrator.registerMigration("v11") { db in
+            // Additive caches, recomputed after every matching run.
+            try db.execute(sql: """
+                CREATE TABLE areaProgress(areaId INTEGER, bike INTEGER, covered INTEGER, total INTEGER, PRIMARY KEY(areaId, bike));
+                CREATE TABLE streetCovered(key TEXT, bike INTEGER, at REAL, PRIMARY KEY(key, bike));
+                """)
+        }
         return migrator
     }
 
@@ -441,6 +448,54 @@ public final class Diary: Sendable {
             try Row.fetchAll(db, sql: "SELECT DISTINCT wayId, seg, bike FROM segmentHit ORDER BY wayId, seg, bike").map {
                 SegmentHit(wayId: $0["wayId"], seg: $0["seg"], bike: $0["bike"])
             }
+        }
+    }
+
+    /// Hits with the start of the trip that made them, oldest first.
+    public func segmentHitsDated() throws -> [(hit: SegmentHit, tripStart: Date)] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT tripStart, wayId, seg, bike FROM segmentHit ORDER BY tripStart").map {
+                (SegmentHit(wayId: $0["wayId"], seg: $0["seg"], bike: $0["bike"]), Date(timeIntervalSince1970: $0["tripStart"]))
+            }
+        }
+    }
+
+    /// Replaces the progress per area and the street covered dates for one counting rule (with or without cycling).
+    public func saveProgress(_ areas: [AreaProgress], covered: [String: Date], bike: Bool) throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM areaProgress WHERE bike = ?", arguments: [bike])
+            try db.execute(sql: "DELETE FROM streetCovered WHERE bike = ?", arguments: [bike])
+            for a in areas {
+                try db.execute(sql: "INSERT INTO areaProgress(areaId, bike, covered, total) VALUES (?,?,?,?)", arguments: [a.areaId, bike, a.covered, a.total])
+            }
+            for (k, t) in covered {
+                try db.execute(sql: "INSERT INTO streetCovered(key, bike, at) VALUES (?,?,?)", arguments: [k, bike, t.timeIntervalSince1970])
+            }
+        }
+    }
+
+    public func areaProgress(bike: Bool) throws -> [AreaProgress] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM areaProgress WHERE bike = ? ORDER BY areaId", arguments: [bike]).map {
+                AreaProgress(areaId: $0["areaId"], covered: $0["covered"], total: $0["total"])
+            }
+        }
+    }
+
+    /// Streets that became walked during trips starting in `from..<to`.
+    public func newStreets(from: Date, to: Date, bike: Bool) throws -> Int {
+        try pool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM streetCovered WHERE bike = ? AND at >= ? AND at < ?",
+                             arguments: [bike, from.timeIntervalSince1970, to.timeIntervalSince1970]) ?? 0
+        }
+    }
+
+    /// Name and level of every stored area, for labelling progress.
+    public func areaNames() throws -> [Int64: (name: String, level: Int)] {
+        try pool.read { db in
+            Dictionary(uniqueKeysWithValues: try Row.fetchAll(db, sql: "SELECT id, name, level FROM area").map { r -> (Int64, (name: String, level: Int)) in
+                (r["id"], (r["name"], r["level"]))
+            })
         }
     }
 

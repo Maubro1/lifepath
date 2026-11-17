@@ -114,8 +114,16 @@ enum StreetService {
         if matched > 0 || tiles > 0 {
             try Task.checkCancellation()
             // shortcut: coverage is recomputed over every downloaded street after each run that matched or fetched, upgrade to per-tile if the run time or memory shows it
-            let coverage = Coverage.streets(ways: try diary.countableWays(), hits: try diary.segmentHits())
+            let ways = try diary.countableWays()
+            let coverage = Coverage.streets(ways: ways, hits: try diary.segmentHits())
             try diary.saveCoverage(coverage)
+            // Progress per city and neighbourhood, for both counting rules so the cycling setting switches at once.
+            let areas = try diary.areas(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180), dated = try diary.segmentHitsDated()
+            for bike in [false, true] {
+                try Task.checkCancellation()
+                let p = Coverage.progress(ways: ways, hits: dated, areas: areas, bike: bike)
+                try diary.saveProgress(p.areas, covered: p.covered, bike: bike)
+            }
             walked = " walked=\(coverage.onFoot)/\(coverage.total)"
         }
         if matched > 0 { await MainActor.run { NotificationCenter.default.post(name: SmoothingService.linesChanged, object: nil) } }   // the map redraws on the matched streets

@@ -8,6 +8,14 @@ public struct SegmentHit: Hashable, Sendable {
     public init(wayId: Int64, seg: Int, bike: Bool) { self.wayId = wayId; self.seg = seg; self.bike = bike }
 }
 
+/// Streets walked inside one city or neighbourhood.
+public struct AreaProgress: Sendable, Equatable {
+    public var areaId: Int64
+    public var covered: Int
+    public var total: Int
+    public init(areaId: Int64, covered: Int, total: Int) { self.areaId = areaId; self.covered = covered; self.total = total }
+}
+
 public struct CoverageResult: Sendable, Equatable {
     public var ways: [Int64: Bool]   // covered way → true when covered only with cycling
     public var onFoot: Int
@@ -18,7 +26,7 @@ public struct CoverageResult: Sendable, Equatable {
 
 /// Streets walked, by the CityStrides rule: ways cut into ~20 m segments, a street covered at ≥ 90% of its length (every segment when 10 or fewer).
 public enum Coverage {
-    public static let version = 1
+    public static let version = 2
     public static let segmentLength = 20.0
     public static let reach = 15.0
 
@@ -57,14 +65,7 @@ public enum Coverage {
     /// Streets: an unnamed countable way, or named countable ways of one name joined at shared nodes. Counted on foot and with bike hits.
     public static func streets(ways all: [Way], hits: [SegmentHit]) -> CoverageResult {
         let ways = all.filter(\.countable)
-        var parent = Array(ways.indices), first: [String: [Int64: Int]] = [:]
-        func root(_ i: Int) -> Int { var i = i; while parent[i] != i { parent[i] = parent[parent[i]]; i = parent[i] }; return i }
-        for (i, w) in ways.enumerated() {
-            guard let name = w.name else { continue }
-            for n in w.nodes {
-                if let j = first[name]?[n] { parent[root(i)] = root(j) } else { first[name, default: [:]][n] = i }
-            }
-        }
+        let root = groups(ways)
         var footSegs: [Int64: Set<Int>] = [:], anySegs: [Int64: Set<Int>] = [:]
         for h in hits {
             anySegs[h.wayId, default: []].insert(h.seg)
@@ -76,9 +77,9 @@ public enum Coverage {
             let l = zip(w.coords, w.coords.dropFirst()).map { (a: (lat: Double, lon: Double), b: (lat: Double, lon: Double)) -> Double in
                 Geo.distance(a.lat, a.lon, b.lat, b.lon) }.reduce(0, +)
             let s = segments(l), nf = footSegs[w.id]?.filter { $0 < s }.count ?? 0, na = anySegs[w.id]?.filter { $0 < s }.count ?? 0
-            var t = streets[root(i)] ?? (0, 0, 0, 0, 0, 0, [])
+            var t = streets[root[i]] ?? (0, 0, 0, 0, 0, 0, [])
             t.l += l; t.s += s; t.hf += Double(nf) * l / Double(s); t.nf += nf; t.ha += Double(na) * l / Double(s); t.na += na; t.ids.append(w.id)
-            streets[root(i)] = t
+            streets[root[i]] = t
         }
         var r = CoverageResult(ways: [:], onFoot: 0, withBike: 0, total: streets.count)
         for t in streets.values {
@@ -90,5 +91,55 @@ public enum Coverage {
             for id in t.ids { r.ways[id] = !onFoot }
         }
         return r
+    }
+
+    /// Street of each countable way: an unnamed way alone, named ways of one name joined at shared nodes; returned as a root index per way.
+    static func groups(_ ways: [Way]) -> [Int] {
+        var parent = Array(ways.indices), first: [String: [Int64: Int]] = [:]
+        func root(_ i: Int) -> Int { var i = i; while parent[i] != i { parent[i] = parent[parent[i]]; i = parent[i] }; return i }
+        for (i, w) in ways.enumerated() {
+            guard let name = w.name else { continue }
+            for n in w.nodes {
+                if let j = first[name]?[n] { parent[root(i)] = root(j) } else { first[name, default: [:]][n] = i }
+            }
+        }
+        return ways.indices.map(root)
+    }
+
+    /// Streets walked per city and neighbourhood, and the start of the trip that first made each street walked.
+    /// A street belongs to the areas holding the middle of its longest way; `covered` is keyed by the street's lowest way id.
+    public static func progress(ways all: [Way], hits: [(hit: SegmentHit, tripStart: Date)], areas: [Area], bike: Bool)
+        -> (areas: [AreaProgress], covered: [String: Date]) {
+        let ways = all.filter(\.countable), root = groups(ways)
+        var members: [Int: [Int]] = [:]
+        for i in ways.indices { members[root[i], default: []].append(i) }
+        let lens = ways.map { w in zip(w.coords, w.coords.dropFirst()).map { (a: (lat: Double, lon: Double), b: (lat: Double, lon: Double)) -> Double in
+            Geo.distance(a.lat, a.lon, b.lat, b.lon) }.reduce(0, +) }
+        var byWay: [Int64: [(seg: Int, t: Date)]] = [:]
+        for h in hits where bike || !h.hit.bike { byWay[h.hit.wayId, default: []].append((h.hit.seg, h.tripStart)) }
+
+        var totals: [Int64: (covered: Int, total: Int)] = [:], covered: [String: Date] = [:]
+        for idx in members.values {
+            // When the street first met the rule: add each trip's segments in time order.
+            let l = idx.map { lens[$0] }.reduce(0, +), s = idx.map { segments(lens[$0]) }.reduce(0, +)
+            let events = idx.flatMap { i in (byWay[ways[i].id] ?? []).filter { $0.seg < segments(lens[i]) }.map { (i: i, seg: $0.seg, t: $0.t) } }
+                .sorted { $0.t < $1.t }
+            var seen = Set<[Int]>(), h = 0.0, n = 0, done: Date?
+            for e in events where done == nil {
+                guard seen.insert([e.i, e.seg]).inserted else { continue }
+                n += 1; h += lens[e.i] / Double(segments(lens[e.i]))
+                if s <= 10 ? n == s : h >= 0.9 * l - 1e-6 { done = e.t }
+            }
+            if let done { covered[String(idx.map { ways[$0].id }.min()!)] = done }
+
+            let longest = idx.max { lens[$0] < lens[$1] }!
+            guard let mid = ways[longest].slice(fromM: lens[longest] / 2, toM: lens[longest] / 2).first else { continue }
+            let place = Areas.locate(lat: mid.lat, lon: mid.lon, in: areas)
+            for a in Set([place.city?.id, place.neighbourhood?.id].compactMap { $0 }) {
+                totals[a, default: (0, 0)].total += 1
+                if done != nil { totals[a, default: (0, 0)].covered += 1 }
+            }
+        }
+        return (totals.map { AreaProgress(areaId: $0.key, covered: $0.value.covered, total: $0.value.total) }.sorted { $0.areaId < $1.areaId }, covered)
     }
 }
