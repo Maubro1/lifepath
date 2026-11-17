@@ -8,6 +8,7 @@ import UIKit
 /// Thin glue: feeds CoreLocation/CoreMotion into the pure MotionEngine and TrackFilter, executes the commands, writes the Diary.
 @MainActor @Observable final class Recorder {
     static let shared = Recorder()
+    static let pointsSaved = Notification.Name("app.lifepath.pointsSaved")   // posted on the main actor after a flush that wrote points
 
     private(set) var state: MotionState = .moving
     /// Time of the last transition into Still; nil otherwise.
@@ -44,6 +45,8 @@ import UIKit
     @ObservationIgnored private var diaryError: String?      // why the diary didn't open, for the health report
     @ObservationIgnored private var resumed = false          // the relaunch work that needs the diary has run
     @ObservationIgnored private var lastWakeReason = ""
+    @ObservationIgnored private var struggle = false         // vehicle with only rough fixes: hundred-metre GPS
+    @ObservationIgnored private var probing = false          // a 20 s full-accuracy probe during struggle
 
     private static let log = Logger(subsystem: "app.lifepath.LifePath", category: "recorder")
     private static let version: String = {
@@ -65,6 +68,7 @@ import UIKit
         let now = Date()
         buffer.add(LoggedEvent(t: now, kind: "launch", detail: Self.version))
         buffer.add(LoggedEvent(t: now, kind: "state", detail: "moving"))   // the engine starts in Moving
+        buffer.add(LoggedEvent(t: now, kind: "struggle", detail: "off"))   // a killed app may have left it on in the report
         for name in [ProcessInfo.thermalStateDidChangeNotification, .NSProcessInfoPowerStateDidChange,
                      UIDevice.batteryLevelDidChangeNotification, UIDevice.batteryStateDidChangeNotification, UserDefaults.didChangeNotification] {
             _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
@@ -143,6 +147,7 @@ import UIKit
         } else if recordingWanted {
             guard let p = filter.process(s, receivedAt: Date(), activity: lastActivity) else { return send(.tick) }
             buffer.add(p, at: Date())
+            guard p.kind != .rough else { return send(.roughFix(s)) }   // stored for later judging; the engine decides on precise fixes
             lastPoint = p.t
             send(.fix(p))
         }
@@ -200,7 +205,7 @@ import UIKit
             Task {
                 let departure = await motion.departure(stillSince: since, until: now)
                 // Unknown departure after a position-based wake: the walked stretch stays a gap, not still points.
-                if departure == nil, ["geofence", "slc", "relaunch", "spotcheck"].contains(reason) { return }
+                if departure == nil, ["geofence", "slc", "relaunch", "spotcheck", "keepalive"].contains(reason) { return }
                 for p in Backfill.stillPoints(fence: fence, from: still.t, to: min(departure ?? now, until)) { buffer.add(p, at: Date()) }
                 flush()
                 rewindPlaces(to: still.t)
@@ -217,6 +222,14 @@ import UIKit
                 for p in Backfill.stillPoints(fence: fence, from: from, to: to) where p.t < to { buffer.add(p, at: Date()) }
                 flush()
                 rewindPlaces(to: from)
+            }
+        case .setStruggle(let on): struggle = on; probing = false
+        case .probe:
+            probing = true
+            Task {
+                try? await Task.sleep(for: .seconds(20))
+                probing = false
+                configureRecording()
             }
         case .log(var e):
             if e.kind == "deepSleep", e.detail == "on" { e.detail = "on \(deepSleepReason)" }
@@ -262,7 +275,7 @@ import UIKit
         // Settling and spot checks need every fix; spacing applies only while Moving.
         location.configure(quality: q, spotCheck: spotChecking,
                            distanceFilter: state == .moving && !spotChecking ? q.spacing : kCLDistanceFilterNone,
-                           automotive: lastActivity == .automotive, showsIndicator: settings.showsIndicator)
+                           automotive: lastActivity == .automotive, struggle: struggle && !probing, showsIndicator: settings.showsIndicator)
     }
 
     private func refreshConditions() {
@@ -339,6 +352,7 @@ import UIKit
             try diary.log(events)
             flushFailedAt = nil
             notSavingSince = nil
+            if !points.isEmpty { NotificationCenter.default.post(name: Self.pointsSaved, object: nil) }   // the map redraws if visible
         } catch {
             buffer.putBack(points: points, events: events)
             if notSavingSince == nil { buffer.add(LoggedEvent(t: Date(), kind: "flush", detail: "failed")); notSavingSince = Date() }

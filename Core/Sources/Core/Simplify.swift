@@ -1,6 +1,13 @@
 import Foundation
 
 public enum Simplify {
+    /// The next detail step at or above `t`: 3, 6, 12, 24 m …, so zooming within a step keeps the same lines.
+    public static func step(_ t: Double) -> Double {
+        var s = 3.0
+        while s < t { s *= 2 }
+        return s
+    }
+
     /// Indices kept; first and last always kept. Works in local metres (equirectangular around the first point).
     // shortcut: flat projection, fine for trip-sized tracks (tens of km); upgrade if tracks span continents.
     public static func douglasPeucker(_ coords: [(lat: Double, lon: Double)], tolerance: Double) -> [Int] {

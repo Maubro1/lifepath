@@ -471,6 +471,67 @@ final class MotionEngineTests: XCTestCase {
         XCTAssertEqual(tickUntilStill(&e, from: s + 360, through: s + 420).stillAt, s + 360)
     }
 
+    // MARK: pottering or leaving
+
+    /// Spec fixture: 5 min of slow random-direction pottering (1 step/s, 0.7 m/step, reported every 5 s; the counter restarts
+    /// at each Still entry) with indoor fixes jumping up to 50 m (hAcc 30-50): back to Still each time, GPS on <= 2 min in total.
+    func testHomePotteringReturnsQuickly() throws {
+        var (e, s, _) = try stillEngine()
+        let c = try XCTUnwrap(e.fence)
+        var rng = SeededRandom(seed: 41)
+        var steps = 0, gpsOn = 0.0, out: [Command] = []
+        for i in 1...300 {
+            let t = s + Double(i), before = e.state
+            steps += 1
+            if i % 5 == 0 { out += send(&e, .steps(steps), t); out += send(&e, .walked(Double(steps) * 0.7), t) }
+            if e.state != .still {
+                gpsOn += 1
+                let a = Double.random(in: 0..<(2 * .pi), using: &rng), r = Double.random(in: 0...50, using: &rng)
+                let p = Geo.offset(lat: c.lat, lon: c.lon, north: r * cos(a), east: r * sin(a))
+                let f = FilteredPoint(t: at(t), lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon,
+                                      hAcc: Double.random(in: 30...50, using: &rng), speed: -1, kind: .moving)
+                out += send(&e, .fix(f), t)
+            }
+            if before != .still && e.state == .still { steps = 0 }
+        }
+        XCTAssertLessThanOrEqual(gpsOn, 120)
+        XCTAssert(out.contains { if case .log(let l) = $0 { l.detail == "potter-return" } else { false } }, "\(out)")
+    }
+
+    /// Walking straight out at 1.3 m/s between buildings (biased bursts, small hAcc): leaving is decided within 40 s of the
+    /// true distance passing radius + N + 15 m, although single fixes jump back and forth.
+    func testDriftOutwardIsLeaving() throws {
+        var (e, s, _) = try stillEngine()
+        let c = try XCTUnwrap(e.fence)
+        var rng = SeededRandom(seed: 42)
+        send(&e, .steps(15), s + 30)
+        var left: TimeInterval?
+        for i in 1...120 {
+            let t = s + 30 + Double(i)
+            if i % 5 == 0 { send(&e, .steps(15 + i * 2), t); send(&e, .walked(Double(15 + i * 2) * 0.7), t) }
+            let bias = (i / 10) % 3 == 0 ? 30.0 : 0
+            let p = Geo.offset(lat: c.lat, lon: c.lon, north: bias + rng.gaussian() * 8, east: 1.3 * Double(i) + rng.gaussian() * 8)
+            let out = send(&e, .fix(FilteredPoint(t: at(t), lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon, hAcc: 10, speed: -1, kind: .moving)), t)
+            XCTAssertNotEqual(e.state, .still, "returned to Still at \(i) s")
+            if out.contains(log(t, "wake", "leave-drift")) { left = Double(i); break }
+        }
+        let crossed = (c.radius + 10 + 15) / 1.3
+        let l = try XCTUnwrap(left, "never decided leaving")
+        XCTAssertLessThanOrEqual(l, crossed + 40)
+        XCTAssertFalse(e.wandering)
+    }
+
+    func testBackoffResetsAfter30MinRest() throws {
+        var (e, s, _) = try stillEngine()
+        var rng = SeededRandom(seed: 43)
+        _ = wander(&e, at: s + 30, steps: 15, rng: &rng)
+        _ = wander(&e, at: s + 130, steps: 50, rng: &rng)                     // threshold 150, Still again by s + 250
+        XCTAssertEqual(send(&e, .steps(15), s + 400), [])
+        for t in stride(from: s + 430, through: s + 2050, by: 300) { send(&e, .tick, t) }
+        send(&e, .steps(30), s + 2060)
+        XCTAssertEqual(e.state, .moving)
+    }
+
     // MARK: spot checks and still points
 
     func testSpotCheckBackoff() throws {
@@ -698,12 +759,94 @@ final class MotionEngineTests: XCTestCase {
         XCTAssertEqual(send(&e, .steps(15), s + 30), [])
         send(&e, .activity(.walking, confident: true), s + 35)
         XCTAssertEqual(send(&e, .steps(49), s + 40), [])
+        send(&e, .confirmFix(sample(north: 200, hAcc: 30, s + 45)), s + 45)   // no steps wake yet: a keep-alive reading alone wakes nothing
         XCTAssertEqual(e.state, .still)
         send(&e, .steps(50), s + 60)
+        send(&e, .confirmFix(sample(north: 200, hAcc: 30, s + 65)), s + 65)
         XCTAssertEqual(e.state, .moving)
-        var rng = SeededRandom(seed: 31)
-        for i in 1...61 { send(&e, .fix(standing(s + 60 + Double(i), north: 45, east: 168, rng: &rng)), s + 60 + Double(i)) }   // garden
+    }
+
+    /// At a visible pin a steps wake runs on keep-alive readings first: no GPS until one lies outside the shape.
+    func testKnownPlaceStepsWakeUsesKeepAliveFirst() throws {
+        var (e, s, _) = try stillAtHome()
+        var out = send(&e, .steps(50), s + 30)
+        for i in 1...30 { out += send(&e, .steps(50 + i * 10), s + 30 + Double(i) * 5) }       // walking pace up to s + 180
+        out += send(&e, .confirmFix(sample(north: 50, hAcc: 30, s + 181)), s + 181)            // the garden: still home
+        XCTAssertFalse(out.contains(.startRecording), "\(out)")
         XCTAssertEqual(e.state, .still)
+        assertWoke(send(&e, .confirmFix(sample(north: 200, hAcc: 30, s + 185)), s + 185), e, reason: "keepalive", stillAt: s, when: s + 185)
+
+        // Or 3 min of walking pace without any outside reading.
+        var (f, s2, _) = try stillAtHome()
+        var started: TimeInterval?
+        for i in 0...60 {
+            let t = s2 + 30 + Double(i) * 5
+            if send(&f, .steps(50 + i * 10), t).contains(.startRecording) { started = Double(i) * 5; break }
+        }
+        let after = try XCTUnwrap(started, "walking pace never started GPS")
+        XCTAssert((180...215).contains(after), "GPS after \(after) s of steps")
+    }
+
+    func testKnownPlaceArmsGeofenceOnPin() throws {
+        let (_, _, entry) = try stillAtHome()
+        let pin = home().pin
+        XCTAssert(entry.contains(.armGeofence(Fence(lat: pin.lat, lon: pin.lon, radius: 200))), "\(entry)")
+    }
+
+    // MARK: struggle mode
+
+    /// Rides in a vehicle from 0: 60 s of precise fixes, then only rough fixes every 2 s until `end`; returns all commands with times.
+    func ride(_ e: inout MotionEngine, activity: Activity = .automotive, until end: TimeInterval = 3600) -> [(TimeInterval, Command)] {
+        var out: [(TimeInterval, Command)] = []
+        out += send(&e, .activity(activity, confident: true), 0).map { (0, $0) }
+        let precise = route(to: 60 * 30, speed: 30, seed: 5)
+        for p in precise { out += send(&e, .fix(p), p.t.timeIntervalSince(t0)).map { (p.t.timeIntervalSince(t0), $0) } }
+        for t in stride(from: 62.0, through: end, by: 2) {
+            let r = Geo.offset(lat: precise[0].lat, lon: precise[0].lon, north: 0, east: 30 * t)   // the train runs on, ~1 km "accuracy"
+            out += send(&e, .roughFix(Sample(t: at(t), lat: r.lat, lon: r.lon, hAcc: 900, speed: -1, course: -1)), t).map { (t, $0) }
+            XCTAssertNotEqual(e.state, .still, "Still at \(t) s")
+            if e.state == .still { break }
+        }
+        return out
+    }
+
+    func testStruggleAfterThreeRoughMinutesInVehicle() {
+        var e = MotionEngine(deepSleep: false)
+        let out = ride(&e)
+        let on = out.filter { $0.1 == .setStruggle(true) }.map(\.0)
+        XCTAssertEqual(on, [242])
+        XCTAssert(out.contains { $0 == (242, log(242, "struggle", "on")) })
+    }
+
+    func testProbeEveryFiveMinutes() {
+        var e = MotionEngine(deepSleep: false)
+        let probes = ride(&e).filter { $0.1 == .probe }.map(\.0)
+        XCTAssertEqual(probes, Array(stride(from: 542.0, through: 3600, by: 300)))
+    }
+
+    func testGoodFixEndsStruggle() {
+        var e = MotionEngine(deepSleep: false)
+        _ = ride(&e, until: 300)
+        let p = route(to: 9000 + 30, speed: 30, from: 300, startEast: 9000, seed: 6)[0]
+        let out = send(&e, .fix(p), 300)
+        XCTAssert(out.contains(.setStruggle(false)), "\(out)")
+        XCTAssert(out.contains(log(300, "struggle", "off")), "\(out)")
+    }
+
+    /// CoreMotion often reads a train as stationary: rough fixes running away from the platform still keep the ride alive.
+    func testTrainReadAsStationaryStaysOneRide() {
+        var e = MotionEngine(deepSleep: false)
+        let out = ride(&e, activity: .stationary)
+        XCTAssertNotEqual(e.state, .still)
+        XCTAssert(out.contains { $0.1 == .setStruggle(true) }, "no struggle mode on a stationary-read train")
+    }
+
+    func testNoStruggleOnFoot() {
+        var e = MotionEngine(deepSleep: false)
+        var out: [Command] = send(&e, .activity(.walking, confident: true), 0)
+        for t in stride(from: 2.0, through: 600, by: 2) { out += send(&e, .roughFix(Sample(t: at(t), lat: 52, lon: 5, hAcc: 900, speed: -1, course: -1)), t) }
+        XCTAssertFalse(out.contains(.setStruggle(true)), "\(out)")
+        XCTAssertEqual(e.state, .still, "rough fixes on foot kept GPS on")   // only a vehicle ride is kept alive by rough fixes
     }
 
     func testSpotCheckCapRisesAtPlace() throws {

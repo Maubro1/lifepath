@@ -7,6 +7,7 @@ public struct TrackFilter: Sendable {
     private struct Fix { var t: Date; var lat, lon, hAcc: Double }
     private var origin: Fix?            // first accepted sample; Kalman state is metres from here
     private var last: Fix?              // last accepted raw sample
+    private var lastRough: Date?        // last kept rough fix: at most one per 10 s
     // Two-model IMM: calm (qa) and manoeuvre (qa × manoeuvre); each a CV Kalman filter, mixed per fix.
     private var models = [CV(), CV()]
     private var mu = [0.9, 0.1]         // model probabilities
@@ -75,9 +76,14 @@ public struct TrackFilter: Sendable {
     }
 
     public mutating func process(_ s: Sample, receivedAt: Date, activity: Activity) -> FilteredPoint? {
-        guard s.hAcc >= 0, s.hAcc <= quality.accuracyCeiling else { return drop("accuracy") }
+        guard s.hAcc >= 0 else { return drop("accuracy") }
         guard receivedAt.timeIntervalSince(s.t) <= 10 else { return drop("stale") }
         guard s.t.timeIntervalSince(receivedAt) <= 2 else { return drop("future") }
+        if s.hAcc > quality.accuracyCeiling {   // kept raw, never fed to the Kalman state
+            if let r = lastRough, s.t.timeIntervalSince(r) < 10 { return drop(s.t > r ? "rough-spacing" : "order") }
+            lastRough = s.t
+            return FilteredPoint(t: s.t, lat: s.lat, lon: s.lon, rawLat: s.lat, rawLon: s.lon, hAcc: s.hAcc, speed: -1, kind: .rough)
+        }
         let qa: Double   // acceleration noise of the calm model, m/s^2
         switch activity {
         case .running, .cycling: qa = 2
@@ -156,6 +162,6 @@ public struct TrackFilter: Sendable {
     }
 
     public mutating func reset() {
-        origin = nil; last = nil; models = [CV(), CV()]; mu = [0.9, 0.1]; unexplained = 0; gatedRun = []
+        origin = nil; last = nil; lastRough = nil; models = [CV(), CV()]; mu = [0.9, 0.1]; unexplained = 0; gatedRun = []
     }
 }

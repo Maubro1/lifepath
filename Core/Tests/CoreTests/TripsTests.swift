@@ -8,6 +8,18 @@ final class TripsTests: XCTestCase {
         return FilteredPoint(t: Date(timeIntervalSince1970: dt ?? Double(i) * 10), lat: lat, lon: 4, rawLat: lat, rawLon: 4, hAcc: 5, speed: 1, kind: kind)
     }
 
+    /// A train ride: rough fixes up to 1 km off, between precise ones, stay inside one trip.
+    func testRoughDoesNotSplitTrip() {
+        var rough = (3..<8).map { pt($0, dLat: 0.0003 + (Double($0 % 2) * 0.009), kind: .rough) }   // ~1 km zigzag
+        for i in rough.indices { rough[i].hAcc = 1200 }
+        let pts = (0..<3).map { pt($0) } + rough + (8..<11).map { pt($0) }
+        let trips = Trips.split(pts)
+        XCTAssertEqual(trips.count, 1)
+        XCTAssertEqual(trips.first?.points.count, 11)
+        let straight = Geo.distance(pts[2].lat, pts[2].lon, pts[8].lat, pts[8].lon)
+        XCTAssertLessThan(trips.first?.distance ?? .infinity, 30 + straight * 2)   // the 1 km rough zigzag adds nothing
+    }
+
     func testGapSplitsTrip() {
         let pts = (0..<3).map { pt($0) } + (0..<3).map { pt($0, dt: 2000 + Double($0) * 10, dLat: 0.0003 + Double($0) * 0.0001) }
         XCTAssertEqual(Trips.split(pts).map(\.points.count), [3, 3])

@@ -24,15 +24,15 @@ import CoreMotion
         }
     }
 
-    /// The counter restarts at each Still entry; the cumulative count goes to the engine as `.steps(n)`.
+    /// The counter restarts at each Still entry; the cumulative count and distance go to the engine as `.steps(n)` and `.walked(m)`.
     func startSteps(from: Date) {
         guard Self.available, CMPedometer.isStepCountingAvailable() else { return }
         pedometer.stopUpdates()
         counting = true; lastCount = 0
         pedometer.startUpdates(from: from) { @Sendable data, _ in
             guard let data else { return }
-            let n = data.numberOfSteps.intValue
-            Task { @MainActor in self.steps(n) }
+            let n = data.numberOfSteps.intValue, m = data.distance?.doubleValue
+            Task { @MainActor in self.steps(n, m) }
         }
     }
 
@@ -41,10 +41,11 @@ import CoreMotion
         pedometer.stopUpdates()
     }
 
-    private func steps(_ n: Int) {
+    private func steps(_ n: Int, _ metres: Double?) {
         guard counting, n > lastCount else { return }
         lastCount = n
         recorder.send(.steps(n))
+        if let metres { recorder.send(.walked(metres)) }
     }
 
     /// True trip start from CoreMotion history, which also covers a rest the app slept through.
@@ -71,6 +72,23 @@ import CoreMotion
         if hi - lo == 1 { return Array(repeating: a, count: n) }
         let mid = (lo + hi) / 2
         return await stepTimes(from, lo, mid, until: now) + stepTimes(from, mid, hi, until: now)
+    }
+
+    /// Walking pace (m/s) from pedometer distance in 30 s buckets, each dated at its start; empty without motion permission.
+    /// CoreMotion keeps 7 days, so callers ask only for recent trips.
+    nonisolated static func pace(from: Date, to: Date) async -> [(t: Date, speed: Double)] {
+        guard available, CMPedometer.isDistanceAvailable() else { return [] }
+        let pedometer = CMPedometer()
+        var out: [(t: Date, speed: Double)] = [], a = from
+        while a < to {
+            let b = min(a.addingTimeInterval(30), to)
+            let d: Double? = await withCheckedContinuation { c in
+                pedometer.queryPedometerData(from: a, to: b) { @Sendable d, _ in c.resume(returning: d?.distance?.doubleValue) }
+            }
+            if let d { out.append((a, d / b.timeIntervalSince(a))) }
+            a = b
+        }
+        return out
     }
 
     nonisolated static func activity(_ a: CMMotionActivity) -> Activity {

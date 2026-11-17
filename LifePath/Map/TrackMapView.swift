@@ -52,26 +52,44 @@ struct TrackMapView: UIViewRepresentable {
         guard let data, data.generation != c.shownGeneration || bySpeed != c.shownBySpeed else { return }
         c.shownGeneration = data.generation
         c.shownBySpeed = bySpeed
-        let old = map.overlays   // add the new set before removing the old one: no blank frame
-        if !data.heat.isEmpty { map.addOverlay(HeatOverlay(data.heat)) }   // first, so lines draw on top
-        map.addOverlays(data.lines.map { l in
-            let coords = l.coords.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-            let poly = TrackLine(coordinates: coords, count: coords.count)
-            poly.line = l
-            return poly
-        })
-        map.addOverlays(data.still.map { MKCircle(center: CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon), radius: 3) })
-        map.addOverlays(data.outlines.values.map { cells in
-            MKMultiPolygon(cells.map { c in   // one square per 5 m cell; one shape, so the fill has no seams
-                let a = PlaceGrid.center(of: c), b = PlaceGrid.center(of: PlaceCell(x: c.x + 1, y: c.y + 1))
-                let h = ((b.lat - a.lat) / 2, (b.lon - a.lon) / 2)
-                var corners = [(-1.0, -1.0), (-1, 1), (1, 1), (1, -1)].map {
-                    CLLocationCoordinate2D(latitude: a.lat + $0.0 * h.0, longitude: a.lon + $0.1 * h.1)
-                }
-                return MKPolygon(coordinates: &corners, count: 4)
-            })
-        })
-        map.removeOverlays(old)
+        // Overlays are keyed: unchanged ones stay on the map, new ones are added before stale ones go, so nothing blinks.
+        var wanted: [(key: String, level: MKOverlayLevel, make: () -> MKOverlay)] = []
+        if !data.heat.isEmpty {   // under the labels, so lines always draw on top
+            let heat = data.heat
+            wanted.append(("h\(heat.hashValue)", .aboveRoads, { HeatOverlay(heat) }))
+        }
+        for (id, cells) in data.outlines {
+            wanted.append(("o\(id)-\(cells.hashValue)", .aboveRoads, {
+                MKMultiPolygon(cells.map { c in   // one square per 5 m cell; one shape, so the fill has no seams
+                    let a = PlaceGrid.center(of: c), b = PlaceGrid.center(of: PlaceCell(x: c.x + 1, y: c.y + 1))
+                    let h = ((b.lat - a.lat) / 2, (b.lon - a.lon) / 2)
+                    var corners = [(-1.0, -1.0), (-1, 1), (1, 1), (1, -1)].map {
+                        CLLocationCoordinate2D(latitude: a.lat + $0.0 * h.0, longitude: a.lon + $0.1 * h.1)
+                    }
+                    return MKPolygon(coordinates: &corners, count: 4)
+                })
+            }))
+        }
+        for l in data.lines {
+            wanted.append(("l\(bySpeed)-\(l.key)", .aboveLabels, {   // the renderer depends on the colouring
+                let coords = l.coords.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                let poly = TrackLine(coordinates: coords, count: coords.count)
+                poly.line = l
+                return poly
+            }))
+        }
+        for p in data.still {
+            wanted.append(("s\(p.lat),\(p.lon)", .aboveLabels, { MKCircle(center: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), radius: 3) }))
+        }
+        for w in wanted where c.shown[w.key] == nil {
+            let o = w.make()
+            c.shown[w.key] = o
+            map.addOverlay(o, level: w.level)
+        }
+        let keys = Set(wanted.map(\.key))
+        let stale = c.shown.filter { !keys.contains($0.key) }
+        map.removeOverlays(Array(stale.values))
+        for k in stale.keys { c.shown[k] = nil }
         let pins = data.places.map { p -> PlaceAnnotation in
             let a = PlaceAnnotation()
             let pin = p.pin!   // the loader keeps only places with a pin
@@ -89,6 +107,7 @@ struct TrackMapView: UIViewRepresentable {
         var parent: TrackMapView
         var shownGeneration = -1
         var shownBySpeed = false
+        var shown: [String: MKOverlay] = [:]   // overlays on the map by key
         private var centered = false
 
         init(_ parent: TrackMapView) { self.parent = parent }
@@ -144,14 +163,20 @@ struct TrackMapView: UIViewRepresentable {
                 r.setColors(l.speeds.map { s -> UIColor in
                     switch SpeedBand(speed: s) { case .walk: .systemGreen; case .bike: .systemBlue; case .drive: .systemRed }
                 }, locations: l.locations.map { CGFloat($0) })
-                r.lineWidth = 3
+                rough(r, l)
                 return r
             }
             let r = MKPolylineRenderer(polyline: track)
             let c = MapColors.byDate(l.dateFraction)
             r.strokeColor = UIColor(red: c.r, green: c.g, blue: c.b, alpha: 1)
-            r.lineWidth = 3
+            rough(r, l)
             return r
+        }
+
+        /// Rough stretches draw thinner and dashed, so their precision is never overstated.
+        private func rough(_ r: MKPolylineRenderer, _ l: MapLine) {
+            r.lineWidth = l.rough ? 2 : 3
+            if l.rough { r.lineDashPattern = [4, 4] }
         }
     }
 }

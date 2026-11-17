@@ -15,6 +15,8 @@ public enum MotionEvent: Sendable {
     case fix(FilteredPoint)                 // recording manager, after filter
     case tick                               // keep-alive update or any wake; drives time-based rules
     case steps(Int)                         // cumulative since Still began
+    case walked(Double)                     // pedometer metres since Still began, sent with `.steps`
+    case roughFix(Sample)                   // a fix above the accuracy ceiling was stored; drives time-based rules like a tick
     case activity(Activity, confident: Bool)
     case wakeFix(Sample, reason: String)    // spot check, significant change
     case confirmFix(Sample)                 // keep-alive position: confirms presence while Still, else a tick
@@ -33,6 +35,8 @@ public enum Command: Sendable, Equatable {
     case resolveDeparture(stillSince: Date, until: Date) // app queries CoreMotion history, then backfills up to `until` at most
     case fillUnconfirmed(from: Date, to: Date) // app backfills still points over (from, to) only if motion history is clean
     case log(LoggedEvent)
+    case setStruggle(Bool)                  // GPS yields only rough fixes in a vehicle: hundred-metre accuracy, 50 m filter
+    case probe                              // 20 s at full accuracy while struggling
 }
 
 extension Activity {
@@ -67,6 +71,14 @@ public struct MotionEngine: Sendable {
     private var stepLog: [(t: Date, n: Int)] = []   // step updates while Still: the last 40 s plus the newest older one
     private var walkedAt: Date?               // last confident walking/running while Still
     private var place: PlaceShape?            // the known place of this rest; kept through a wander, dropped on leaving
+    private var walked = 0.0, walkedAtWake = 0.0   // pedometer metres since Still began; at the last wake
+    private var lastDrift: (t: Date, d: Double, out: Bool)?   // the last 10 s drift window of a wander
+    private var stepsPending = false          // a steps wake at a known place, waiting for keep-alive evidence
+    private var paceSince: Date?              // steps at walking pace without a break since then (while Still)
+    private var inVehicle = false             // the last telling activity was a vehicle; stationary/unknown keep it
+    private var roughSince: Date?             // every fix since then was rough
+    private var struggle = false
+    private var lastProbe = Date.distantPast
 
     /// A steps/walking wake is still being checked for a wander; the app keeps counting steps meanwhile.
     public var wandering: Bool { wanderFence != nil }
@@ -78,24 +90,92 @@ public struct MotionEngine: Sendable {
     public mutating func handle(_ e: MotionEvent, at now: Date) -> [Command] {
         if quietSince == nil { quietSince = now }
         if case .deepSleepChanged(let on) = e { return setDeepSleep(on, now) }
-        if case .enteredPlace(let p) = e { if p != nil || wanderFence == nil { place = p }; return [] }   // a wander keeps its place
+        if case .enteredPlace(let p) = e {
+            if p != nil || wanderFence == nil { place = p }   // a wander keeps its place
+            guard state == .still, p != nil, let f = fence else { return [] }
+            return [.armGeofence(departure(f))]                // a fallback Still learns its place after arming
+        }
+        if case .walked(let m) = e { walked = m; return [] }
+        if case .activity(let a, let confident) = e, a.isVehicle || (confident && a != .unknown && a != .stationary) {
+            inVehicle = a.isVehicle
+        }
         if state == .still { return handleStill(e, now) }
         switch e {
         case .fix(let p):
-            wanderOutside(p.lat, p.lon, p.hAcc)
+            fixes.append(p)
+            while fixes.count > 1, fixes[1].t <= now.addingTimeInterval(-360) { fixes.removeFirst() }
+            var out = endStruggle(now)
+            if wanderFence != nil { out += leaveCheck(now) } else { wanderOutside(p.lat, p.lon, p.hAcc) }
             wanderFixed = wanderFixed || (wanderFence != nil && now.timeIntervalSince(wanderSince) <= 60)
-            return wanderReturn(now) ?? onFix(p, now)
-        case .tick, .confirmFix: return wanderReturn(now) ?? onTick(now)
+            return out + (wanderReturn(now) ?? onFix(p, now))
+        case .tick, .confirmFix: return struggleCheck(now) + (wanderReturn(now) ?? onTick(now))
+        case .roughFix(let s):
+            // Far beyond its own error from the last precise fix: travelling, whatever CoreMotion says (trains often read as
+            // stationary). shortcut: 2 × hAcc rules out most bad cell fixes at home; add a second consecutive fix if one slips through.
+            if let k = lastKnown, Geo.distance(s.lat, s.lon, k.lat, k.lon) > max(300, 2 * s.hAcc) { inVehicle = true }
+            if inVehicle { quietSince = now }   // a train can bring only rough fixes for an hour: the ride goes on
+            roughSince = roughSince ?? now
+            return struggleCheck(now) + (wanderReturn(now) ?? onTick(now))
         case .steps(let n) where wanderFence != nil: logSteps(n, now)
         case .activity(let a, let confident) where a.isVehicle:
             lastVehicle = now
             if confident { lastConfidentVehicle = now; wanderFence = nil }   // backing out slowly is no wander
+        case .activity: if !inVehicle { roughSince = nil; return endStruggle(now) }   // never on foot
         case .wakeFix(let s, _) where (0...100).contains(s.hAcc):   // a vague fix must not pin the place
             lastKnown = Self.pin(s.lat, s.lon, s.hAcc); lastFixAt = now
             wanderOutside(s.lat, s.lon, s.hAcc)
-        case .steps, .activity, .wakeFix, .geofenceExit, .spotCheckDue, .spotCheckEnded, .deepSleepChanged, .enteredPlace: break
+        case .steps, .wakeFix, .geofenceExit, .spotCheckDue, .spotCheckEnded, .deepSleepChanged, .enteredPlace, .walked: break
         }
         return []
+    }
+
+    /// Three minutes in a vehicle with only rough fixes: GPS drops to hundred-metre mode, with a 20 s full-accuracy probe every 5 min.
+    private mutating func struggleCheck(_ now: Date) -> [Command] {
+        if struggle {
+            guard now.timeIntervalSince(lastProbe) >= 300 else { return [] }
+            lastProbe = now
+            return [.probe]
+        }
+        guard inVehicle, let r = roughSince, now.timeIntervalSince(r) >= 180 else { return [] }
+        struggle = true; lastProbe = now
+        return [.setStruggle(true), log("struggle", "on", now)]
+    }
+
+    /// A precise fix, on foot or Still: struggle mode ends.
+    private mutating func endStruggle(_ now: Date) -> [Command] {
+        roughSince = nil
+        guard struggle else { return [] }
+        struggle = false
+        return [.setStruggle(false), log("struggle", "off", now)]
+    }
+
+    /// Distance from the rest centre to the median position of the last 20 s of fixes (d), their median hAcc (n), and whether
+    /// that position lies beyond the rest area by more than n + 15 m.
+    private func drift(_ now: Date) -> (d: Double, n: Double, out: Bool)? {
+        guard let w = wanderFence else { return nil }
+        let recent = fixes.filter { $0.t >= now.addingTimeInterval(-20) }
+        guard !recent.isEmpty else { return nil }
+        func median(_ v: [Double]) -> Double { let s = v.sorted(); return (s[(s.count - 1) / 2] + s[s.count / 2]) / 2 }
+        let lat = median(recent.map(\.lat)), lon = median(recent.map(\.lon)), n = median(recent.map(\.hAcc))
+        let d = Geo.distance(lat, lon, w.lat, w.lon)
+        // shortcut: the shape's accuracy allowance caps at 50 m, so a very vague median can leave a big place sooner; fine for N <= 35 m.
+        return (d, n, d > w.radius + n + 15 && place?.contains(lat: lat, lon: lon, hAcc: n + 15) != true)
+    }
+
+    /// Leaving during a wander: the drift is beyond the rest area in two consecutive 10 s windows, and growing. One noisy fix never is.
+    private mutating func leaveCheck(_ now: Date) -> [Command] {
+        guard lastDrift.map({ now.timeIntervalSince($0.t) >= 10 }) ?? true, let d = drift(now) else { return [] }
+        defer { lastDrift = (now, d.d, d.out) }
+        guard d.out, let prev = lastDrift, prev.out, d.d > prev.d else { return [] }
+        visitFence = nil; wanderFence = nil; stepsThreshold = 15; place = nil
+        return [log("wake", "leave-drift", now)]
+    }
+
+    /// Departure fence: at a known place on its pin, reaching past the whole shape; otherwise 200 m around the rest.
+    private func departure(_ f: Fence) -> Fence {
+        guard let p = place else { return Fence(lat: f.lat, lon: f.lon, radius: 200) }
+        let extent = p.region.map { c in let m = PlaceGrid.center(of: c); return Geo.distance(m.lat, m.lon, p.pin.lat, p.pin.lon) }.max() ?? 0
+        return Fence(lat: p.pin.lat, lon: p.pin.lon, radius: max(200, extent + PlaceGrid.cellSize + 50))
     }
 
     private static func pin(_ lat: Double, _ lon: Double, _ hAcc: Double) -> Fence {
@@ -124,12 +204,16 @@ public struct MotionEngine: Sendable {
         (place.map { Fence(lat: $0.pin.lat, lon: $0.pin.lon, radius: f.radius) } ?? f).stillPoint(at: now)
     }
 
-    /// 60 s after a steps/walking wake, with fixes and all of them inside the visit fence, and no walking in the last 30 s:
-    /// back to Still, no new still point. Steps decide where GPS can't: between buildings a resumed walk barely moves the fixes.
+    /// Back to Still after a steps/walking wake, no new still point, unless walking in the last 30 s (between buildings a resumed
+    /// walk barely moves the fixes) or the drift lies outside: pottering (walked >= 40 m while the drift stays within its noise
+    /// + 10 m), or 60 s with fixes.
     private mutating func wanderReturn(_ now: Date) -> [Command]? {
-        guard let w = wanderFence, wanderFixed, now.timeIntervalSince(wanderSince) >= 60, !walking(now) else { return nil }
+        guard let w = wanderFence, !walking(now) else { return nil }
+        let d = drift(now)
+        let potter = walked - walkedAtWake >= 40 && d.map { $0.d <= $0.n + 10 } == true
+        guard potter || (wanderFixed && now.timeIntervalSince(wanderSince) >= 60 && d?.out != true) else { return nil }
         stepsThreshold = threshold == 15 ? 50 : 150
-        return goStill(w, now, writePoint: false) + [log("wake", "wander-return", now)]
+        return goStill(w, now, writePoint: false) + [log("wake", potter ? "potter-return" : "wander-return", now)]
     }
 
     private mutating func onFix(_ p: FilteredPoint, _ now: Date) -> [Command] {
@@ -137,8 +221,6 @@ public struct MotionEngine: Sendable {
         lastKnown = Self.pin(p.lat, p.lon, p.hAcc)
         needFixAfterWake = false
         if p.speed > 7 { lastVehicle = now }
-        fixes.append(p)
-        while fixes.count > 1, fixes[1].t <= now.addingTimeInterval(-360) { fixes.removeFirst() }
         let recent = fixes.filter { $0.t >= p.t.addingTimeInterval(-120) }
         var w = 0.0, lat = 0.0, lon = 0.0, acc = 0.0
         for f in recent {
@@ -202,19 +284,23 @@ public struct MotionEngine: Sendable {
         state = .still; wanderFence = nil; fence = f; stillSince = now; lastStillPoint = now
         lastConfirmed = fallback ? lastFixAt : now; stopLogged = false   // the no-fix fallback is confirmed only by its last fix
         fixes = []; spotDelay = 30; stillByFallback = fallback; needFixAfterWake = false; stepLog = []; walkedAt = nil
-        var out: [Command] = [.stopRecording]
-        if let f { out.append(.armGeofence(Fence(lat: f.lat, lon: f.lon, radius: 200))) }
+        walked = 0; stepsPending = false; paceSince = nil
+        var out: [Command] = endStruggle(now) + [.stopRecording]
+        if let f { out.append(.armGeofence(departure(f))) }
         out.append(.scheduleSpotCheck(after: deepSleep ? 900 : spotDelay))
         if let f, writePoint, confirmed(now) { out.append(.writeStillPoint(stillPoint(f, now))) }
         return out + [log("state", "still", now)]
     }
 
     private mutating func handleStill(_ e: MotionEvent, _ now: Date) -> [Command] {
+        if stillSince.map({ now.timeIntervalSince($0) >= 1800 }) == true { stepsThreshold = 15 }   // a long rest forgets the backoff
         switch e {
         case .steps(let n):
             logSteps(n, now)
-            if n >= threshold { return wake("steps", now, wander: true) }
-            return walkCorroborated(now) ? wake("activity", now, wander: true) : []
+            let resumed = stepLog.count < 2 || now.timeIntervalSince(stepLog[stepLog.count - 2].t) > 30
+            paceSince = !pace(now) ? nil : resumed ? now : paceSince ?? now
+            if n >= threshold { return stepsWake("steps", now) }
+            return stepsPending || walkCorroborated(now) ? stepsWake("activity", now) : []
         case .activity(let a, let confident):
             guard confident && a.isMoving else { return [] }
             if a.isVehicle {                              // a garage departure is no fix-less fallback
@@ -222,7 +308,7 @@ public struct MotionEngine: Sendable {
                 return wake("activity", now)
             }
             walkedAt = now
-            return walkCorroborated(now) ? wake("activity", now, wander: true) : []
+            return walkCorroborated(now) ? stepsWake("activity", now) : []
         case .wakeFix(let s, let reason):
             guard s.hAcc >= 0 else { return [] }
             let k = Self.pin(s.lat, s.lon, s.hAcc)
@@ -253,10 +339,24 @@ public struct MotionEngine: Sendable {
         case .tick:
             return stillPointIfDue(now)
         case .confirmFix(let s):
+            // Steps older than 5 min no longer count; the keep-alive wake is a wander, so positions can still send it back.
+            if stepsPending, stepLog.last.map({ now.timeIntervalSince($0.t) <= 300 }) == true, s.hAcc >= 0, let f = fence, outside(s, f) {
+                return wake("keepalive", now, wander: true)
+            }
             return (confirm(s, now) ?? []) + stillPointIfDue(now)
-        case .fix, .deepSleepChanged, .enteredPlace:
+        case .fix, .deepSleepChanged, .enteredPlace, .walked, .roughFix:
             return []
         }
+    }
+
+    /// A steps/walking wake. At a known place GPS stays off until a keep-alive reading lies outside the shape, the geofence
+    /// fires, or steps keep walking pace for 3 min (Wi-Fi/cell readings typically move within 30-60 s of leaving).
+    private mutating func stepsWake(_ reason: String, _ now: Date) -> [Command] {
+        guard place != nil else { return wake(reason, now, wander: true) }
+        if paceSince.map({ now.timeIntervalSince($0) >= 180 }) == true { return wake(reason, now, wander: true) }
+        guard !stepsPending else { return [] }
+        stepsPending = true
+        return [log("still", "steps-pending", now)]
     }
 
     /// A pocket fidget can look like confident walking: it counts only with >= 8 steps arriving within 20 s of it (counted
@@ -276,10 +376,12 @@ public struct MotionEngine: Sendable {
 
     /// At least 35 steps in the last 30 s (walking pace is ~50), within 3 min of the wake: someone walking, not cooking or
     /// cleaning; after 3 min the positions decide alone, so busy pottering cannot hold GPS on.
-    private func walking(_ now: Date) -> Bool {
+    private func walking(_ now: Date) -> Bool { pace(now) && now.timeIntervalSince(wanderSince) <= 180 }
+
+    private func pace(_ now: Date) -> Bool {
         guard let last = stepLog.last else { return false }
         let before = stepLog.last { $0.t <= now.addingTimeInterval(-30) }?.n ?? stepLog[0].n
-        return last.n - before >= 35 && now.timeIntervalSince(wanderSince) <= 180
+        return last.n - before >= 35
     }
 
     private mutating func wake(_ reason: String, _ now: Date, wander: Bool = false) -> [Command] {
@@ -289,6 +391,7 @@ public struct MotionEngine: Sendable {
         if let s = stillSince { out.append(.resolveDeparture(stillSince: s, until: min(now, lastConfirmed.addingTimeInterval(1800)))) }
         state = .moving; spotChecking = false; stillSince = nil; quietSince = now; needFixAfterWake = stillByFallback
         visitFence = fence; wanderFence = wander ? fence : nil; wanderSince = now; wanderFixed = false
+        walkedAtWake = walked; lastDrift = nil
         if !wander { place = nil }
         return out + [log("wake", reason, now), log("state", "moving", now)]
     }

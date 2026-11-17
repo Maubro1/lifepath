@@ -20,7 +20,7 @@ public enum Heat {
 
     /// Each point counts for the time until the next one, capped by its own kind; the last point gets 0.
     public static func grid(_ points: [FilteredPoint]) -> [HeatCell: TimeInterval] {
-        let p = points.sorted { $0.t < $1.t }
+        let p = points.filter { $0.kind != .rough }.sorted { $0.t < $1.t }   // where time was spent needs a precise place
         var g: [HeatCell: TimeInterval] = [:]
         for (a, b) in zip(p, p.dropFirst()) {
             g[cell(lat: a.lat, lon: a.lon), default: 0] += min(b.t.timeIntervalSince(a.t), a.kind == .still ? 300 : 60)

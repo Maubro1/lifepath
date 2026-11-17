@@ -21,8 +21,29 @@ final class TrackFilterTests: XCTestCase {
     func testDropsNegativeAndCeilingAccuracy() {
         var f = primed()
         XCTAssertNil(feed(&f, sample(1, hAcc: -1)))
-        XCTAssertNil(feed(&f, sample(2, hAcc: 65.5)))
-        XCTAssertNotNil(feed(&f, sample(3, hAcc: 65)))
+        XCTAssertEqual(feed(&f, sample(2, hAcc: 65.5))?.kind, .rough)
+        XCTAssertEqual(feed(&f, sample(3, hAcc: 65))?.kind, .moving)
+    }
+
+    /// Trains: iOS reports ~1 km accuracy for positions that are often fine. They are kept as rough points, raw, and never
+    /// touch the live filter, so the precise line is the same with or without them.
+    func testRoughFixIsKeptNotFiltered() throws {
+        var a = primed(), b = primed()
+        let r = try XCTUnwrap(feed(&a, sample(5, north: 400, hAcc: 900)))
+        XCTAssertEqual(r.kind, .rough)
+        XCTAssertEqual(r.lat, sample(5, north: 400).lat, accuracy: 1e-9)
+        XCTAssertEqual(r.speed, -1); XCTAssertEqual(r.course, -1); XCTAssertEqual(r.hAcc, 900)
+        let withRough = try XCTUnwrap(feed(&a, sample(10, north: 10)))
+        let without = try XCTUnwrap(feed(&b, sample(10, north: 10)))
+        XCTAssertEqual(withRough, without)
+    }
+
+    func testRoughSpacingTenSeconds() {
+        var f = primed()
+        XCTAssertNotNil(feed(&f, sample(1, hAcc: 900)))
+        XCTAssertNil(feed(&f, sample(9, hAcc: 900)))
+        XCTAssertNotNil(feed(&f, sample(11, hAcc: 900)))
+        XCTAssertEqual(f.takeDropCounts()["rough-spacing"], 1)
     }
 
     func testCourseSetOnlyWhenAccurate() {
@@ -184,12 +205,12 @@ final class TrackFilterTests: XCTestCase {
     func testDropCountsByReason() {
         var f = primed()
         _ = feed(&f, sample(1, hAcc: -1))
-        _ = feed(&f, sample(2, hAcc: 65.5))
+        XCTAssertEqual(feed(&f, sample(2, hAcc: 65.5))?.kind, .rough)   // kept, not dropped
         _ = feed(&f, sample(20), at: 31)
         _ = feed(&f, sample(33), at: 30)
         _ = feed(&f, sample(0))
         _ = feed(&f, sample(1, north: 1000))
-        XCTAssertEqual(f.takeDropCounts(), ["accuracy": 2, "stale": 1, "future": 1, "order": 1, "teleport": 1])
+        XCTAssertEqual(f.takeDropCounts(), ["accuracy": 1, "stale": 1, "future": 1, "order": 1, "teleport": 1])
         XCTAssertEqual(f.takeDropCounts(), [:])
     }
 }
