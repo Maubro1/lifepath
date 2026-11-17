@@ -27,4 +27,14 @@ final class MapColorsTests: XCTestCase {
         XCTAssertEqual(MapColors.heatAlpha(100, max: 100), 0.85, accuracy: 1e-9)
         XCTAssertEqual(MapColors.heatAlpha(5, max: 0), 0.85, accuracy: 1e-9)
     }
+
+    func testPointModesAndDominant() {
+        let s = [ModeStretch(seq: 0, mode: .walk, confidence: 0.9, first: 0, last: 1),
+                 ModeStretch(seq: 1, mode: .car, confidence: 0.3, first: 2, last: 3),
+                 ModeStretch(seq: 2, mode: .bike, confidence: 0.8, first: 4, last: 9)]
+        XCTAssertEqual(MapColors.pointModes(s, count: 5), [.walk, .walk, nil, nil, nil])   // bike reaches past the points: ignored
+        XCTAssertEqual(MapColors.pointModes(s, count: 10)[9], .bike)
+        XCTAssertEqual(MapColors.dominantMode(s), .bike)
+        XCTAssertNil(MapColors.dominantMode([s[1]]))
+    }
 }

@@ -7,6 +7,23 @@ final class TrackLine: MKPolyline {
     var line: MapLine!
 }
 
+extension TravelMode {
+    // placeholders until the design stage
+    var color: UIColor {
+        switch self {
+        case .walk: .systemGreen
+        case .run: .systemMint
+        case .bike: .systemBlue
+        case .car: .systemRed
+        case .bus: .systemOrange
+        case .tram: .systemYellow
+        case .train: .systemPurple
+        case .boat: .systemTeal
+        }
+    }
+    var label: String { rawValue.capitalized }
+}
+
 /// A learned place's pin; the marker size follows the time spent there.
 final class PlaceAnnotation: MKPointAnnotation {
     var placeId: Int64 = 0
@@ -15,7 +32,7 @@ final class PlaceAnnotation: MKPointAnnotation {
 
 struct TrackMapView: UIViewRepresentable {
     let data: MapData?
-    let bySpeed: Bool
+    let colour: LineColour
     let satellite: Bool
     let visible: Bool
     let onRegion: @MainActor (MKCoordinateRegion, Double) -> Void   // region, view width in points
@@ -49,9 +66,9 @@ struct TrackMapView: UIViewRepresentable {
             standard.pointOfInterestFilter = .excludingAll   // as makeUIView
             map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : standard
         }
-        guard let data, data.generation != c.shownGeneration || bySpeed != c.shownBySpeed else { return }
+        guard let data, data.generation != c.shownGeneration || colour != c.shownColour else { return }
         c.shownGeneration = data.generation
-        c.shownBySpeed = bySpeed
+        c.shownColour = colour
         // Overlays are keyed: unchanged ones stay on the map, new ones are added before stale ones go, so nothing blinks.
         var wanted: [(key: String, level: MKOverlayLevel, make: () -> MKOverlay)] = []
         if !data.heat.isEmpty {   // under the labels, so lines always draw on top
@@ -71,7 +88,7 @@ struct TrackMapView: UIViewRepresentable {
             }))
         }
         for l in data.lines {
-            wanted.append(("l\(bySpeed)-\(l.key)", .aboveLabels, {   // the renderer depends on the colouring
+            wanted.append(("l\(colour)-\(l.key)", .aboveLabels, {   // the renderer depends on the colouring
                 let coords = l.coords.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
                 let poly = TrackLine(coordinates: coords, count: coords.count)
                 poly.line = l
@@ -106,7 +123,7 @@ struct TrackMapView: UIViewRepresentable {
     @MainActor final class Coordinator: NSObject, MKMapViewDelegate {
         var parent: TrackMapView
         var shownGeneration = -1
-        var shownBySpeed = false
+        var shownColour = LineColour.date
         var shown: [String: MKOverlay] = [:]   // overlays on the map by key
         private var centered = false
 
@@ -158,11 +175,17 @@ struct TrackMapView: UIViewRepresentable {
             }
             guard let track = overlay as? TrackLine else { return MKOverlayRenderer(overlay: overlay) }
             let l = track.line!
-            if parent.bySpeed {
+            if parent.colour == .speed {
                 let r = MKGradientPolylineRenderer(polyline: track)
                 r.setColors(l.speeds.map { s -> UIColor in
                     switch SpeedBand(speed: s) { case .walk: .systemGreen; case .bike: .systemBlue; case .drive: .systemRed }
                 }, locations: l.locations.map { CGFloat($0) })
+                rough(r, l)
+                return r
+            }
+            if parent.colour == .mode {
+                let r = MKGradientPolylineRenderer(polyline: track)
+                r.setColors(l.modes.map { $0?.color ?? .systemGray }, locations: l.locations.map { CGFloat($0) })
                 rough(r, l)
                 return r
             }

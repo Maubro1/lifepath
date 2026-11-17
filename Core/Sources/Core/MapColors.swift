@@ -21,6 +21,22 @@ public enum MapColors {
         return speeds.map { $0 >= 0 ? $0 : median }
     }
 
+    /// One mode per point of a trip: the confident stretch that holds it, else nil. Stretches reaching past the points (a trip read only in part) are ignored.
+    public static func pointModes(_ stretches: [ModeStretch], count: Int) -> [TravelMode?] {
+        var out = [TravelMode?](repeating: nil, count: count)
+        for s in stretches where s.confidence >= TravelModes.confident && s.first >= 0 && s.first <= s.last && s.last < count {
+            for i in s.first...s.last { out[i] = s.mode }
+        }
+        return out
+    }
+
+    /// The confident mode that covers the most points, nil when none is confident.
+    public static func dominantMode(_ stretches: [ModeStretch]) -> TravelMode? {
+        var total: [TravelMode: Int] = [:]
+        for s in stretches where s.confidence >= TravelModes.confident { total[s.mode, default: 0] += s.last - s.first + 1 }
+        return total.max { $0.value < $1.value || ($0.value == $1.value && $0.key.rawValue > $1.key.rawValue) }?.key
+    }
+
     public static func heatAlpha(_ seconds: Double, max maxSeconds: Double) -> Double {
         guard maxSeconds > 0 else { return 0.85 }
         return min(0.85, 0.15 + 0.7 * log(1 + seconds) / log(1 + maxSeconds))

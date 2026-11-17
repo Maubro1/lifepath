@@ -3,11 +3,14 @@ import Diary
 import MapKit
 import SwiftUI
 
+enum LineColour: String, CaseIterable { case date = "Date", speed = "Speed", mode = "Mode" }
+
 struct MapLine: Sendable {
     var key: String           // trip start, segment, rough flag, tolerance and a content hash: equal keys draw the same line
     var rough: Bool           // a stretch of rough fixes, drawn thin and dashed
     var coords: [(lat: Double, lon: Double)]
     var speeds: [Double]      // per coord, unknowns filled with the trip median
+    var modes: [TravelMode?]  // per coord; nil: unsure or unknown
     var locations: [Double]   // per coord, 0...1 along the line, for the speed gradient
     var dateFraction: Double  // trip start within the time range
 }
@@ -115,13 +118,18 @@ struct MapOptions: Equatable {
 
     private nonisolated static func load(_ diary: Diary, _ q: Query, generation: Int) throws -> MapData {
         var out = MapData(generation: generation)
-        var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], start: Date, segment: Int, rough: Bool)] = []
+        var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], modes: [TravelMode?], start: Date, segment: Int, rough: Bool)] = []
         var after = q.from.addingTimeInterval(-0.001)   // reads are `t > after`: keep a point exactly at `from`
         // Zoomed out, trips up to the cache's end come from the trip-line cache (smoothed lines only); points resume where those trips end, never mid-trip.
         if q.zoomedOut, !q.recorded, let until = try diary.tripLinesUntil() {
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: min(until, q.to))
             // shortcut: cached lines carry no rough flag and draw solid; upgrade when stage 3 stores rail-matched lines
-            trips = cached.map { (coords: $0.coords.map { (lat: $0.lat, lon: $0.lon) }, speeds: MapColors.filledSpeeds($0.coords.map(\.speed)), start: $0.start, segment: 0, rough: false) }
+            // Cached lines are simplified, so a point has no index in the trip: the whole line takes the trip's longest confident mode.
+            trips = try cached.map { c in
+                let mode = MapColors.dominantMode(try diary.modes(tripStart: c.start))
+                return (coords: c.coords.map { (lat: $0.lat, lon: $0.lon) }, speeds: MapColors.filledSpeeds(c.coords.map(\.speed)),
+                        modes: [TravelMode?](repeating: mode, count: c.coords.count), start: c.start, segment: 0, rough: false)
+            }
             after = max(after, min(until, q.to), cached.map(\.end).max() ?? after)
         }
         let tripsAfter = after
@@ -138,25 +146,26 @@ struct MapOptions: Equatable {
                 }
                 var speeds = MapColors.filledSpeeds(trip.points.map(\.speed))
                 var rough = trip.points.map { $0.kind == .rough }
+                var modes = MapColors.pointModes(try diary.modes(tripStart: trip.start), count: trip.points.count)   // the trip's, recorded or matched
                 if !q.recorded {
                     let stretches = try diary.matches(tripStart: trip.start).filter { $0.confidence >= MapMatcher.confident }
                     let missing = Set(stretches.map(\.wayId)).filter { ways[$0] == nil }
                     if !missing.isEmpty { for w in try diary.ways(ids: Array(missing)) { ways[w.id] = w } }
                     // Confident stretches draw along their street, rail or ferry line, solid even when the fixes were rough; vertices borrow the nearest fix's speed.
-                    var nc: [(lat: Double, lon: Double)] = [], ns: [Double] = [], nr: [Bool] = [], next = 0
+                    var nc: [(lat: Double, lon: Double)] = [], ns: [Double] = [], nm: [TravelMode?] = [], nr: [Bool] = [], next = 0
                     // Stretches are timed, not indexed: this trip's points were read in a box and chunks, so only a stretch whose end points are both here applies.
                     let at = Dictionary(trip.points.enumerated().map { ($1.t, $0) }, uniquingKeysWith: { a, _ in a })
                     for m in stretches {
                         guard let first = at[m.start], let last = at[m.end], first >= next, first <= last, let way = ways[m.wayId] else { continue }
-                        nc += coords[next..<first]; ns += speeds[next..<first]; nr += rough[next..<first]
+                        nc += coords[next..<first]; ns += speeds[next..<first]; nm += modes[next..<first]; nr += rough[next..<first]
                         var j = first   // vertices run in travel order, so the nearest fix only moves forward
                         for v in way.slice(fromM: m.fromM, toM: m.toM) {
                             while j < last, Geo.distance(v.lat, v.lon, coords[j + 1].lat, coords[j + 1].lon) < Geo.distance(v.lat, v.lon, coords[j].lat, coords[j].lon) { j += 1 }
-                            nc.append(v); ns.append(speeds[j]); nr.append(false)
+                            nc.append(v); ns.append(speeds[j]); nm.append(modes[j]); nr.append(false)
                         }
                         next = last + 1
                     }
-                    if next > 0 { nc += coords[next...]; ns += speeds[next...]; nr += rough[next...]; coords = nc; speeds = ns; rough = nr }
+                    if next > 0 { nc += coords[next...]; ns += speeds[next...]; nm += modes[next...]; nr += rough[next...]; coords = nc; speeds = ns; modes = nm; rough = nr }
                 }
                 // Runs of rough and precise points become separate lines; a rough run takes its precise neighbours, so every edge touching a rough point is dashed.
                 var first = 0, segment = 0
@@ -165,9 +174,9 @@ struct MapOptions: Equatable {
                     while e < rough.count, rough[e] == rough[first] { e += 1 }
                     let run = rough[first] ? max(0, first - 1)..<min(rough.count, e + 1) : first..<e
                     if run.count > 1 || rough.count == 1 {
-                        let c = Array(coords[run]), sp = Array(speeds[run])
+                        let c = Array(coords[run]), sp = Array(speeds[run]), md = Array(modes[run])
                         let keep = Simplify.douglasPeucker(c, tolerance: q.tolerance)   // keep only the drawn shape: memory follows the output
-                        trips.append((coords: keep.map { c[$0] }, speeds: keep.map { sp[$0] }, start: trip.start, segment: segment, rough: rough[first]))
+                        trips.append((coords: keep.map { c[$0] }, speeds: keep.map { sp[$0] }, modes: keep.map { md[$0] }, start: trip.start, segment: segment, rough: rough[first]))
                     }
                     first = e; segment += 1
                 }
@@ -207,11 +216,11 @@ struct MapOptions: Equatable {
             let total = along[along.count - 1]
             let fraction = trip.start.timeIntervalSince(lo) / span
             var h = Hasher()   // content and colour: a grown or re-smoothed line gets a new key
-            for i in keep { h.combine(coords[i].lat); h.combine(coords[i].lon); h.combine(trip.speeds[i]) }
+            for i in keep { h.combine(coords[i].lat); h.combine(coords[i].lon); h.combine(trip.speeds[i]); h.combine(trip.modes[i]) }
             h.combine(Int(fraction * 64))   // shortcut: date colour in 64 steps, so a live reload keeps old lines; finer only if steps show
             out.lines.append(MapLine(key: "\(trip.start.timeIntervalSince1970)-\(trip.segment)\(trip.rough ? "r" : "")-\(q.tolerance)-\(h.finalize())",
                                      rough: trip.rough,
-                                     coords: keep.map { coords[$0] }, speeds: keep.map { trip.speeds[$0] },
+                                     coords: keep.map { coords[$0] }, speeds: keep.map { trip.speeds[$0] }, modes: keep.map { trip.modes[$0] },
                                      locations: along.enumerated().map { total > 0 ? $1 / total : Double($0) / Double(max(1, keep.count - 1)) },
                                      dateFraction: fraction))
         }
@@ -221,7 +230,7 @@ struct MapOptions: Equatable {
 
 struct MapScreen: View {
     @State private var loader = MapLoader()
-    @State private var bySpeed = false
+    @State private var colour = LineColour.date
     @State private var satellite = false
     @State private var onScreen = false
     @State private var choosingDates = false
@@ -231,7 +240,7 @@ struct MapScreen: View {
     private var visible: Bool { onScreen && scenePhase == .active }
 
     var body: some View {
-        TrackMapView(data: loader.data, bySpeed: bySpeed, satellite: satellite, visible: visible) { region, width in
+        TrackMapView(data: loader.data, colour: colour, satellite: satellite, visible: visible) { region, width in
             loader.regionChanged(region, width: width)
         } onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } }
         .ignoresSafeArea(edges: .top)
@@ -256,9 +265,8 @@ struct MapScreen: View {
             .pickerStyle(.segmented)
             .accessibilityLabel("Time range")
             HStack {
-                Picker("Colour lines by", selection: $bySpeed) {
-                    Text("Date").tag(false)
-                    Text("Speed").tag(true)
+                Picker("Colour lines by", selection: $colour) {
+                    ForEach(LineColour.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Colour lines by")
@@ -269,6 +277,7 @@ struct MapScreen: View {
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Map style")
             }
+            if colour == .mode { legend }
             HStack {
                 Toggle("Heat", isOn: $loader.options.heat)
                     .accessibilityLabel("Heat map")
@@ -286,6 +295,24 @@ struct MapScreen: View {
         .padding(10)
         .background(.regularMaterial, in: .rect(cornerRadius: 12))
         .padding(8)
+    }
+
+    private var legend: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(TravelMode.allCases, id: \.self) { swatch(Color($0.color), $0.label) }
+                swatch(Color(UIColor.systemGray), "Unsure")
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Mode colours")
+    }
+
+    private func swatch(_ c: Color, _ label: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(c).frame(width: 8, height: 8)
+            Text(label).font(.caption2)
+        }
     }
 
     private var dates: some View {
