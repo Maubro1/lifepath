@@ -10,24 +10,16 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.3.1-preview.1 | Tracking under pressure: train positions kept (rough), better walking and vehicle lines, home pottering no longer keeps GPS on, battery-saving mode in trains, live steady map with dashed rough stretches. |
 | v0.3.0-preview.1 | Stage 2b: learned places as pins (time-density shapes, dynamic hiding, pins per period, outlines, rename), calm resting at pins, confirmed presence for still points, Save a backup, "Not saving since" status, resume after first unlock, clearer settings, walking steps keep a resumed walk awake. |
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## In progress: v0.3.1, tracking under pressure
+## In progress: stage 3, streets
 
-Spec: `docs/superpowers/specs/2026-11-16-tracking-under-pressure-design.md`. Plan: `docs/superpowers/plans/2026-11-16-v0.3.1-tracking-under-pressure.md`. Branch: **`pressure`** (from `places` after v0.3.0). Source: the owner's reports of 16 Nov (walking gaps at the Neude, home pottering keeps GPS on, trains drop every fix although the 1 km circle is centred right, canyon zigzag, bus spike, map line late/jumpy/flickering).
+Next per the spec: OSM street and rail download, HMM/Viterbi map matching (snaps walks to the street taken and rough train stretches to the railway), travel-mode classification, Streets walked. Branch and plan to be created from `places` after v0.3.1.
 
-| Task | Status at last update |
-|---|---|
-| 1. Rough fixes kept (`PointKind.rough`, raw, never in the live filter, no heat, no jump splits) | Done on `pressure` (fae7c47), 163 Core tests pass. |
-| 2. Smoother: rough weighted by consistency, spike removal, walking pace from the pedometer, smoothing version 2 | Subagent on `pressure-t2`. |
-| 3. Pottering or leaving (walked distance vs drift vs noise; keep-alive first at a pin) | Not started (engine; after 2 and 5 merge). |
-| 4. Struggle mode in vehicles (hundred-metre GPS after 3 rough minutes, 5-min probes, `.otherNavigation`) | Not started (engine). |
-| 5. Steady live map (live reload, overlay diffing, power-of-two detail, rough dashed) | Subagent on `pressure-t5`. |
-| 6. Review and release v0.3.1-preview.1 (0.3.1, build 8) | Later. |
-
-Stage 2b (learned places, robustness, Neude wander fix) is released as v0.3.0-preview.1; its decisions are in `docs/decisions/stage-2b.md`.
+v0.3.1 ("tracking under pressure": rough fixes kept, consistency-weighted smoothing with walking pace and spike removal, pottering vs leaving, keep-alive first at pins, struggle mode in vehicles, live steady map) is released as v0.3.1-preview.1; decisions in `docs/decisions/v0.3.1.md`. Not yet tested on the phone: ask the owner for health reports (new: rough counts per hour, struggle minutes, wake outcomes).
 
 ## Owner decision on places (made 2026-11-15)
 
