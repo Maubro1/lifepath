@@ -44,6 +44,7 @@ public enum Coverage {
                             guard graph.ways[ci].countable else { continue }
                             let len = lengths[ci] ?? graph.lens[ci].reduce(0, +), segs = segments(len)
                             lengths[ci] = len
+                            guard len > 0 else { continue }   // a way on one point has no segments to hit
                             out.insert(SegmentHit(wayId: c.wayId, seg: min(segs - 1, Int(MapMatcher.along(c, graph) / (len / Double(segs)))), bike: m.mode == .bike))
                         }
                     }

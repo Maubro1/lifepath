@@ -331,6 +331,11 @@ public final class Diary: Sendable {
         }
     }
 
+    /// A full re-match starts from none: hits of re-cut trips would otherwise stay under their old start.
+    public func clearSegmentHits() throws {
+        try pool.write { db in try db.execute(sql: "DELETE FROM segmentHit") }
+    }
+
     /// Distinct hits over all trips.
     public func segmentHits() throws -> [SegmentHit] {
         try pool.read { db in

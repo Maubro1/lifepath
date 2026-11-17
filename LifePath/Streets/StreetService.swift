@@ -35,7 +35,7 @@ enum StreetService {
         // so an interrupted re-match resumes where it stopped.
         let version = "\(MapMatcher.version).\(TravelModes.version).\(Coverage.version)"
         let rematch = try diary.meta("matcherVersion") != version
-        if rematch { try diary.setMeta("streetsUntil", "0"); try diary.setMeta("matcherVersion", version) }
+        if rematch { try diary.setMeta("streetsUntil", "0"); try diary.setMeta("matcherVersion", version); try diary.clearSegmentHits() }
         // The last matched trip is matched again: the next smoothing run may have extended it.
         let from: Date = try rematch ? .distantPast
             : diary.meta("streetsUntil").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? .distantPast

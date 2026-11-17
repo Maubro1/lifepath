@@ -87,4 +87,12 @@ final class CoverageTests: XCTestCase {
         let r = Coverage.streets(ways: [w], hits: Array(h))
         XCTAssertEqual(r.onFoot, 0); XCTAssertEqual(r.withBike, 1); XCTAssertEqual(r.ways[1], true)
     }
+
+    func testZeroLengthWayDoesNotTrap() {
+        let real = way(1, [(1, 0, 0), (2, 0, 200)])
+        let dot = way(2, [(3, 0, 100), (4, 0, 100)], name: "Punt")
+        let h = Coverage.hits([matched(1, 0, 200, 0, 140)], modes: [mode(.walk, 0, 140)], graph: RoadGraph(ways: [real, dot]))
+        XCTAssertEqual(segs(h, 1), Set(0..<10))
+        XCTAssertEqual(segs(h, 2), [])
+    }
 }

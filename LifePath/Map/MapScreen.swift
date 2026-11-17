@@ -24,6 +24,7 @@ struct MapData: Sendable {
     var outlines: [Int64: Set<PlaceCell>] = [:] // their regions, at street zoom only
     var covered: [(key: String, coords: [(lat: Double, lon: Double)])] = []   // walked streets in the region, with the Streets toggle on
     var walked: (covered: Int, total: Int)?     // the tally; nil before the first coverage run
+    var bike = false                            // whether the tally counted cycling
 }
 
 enum TimeFilter: String, CaseIterable {
@@ -211,7 +212,8 @@ struct MapOptions: Equatable {
                                               cell: cell, lonCell: cell / cos((q.minLat + q.maxLat) / 2 * .pi / 180))
         }
         if q.streets {   // stored by the street run; the map only reads them
-            for w in try diary.coveredWays(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, bike: q.bike) {
+            out.bike = q.bike
+            for w in q.zoomedOut ? [] : try diary.coveredWays(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, bike: q.bike) {
                 let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)   // zoomed out: less detail, never fewer streets
                 out.covered.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
             }
@@ -248,6 +250,7 @@ struct MapScreen: View {
     @State private var onScreen = false
     @State private var choosingDates = false
     @State private var openPlace: Place?
+    @AppStorage("countCycling") private var countCycling = false
     @Environment(\.scenePhase) private var scenePhase
 
     private var visible: Bool { onScreen && scenePhase == .active }
@@ -263,6 +266,7 @@ struct MapScreen: View {
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
         .onChange(of: colour) { _, c in loader.options.byMode = c == .mode }   // changes options, which reloads
         .onChange(of: loader.options) { loader.reload() }
+        .onChange(of: countCycling) { loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: SmoothingService.linesChanged)) { _ in loader.reload() }   // no-op unless visible
         .onReceive(NotificationCenter.default.publisher(for: PlaceService.changed)) { _ in loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: Recorder.pointsSaved)) { _ in loader.pointsSaved() }   // no-op unless visible
@@ -317,7 +321,7 @@ struct MapScreen: View {
 
     /// "Streets walked: 42 of 1,310 (3.2%)", in the locale's number format.
     private var tally: String {
-        let title = UserDefaults.standard.bool(forKey: "countCycling") ? "Streets walked or cycled" : "Streets walked"
+        let title = loader.data?.bike == true ? "Streets walked or cycled" : "Streets walked"
         guard let w = loader.data?.walked, w.total > 0 else { return "\(title): no street maps yet" }
         let percent = (Double(w.covered) / Double(w.total)).formatted(.percent.precision(.fractionLength(1)))
         return "\(title): \(w.covered.formatted()) of \(w.total.formatted()) (\(percent))"
