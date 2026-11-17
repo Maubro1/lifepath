@@ -69,6 +69,16 @@ struct SettingsView: View {
                     Text("LifePath already rests deeply by itself when the battery is low, the phone is warm or Low Power Mode is on. On: checks every 15 min instead of 5, so the start of a trip may be missed.")
                 }
                 Section {
+                    Toggle("Download street maps automatically", isOn: settings.$downloadStreets)
+                } footer: {
+                    Text("Fetches the streets around your trips from OpenStreetMap. Each request sends only a map rectangle, never your track.")
+                }
+                Section {
+                    Toggle("Use mobile data for map downloads", isOn: settings.$streetsOnCellular)
+                } footer: {
+                    Text("Off: street maps download only on Wi-Fi.")
+                }
+                Section {
                     Button("Save a backup") {
                         Task {
                             do { backup = try await recorder.backup(); movingBackup = true } catch { backupError = error.localizedDescription }
