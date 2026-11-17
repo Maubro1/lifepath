@@ -81,6 +81,19 @@ final class StreetsTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(one.routeDistance(from: y, to: x, limit: 1000, oneway: false)), 100, accuracy: 1)  // on foot
     }
 
+    func testSliceBothDirectionsAndPartialSegments() {
+        let w = way(1, [(1, 0, 0), (2, 0, 100), (3, 100, 100)])   // 100 m east, then 100 m north
+        let fwd = w.slice(fromM: 50, toM: 150)
+        XCTAssertEqual(fwd.count, 3)   // partial start, corner, partial end
+        XCTAssertEqual(fwd[1].lat, w.coords[1].lat, accuracy: 1e-9); XCTAssertEqual(fwd[1].lon, w.coords[1].lon, accuracy: 1e-9)
+        XCTAssertEqual(Geo.distance(fwd[0].lat, fwd[0].lon, fwd[1].lat, fwd[1].lon), 50, accuracy: 1)
+        XCTAssertEqual(Geo.distance(fwd[1].lat, fwd[1].lon, fwd[2].lat, fwd[2].lon), 50, accuracy: 1)
+        let back = w.slice(fromM: 150, toM: 50)
+        XCTAssertEqual(back.count, 3)
+        XCTAssertEqual(back[0].lat, fwd[2].lat, accuracy: 1e-9); XCTAssertEqual(back[2].lon, fwd[0].lon, accuracy: 1e-9)
+        XCTAssertEqual(w.slice(fromM: 20, toM: 60).count, 2)   // inside one segment
+    }
+
     func testTileKeyAndBounds() {
         let t = Tile(lat: 52.0, lon: 5.0)
         XCTAssertEqual(t, Tile(x: 166, y: 2888))

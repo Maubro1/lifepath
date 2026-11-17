@@ -18,6 +18,27 @@ public struct Way: Sendable, Equatable {
     }
 }
 
+extension Way {
+    /// The way's geometry from `fromM` to `toM` metres along it (partial end segments included), in that direction: reversed when `toM < fromM`.
+    public func slice(fromM: Double, toM: Double) -> [(lat: Double, lon: Double)] {
+        let lo = min(fromM, toM), hi = max(fromM, toM)
+        var out: [(lat: Double, lon: Double)] = [], at = 0.0
+        for i in 0..<max(0, coords.count - 1) {
+            let a = coords[i], b = coords[i + 1], len = Geo.distance(a.lat, a.lon, b.lat, b.lon), end = at + len, start = at
+            func point(_ m: Double) -> (lat: Double, lon: Double) {
+                let t = len == 0 ? 0 : (m - start) / len
+                return (a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon))
+            }
+            if end >= lo && start <= hi {
+                if out.isEmpty { out.append(point(max(lo, start))) }
+                out.append(point(min(hi, end)))
+            }
+            at = end
+        }
+        return toM < fromM ? out.reversed() : out
+    }
+}
+
 /// A 0.03° x 0.018° tile (about 2 km), the unit of street downloads.
 public struct Tile: Sendable, Hashable {
     public var x: Int, y: Int
