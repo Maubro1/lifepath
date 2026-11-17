@@ -105,6 +105,39 @@ import CoreMotion
         return out
     }
 
+    /// Steps, distance and floors for today and the 6 days before (all iOS keeps). A day whose query fails is left out,
+    /// so no count is ever invented; empty unless step counting is allowed, and never asks for permission.
+    nonisolated static func daySteps(now: Date, calendar: Calendar) async -> [DaySteps] {
+        guard CMPedometer.isStepCountingAvailable(), CMPedometer.authorizationStatus() == .authorized else { return [] }
+        let pedometer = CMPedometer(), today = calendar.startOfDay(for: now)
+        var out: [DaySteps] = []
+        for i in 0..<7 {
+            guard let start = calendar.date(byAdding: .day, value: -i, to: today),
+                  let next = calendar.date(byAdding: .day, value: 1, to: start) else { continue }
+            let key = Days.key(start, calendar)
+            let day: DaySteps? = await withCheckedContinuation { c in
+                pedometer.queryPedometerData(from: start, to: min(next, now)) { @Sendable d, error in
+                    guard let d, error == nil else { c.resume(returning: nil); return }
+                    c.resume(returning: DaySteps(day: key, steps: d.numberOfSteps.intValue, distance: d.distance?.doubleValue,
+                                                 floorsUp: d.floorsAscended?.intValue))
+                }
+            }
+            if let day { out.append(day) }
+        }
+        withExtendedLifetime(pedometer) {}   // the pedometer must outlive its queries
+        return out
+    }
+
+    /// The step-counting status for Settings: permission is changed in iOS Settings, never asked for here.
+    nonisolated static var stepCounting: String {
+        guard CMPedometer.isStepCountingAvailable() else { return "Not available" }
+        switch CMPedometer.authorizationStatus() {
+        case .authorized: return "On"
+        case .notDetermined: return "Not set up"
+        default: return "Off"
+        }
+    }
+
     nonisolated static func activity(_ a: CMMotionActivity) -> Activity {
         a.automotive ? .automotive : a.cycling ? .cycling : a.running ? .running
             : a.walking ? .walking : a.stationary ? .stationary : .unknown

@@ -73,6 +73,7 @@ enum SmoothingService {
         }
         await PlaceService.execute(diary)   // same cancellation: a cancelled smooth run returned above, and the places run checks it too
         await StreetService.run(diary)   // after places: downloads may wait on the network, the places run never waits on them
+        await DayService.run(diary)   // after streets: re-matched trips change the days' walked distance
     }
 
     /// At most once per foreground and never two at once; the work never touches the main actor.
