@@ -65,3 +65,6 @@ First health reports (v0.2.1, evening of 14 Nov to 01:43 on 15 Nov): thermal nom
 
 
 Battery per day, warmth, wake counts per hour, spot checks per hour, gaps and their reasons, whether the 8-steps fidget threshold and the pin rules (100 points, dynamic hiding) feel right, and whether the deep-sleep keep-alive with 15-minute spot checks stays cool and battery-light overnight.
+
+## Next up (17 Nov, owner request)
+Stage 6 design: the owner asked for "an actually good design", checked with the design plugins (impeccable: critique + AI-design tells) for a cool, good experience. Start from the owner's v0.7.1 screenshots (Map, Timeline, Stats, Settings), write a detailed design overview, then build it. Bus-as-boat fixed in 113dad7 (not yet released).
