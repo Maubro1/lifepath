@@ -30,6 +30,8 @@ None of these block work; each has a default already built.
 3. Streets walked: running counts as walking; a walk within 15 m of a street (e.g. on a separately mapped sidewalk) counts for that street; motorways, service roads, sidewalks and private roads don't count as streets. Agree?
 4. Streets walked: the tally (e.g. "312 of 1,840 streets") sits under the map controls until the Stats screen arrives in stage 4. OK?
 5. Privacy check: LifePath now keeps your motion activity (walking, cycling, in a vehicle) in the diary for good, because iOS forgets it after 7 days. It never leaves the phone. OK?
+6. Restore: restoring a backup into a diary that already has places keeps this phone's places and drops the backup's place names (a fresh install keeps everything). OK, or should names be carried over where places overlap?
+7. Export (GPX, GeoJSON, KML): train stretches with only rough positions are left out, so the exported line breaks there. OK, or include them marked as approximate where the format allows?
 
 ## Owner decision on places (made 2026-11-15)
 
