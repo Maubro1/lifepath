@@ -2,14 +2,14 @@ import Foundation
 
 public enum TravelMode: String, Sendable, Codable, CaseIterable { case walk, run, bike, car, bus, tram, train, boat }
 
-/// One run of a trip's points in one travel mode: point indices `first...last`.
+/// One run of a trip's points in one travel mode: timestamps `start...end` of its first and last point (not indices: the map reads a trip's points only in part).
 public struct ModeStretch: Sendable, Equatable, Codable {
     public var seq: Int
     public var mode: TravelMode
     public var confidence: Double   // 0...1; below TravelModes.confident the stretch is shown and matched as unsure
-    public var first: Int, last: Int
-    public init(seq: Int, mode: TravelMode, confidence: Double, first: Int, last: Int) {
-        self.seq = seq; self.mode = mode; self.confidence = confidence; self.first = first; self.last = last
+    public var start: Date, end: Date
+    public init(seq: Int, mode: TravelMode, confidence: Double, start: Date, end: Date) {
+        self.seq = seq; self.mode = mode; self.confidence = confidence; self.start = start; self.end = end
     }
 }
 
@@ -73,7 +73,7 @@ public enum TravelModes {
             let c = path[a]
             let margin = modes.indices.filter { $0 != c }.map { o in (a..<b).map { e[$0][c] - e[$0][o] }.reduce(0, +) }.min() ?? 0
             out.append(ModeStretch(seq: out.count, mode: modes[c], confidence: 1 - exp(-max(0, margin)),
-                                   first: windows[a].first, last: windows[b - 1].last))
+                                   start: points[windows[a].first].t, end: points[windows[b - 1].last].t))
             a = b
         }
         return out

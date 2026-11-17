@@ -20,7 +20,7 @@ final class TravelModesTests: XCTestCase {
 
     /// Asserts the modes, that every stretch is confident, and prints the measurement.
     func check(_ s: [ModeStretch], _ expect: [TravelMode], _ name: String, file: StaticString = #filePath, line: UInt = #line) {
-        print("MEAS", name, s.map { "\($0.mode.rawValue) \(String(format: "%.3f", $0.confidence)) [\($0.first)...\($0.last)]" })
+        print("MEAS", name, s.map { "\($0.mode.rawValue) \(String(format: "%.3f", $0.confidence)) [\(Int($0.start.timeIntervalSince(t0)))...\(Int($0.end.timeIntervalSince(t0)))]" })
         XCTAssertEqual(s.map(\.mode), expect, file: file, line: line)
         XCTAssertTrue(s.allSatisfy { $0.confidence >= TravelModes.confident }, file: file, line: line)
     }
@@ -41,7 +41,7 @@ final class TravelModesTests: XCTestCase {
     func assertBoundaries(_ s: [ModeStretch], _ pts: [FilteredPoint], _ truth: [Date], file: StaticString = #filePath, line: UInt = #line) {
         guard s.count == truth.count + 1 else { return }
         for (k, b) in truth.enumerated() {
-            let err = pts[s[k + 1].first].t.timeIntervalSince(b)
+            let err = s[k + 1].start.timeIntervalSince(b)
             print("MEAS boundary error s", err)
             XCTAssertLessThanOrEqual(abs(err), 30, file: file, line: line)
         }
@@ -138,7 +138,7 @@ final class TravelModesTests: XCTestCase {
         XCTAssertEqual(pts.count, 2)
         let s = TravelModes.classify(pts, graph: RoadGraph(ways: []), stops: [], activities: [])
         XCTAssertEqual(s.count, 1)
-        XCTAssertEqual(s.first?.first, 0)
-        XCTAssertEqual(s.first?.last, 1)
+        XCTAssertEqual(s.first?.start, pts[0].t)
+        XCTAssertEqual(s.first?.end, pts[1].t)
     }
 }

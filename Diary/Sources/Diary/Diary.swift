@@ -69,7 +69,7 @@ public final class Diary: Sendable {
                 CREATE TABLE stop(id INTEGER PRIMARY KEY, kind TEXT, lat REAL, lon REAL);
                 CREATE INDEX stop_lat ON stop(lat);
                 CREATE TABLE modeStretch(
-                    tripStart REAL, seq INTEGER, mode TEXT, confidence REAL, first INTEGER, last INTEGER,
+                    tripStart REAL, seq INTEGER, mode TEXT, confidence REAL, start REAL, end REAL,
                     PRIMARY KEY(tripStart, seq));
                 ALTER TABLE tile ADD COLUMN version INTEGER;
                 """)
@@ -304,8 +304,8 @@ public final class Diary: Sendable {
             try db.execute(sql: "DELETE FROM modeStretch WHERE tripStart = ?", arguments: [tripStart.timeIntervalSince1970])
             for m in modes {
                 var row: StatementArguments = [tripStart.timeIntervalSince1970, m.seq, m.mode.rawValue, m.confidence]
-                row += [m.first, m.last]
-                try db.execute(sql: "INSERT INTO modeStretch(tripStart, seq, mode, confidence, first, last) VALUES (?,?,?,?,?,?)", arguments: row)
+                row += [m.start.timeIntervalSince1970, m.end.timeIntervalSince1970]
+                try db.execute(sql: "INSERT INTO modeStretch(tripStart, seq, mode, confidence, start, end) VALUES (?,?,?,?,?,?)", arguments: row)
             }
             for m in stretches {
                 var row: StatementArguments = [tripStart.timeIntervalSince1970, m.seq, m.wayId, m.fromM, m.toM]
@@ -320,7 +320,8 @@ public final class Diary: Sendable {
         try pool.read { db in
             try Row.fetchAll(db, sql: "SELECT * FROM modeStretch WHERE tripStart = ? ORDER BY seq",
                              arguments: [tripStart.timeIntervalSince1970]).compactMap { r in
-                TravelMode(rawValue: r["mode"]).map { ModeStretch(seq: r["seq"], mode: $0, confidence: r["confidence"], first: r["first"], last: r["last"]) }
+                TravelMode(rawValue: r["mode"]).map { ModeStretch(seq: r["seq"], mode: $0, confidence: r["confidence"],
+                                                       start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"])) }
             }
         }
     }

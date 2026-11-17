@@ -377,7 +377,7 @@ final class DiaryTests: XCTestCase {
 
     func testModesSavedWithMatches() throws {
         let diary = try Diary(path: tempPath())
-        func m(_ seq: Int, _ mode: TravelMode) -> ModeStretch { ModeStretch(seq: seq, mode: mode, confidence: 0.8, first: seq * 5, last: seq * 5 + 4) }
+        func m(_ seq: Int, _ mode: TravelMode) -> ModeStretch { ModeStretch(seq: seq, mode: mode, confidence: 0.8, start: d(Double(seq * 5)), end: d(Double(seq * 5 + 4))) }
         try diary.saveMatches(tripStart: d(100), [], modes: [m(0, .walk), m(1, .bus)])
         try diary.saveMatches(tripStart: d(200), [], modes: [m(0, .car)])
         XCTAssertEqual(try diary.modes(tripStart: d(100)), [m(0, .walk), m(1, .bus)])

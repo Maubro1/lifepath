@@ -29,11 +29,12 @@ final class MapColorsTests: XCTestCase {
     }
 
     func testPointModesAndDominant() {
-        let s = [ModeStretch(seq: 0, mode: .walk, confidence: 0.9, first: 0, last: 1),
-                 ModeStretch(seq: 1, mode: .car, confidence: 0.3, first: 2, last: 3),
-                 ModeStretch(seq: 2, mode: .bike, confidence: 0.8, first: 4, last: 9)]
-        XCTAssertEqual(MapColors.pointModes(s, count: 5), [.walk, .walk, nil, nil, nil])   // bike reaches past the points: ignored
-        XCTAssertEqual(MapColors.pointModes(s, count: 10)[9], .bike)
+        func d(_ i: Int) -> Date { Date(timeIntervalSince1970: Double(i) * 10) }
+        let s = [ModeStretch(seq: 0, mode: .walk, confidence: 0.9, start: d(0), end: d(1)),
+                 ModeStretch(seq: 1, mode: .car, confidence: 0.3, start: d(2), end: d(3)),
+                 ModeStretch(seq: 2, mode: .bike, confidence: 0.8, start: d(4), end: d(9))]
+        XCTAssertEqual(MapColors.pointModes(s, times: (0..<5).map(d)), [.walk, .walk, nil, nil, .bike])
+        XCTAssertEqual(MapColors.pointModes(s, times: (4..<10).map(d)), [TravelMode?](repeating: .bike, count: 6))   // a part of the trip lines up
         XCTAssertEqual(MapColors.dominantMode(s), .bike)
         XCTAssertNil(MapColors.dominantMode([s[1]]))
     }

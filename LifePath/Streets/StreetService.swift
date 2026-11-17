@@ -25,9 +25,11 @@ enum StreetService {
         // CoreMotion keeps activity for 7 days only, so each run copies what is new into the diary for good, downloads or not.
         let now = Date()
         let since = try diary.meta("activityUntil").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? .distantPast
-        let copied = await MotionService.activities(from: max(since, now.addingTimeInterval(-7 * 86_400)), to: now)
-        try diary.saveActivities(copied)
-        try diary.setMeta("activityUntil", String(now.timeIntervalSince1970))
+        // The cursor moves only after a query that worked (an empty answer counts), so a failed one is retried while iOS still has the span.
+        if let copied = await MotionService.activities(from: max(since, now.addingTimeInterval(-7 * 86_400)), to: now) {
+            try diary.saveActivities(copied)
+            try diary.setMeta("activityUntil", String(now.timeIntervalSince1970))
+        }
         // A new matcher or classifier version re-matches all history once: the cursor restarts at 0 and the version is stored at once,
         // so an interrupted re-match resumes where it stopped.
         let version = "\(MapMatcher.version).\(TravelModes.version)"

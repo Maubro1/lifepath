@@ -84,7 +84,7 @@ final class MapMatcherTests: XCTestCase {
 
     /// One stretch of `mode` over all of `pts`.
     func whole(_ mode: TravelMode, _ pts: [FilteredPoint], confidence: Double = 0.9) -> ModeStretch {
-        ModeStretch(seq: 0, mode: mode, confidence: confidence, first: 0, last: pts.count - 1)
+        ModeStretch(seq: 0, mode: mode, confidence: confidence, start: pts[0].t, end: pts[pts.count - 1].t)
     }
 
     func testTrainStretchNeverMatchesRoad() {

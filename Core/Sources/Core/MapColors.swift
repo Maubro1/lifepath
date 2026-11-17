@@ -21,19 +21,16 @@ public enum MapColors {
         return speeds.map { $0 >= 0 ? $0 : median }
     }
 
-    /// One mode per point of a trip: the confident stretch that holds it, else nil. Stretches reaching past the points (a trip read only in part) are ignored.
-    public static func pointModes(_ stretches: [ModeStretch], count: Int) -> [TravelMode?] {
-        var out = [TravelMode?](repeating: nil, count: count)
-        for s in stretches where s.confidence >= TravelModes.confident && s.first >= 0 && s.first <= s.last && s.last < count {
-            for i in s.first...s.last { out[i] = s.mode }
-        }
-        return out
+    /// One mode per point time: the confident stretch whose `start...end` holds it, else nil. Timed, so points read only in part still line up.
+    public static func pointModes(_ stretches: [ModeStretch], times: [Date]) -> [TravelMode?] {
+        let confident = stretches.filter { $0.confidence >= TravelModes.confident }
+        return times.map { t in confident.first { $0.start <= t && t <= $0.end }?.mode }
     }
 
-    /// The confident mode that covers the most points, nil when none is confident.
+    /// The confident mode that covers the most time, nil when none is confident.
     public static func dominantMode(_ stretches: [ModeStretch]) -> TravelMode? {
-        var total: [TravelMode: Int] = [:]
-        for s in stretches where s.confidence >= TravelModes.confident { total[s.mode, default: 0] += s.last - s.first + 1 }
+        var total: [TravelMode: Double] = [:]
+        for s in stretches where s.confidence >= TravelModes.confident { total[s.mode, default: 0] += s.end.timeIntervalSince(s.start) }
         return total.max { $0.value < $1.value || ($0.value == $1.value && $0.key.rawValue > $1.key.rawValue) }?.key
     }
 

@@ -146,7 +146,7 @@ struct MapOptions: Equatable {
                 }
                 var speeds = MapColors.filledSpeeds(trip.points.map(\.speed))
                 var rough = trip.points.map { $0.kind == .rough }
-                var modes = MapColors.pointModes(try diary.modes(tripStart: trip.start), count: trip.points.count)   // the trip's, recorded or matched
+                var modes = MapColors.pointModes(try diary.modes(tripStart: trip.start), times: trip.points.map(\.t))   // the trip's, recorded or matched
                 if !q.recorded {
                     let stretches = try diary.matches(tripStart: trip.start).filter { $0.confidence >= MapMatcher.confident }
                     let missing = Set(stretches.map(\.wayId)).filter { ways[$0] == nil }

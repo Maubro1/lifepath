@@ -25,7 +25,7 @@ public enum MapMatcher {
         let fast = roughRunSpeed(points).map { $0 > 15 }
         var modeAt = [TravelMode?](repeating: nil, count: points.count)
         for m in modes where m.confidence >= TravelModes.confident {
-            for i in points.indices where (m.first...max(m.first, m.last)).contains(i) { modeAt[i] = m.mode }
+            for i in points.indices where m.start <= points[i].t && points[i].t <= m.end { modeAt[i] = m.mode }
         }
         var out: [MatchedStretch] = [], chain: [Step] = [], trans: [[[Double]]] = []  // trans[k]: log transition chain[k-1] -> chain[k]
         func flush() { out += stretches(chain, trans, points, graph: graph, seq: out.count); chain = []; trans = [] }
