@@ -334,7 +334,7 @@ final class DiaryTests: XCTestCase {
     func testMatchesReplacePerTrip() throws {
         let diary = try Diary(path: tempPath())
         func s(_ seq: Int, _ way: Int64) -> MatchedStretch {
-            MatchedStretch(seq: seq, wayId: way, fromM: 1.5, toM: 20, confidence: 0.9, first: seq * 3, last: seq * 3 + 2)
+            MatchedStretch(seq: seq, wayId: way, fromM: 1.5, toM: 20, confidence: 0.9, start: d(Double(seq * 3)), end: d(Double(seq * 3 + 2)))
         }
         try diary.saveMatches(tripStart: d(100), [s(0, 7), s(1, 8)])
         try diary.saveMatches(tripStart: d(200), [s(0, 9)])

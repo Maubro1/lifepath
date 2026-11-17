@@ -40,20 +40,20 @@ final class MapMatcherTests: XCTestCase {
     func share(_ m: [MatchedStretch], _ pts: [FilteredPoint], on wayId: Int64) -> Double {
         let total = pts.last!.t.timeIntervalSince(pts.first!.t)
         return m.filter { $0.wayId == wayId && $0.confidence >= MapMatcher.confident }
-            .map { pts[$0.last].t.timeIntervalSince(pts[$0.first].t) }.reduce(0, +) / total
+            .map { $0.end.timeIntervalSince($0.start) }.reduce(0, +) / total
     }
 
     func testCanyonWalkOnCorrectStreet() {
         let pts = canyonWalk()
         let m = MapMatcher.match(pts, graph: canyon)
         let s = share(m, pts, on: 1)
-        print("MEAS canyon share on true street", s, m.map { ($0.wayId, $0.first, $0.last, $0.confidence) })
+        print("MEAS canyon share on true street", s, m.map { ($0.wayId, $0.start, $0.end, $0.confidence) })
         XCTAssertGreaterThanOrEqual(s, 0.95)
     }
 
     func testParallelStreetAndAlleyNotChosen() {
         let m = MapMatcher.match(canyonWalk(), graph: canyon)
-        XCTAssertFalse(m.contains { $0.wayId == 2 || $0.wayId == 9 }, "\(m.map { ($0.wayId, $0.first, $0.last) })")
+        XCTAssertFalse(m.contains { $0.wayId == 2 || $0.wayId == 9 }, "\(m.map { ($0.wayId, $0.start, $0.end) })")
     }
 
     func testRoughTrainMatchesRailNotMotorway() {
@@ -92,9 +92,10 @@ final class MapMatcherTests: XCTestCase {
             return FilteredPoint(t: s.t, lat: p.0, lon: p.1, rawLat: p.0, rawLon: p.1, hAcc: s.hAcc, speed: still ? 0 : s.speed, kind: still ? .still : .moving)
         }
         let m = MapMatcher.match(pts, graph: canyon)
-        XCTAssertFalse(m.contains { $0.wayId != 1 }, "\(m.map { ($0.wayId, $0.first, $0.last) })")
-        XCTAssertFalse(m.contains { (150..<210).contains($0.first) || (150..<210).contains($0.last) })
-        print("MEAS still share", share(m, pts, on: 1), m.map { ($0.wayId, $0.first, $0.last, $0.confidence) })
+        XCTAssertFalse(m.contains { $0.wayId != 1 }, "\(m.map { ($0.wayId, $0.start, $0.end) })")
+        let still = Set(pts[150..<210].map { $0.t })
+        XCTAssertFalse(m.contains { still.contains($0.start) || still.contains($0.end) })
+        print("MEAS still share", share(m, pts, on: 1), m.map { ($0.wayId, $0.start, $0.end, $0.confidence) })
         XCTAssertGreaterThanOrEqual(share(m, pts, on: 1), 0.95)
     }
 }

@@ -1,14 +1,14 @@
 import Foundation
 
-/// One run of consecutive points matched to one way: from `fromM` to `toM` metres along it, points `first...last` of the trip.
+/// One run of consecutive points matched to one way: from `fromM` to `toM` metres along it, the points timed `start...end`.
 public struct MatchedStretch: Sendable, Equatable, Codable {
     public var seq: Int
     public var wayId: Int64
     public var fromM, toM: Double
     public var confidence: Double   // 0...1; below MapMatcher.confident the map shows the recorded line
-    public var first, last: Int
-    public init(seq: Int, wayId: Int64, fromM: Double, toM: Double, confidence: Double, first: Int, last: Int) {
-        self.seq = seq; self.wayId = wayId; self.fromM = fromM; self.toM = toM; self.confidence = confidence; self.first = first; self.last = last
+    public var start, end: Date   // times of its first and last point: stable however the trip's points are read
+    public init(seq: Int, wayId: Int64, fromM: Double, toM: Double, confidence: Double, start: Date, end: Date) {
+        self.seq = seq; self.wayId = wayId; self.fromM = fromM; self.toM = toM; self.confidence = confidence; self.start = start; self.end = end
     }
 }
 
@@ -23,7 +23,7 @@ public enum MapMatcher {
     public static func match(_ points: [FilteredPoint], graph: RoadGraph) -> [MatchedStretch] {
         let fast = fastRough(points)
         var out: [MatchedStretch] = [], chain: [Step] = [], trans: [[[Double]]] = []  // trans[k]: log transition chain[k-1] -> chain[k]
-        func flush() { out += stretches(chain, trans, graph: graph, seq: out.count); chain = []; trans = [] }
+        func flush() { out += stretches(chain, trans, points, graph: graph, seq: out.count); chain = []; trans = [] }
 
         for (i, p) in points.enumerated() where p.kind != .still {
             let rough = p.kind == .rough
@@ -57,7 +57,7 @@ public enum MapMatcher {
     }
 
     /// Picks each step's candidate by max-marginal (forward + backward Viterbi) and groups runs on one way into stretches.
-    static func stretches(_ chain: [Step], _ trans: [[[Double]]], graph: RoadGraph, seq: Int) -> [MatchedStretch] {
+    static func stretches(_ chain: [Step], _ trans: [[[Double]]], _ points: [FilteredPoint], graph: RoadGraph, seq: Int) -> [MatchedStretch] {
         guard chain.count > 1 else { return [] }
         var bwd = chain.map { [Double](repeating: 0, count: $0.cands.count) }
         for k in stride(from: chain.count - 2, through: 0, by: -1) {
@@ -85,7 +85,7 @@ public enum MapMatcher {
             let run = picks[r.a..<r.b], len = Double(run.count)
             let conf = Double(run.filter(\.near).count) / len * run.map(\.margin).reduce(0, +) / len
             return MatchedStretch(seq: seq + n, wayId: r.way, fromM: along(picks[r.a].c, graph), toM: along(picks[r.b - 1].c, graph),
-                                  confidence: max(0, min(1, conf)), first: chain[r.a].i, last: chain[r.b - 1].i)
+                                  confidence: max(0, min(1, conf)), start: points[chain[r.a].i].t, end: points[chain[r.b - 1].i].t)
         }
     }
 

@@ -57,7 +57,7 @@ public final class Diary: Sendable {
                 CREATE INDEX way_lat ON way(minLat, maxLat);
                 CREATE TABLE tile(x INTEGER, y INTEGER, fetchedAt REAL, PRIMARY KEY(x, y));
                 CREATE TABLE matchedStretch(
-                    tripStart REAL, seq INTEGER, wayId INTEGER, fromM REAL, toM REAL, confidence REAL, first INTEGER, last INTEGER,
+                    tripStart REAL, seq INTEGER, wayId INTEGER, fromM REAL, toM REAL, confidence REAL, start REAL, end REAL,
                     PRIMARY KEY(tripStart, seq));
                 """)
         }
@@ -237,8 +237,8 @@ public final class Diary: Sendable {
             try db.execute(sql: "DELETE FROM matchedStretch WHERE tripStart = ?", arguments: [tripStart.timeIntervalSince1970])
             for m in stretches {
                 var row: StatementArguments = [tripStart.timeIntervalSince1970, m.seq, m.wayId, m.fromM, m.toM]
-                row += [m.confidence, m.first, m.last]
-                try db.execute(sql: "INSERT INTO matchedStretch(tripStart, seq, wayId, fromM, toM, confidence, first, last) VALUES (?,?,?,?,?,?,?,?)",
+                row += [m.confidence, m.start.timeIntervalSince1970, m.end.timeIntervalSince1970]
+                try db.execute(sql: "INSERT INTO matchedStretch(tripStart, seq, wayId, fromM, toM, confidence, start, end) VALUES (?,?,?,?,?,?,?,?)",
                                arguments: row)
             }
         }
@@ -249,7 +249,7 @@ public final class Diary: Sendable {
             try Row.fetchAll(db, sql: "SELECT * FROM matchedStretch WHERE tripStart = ? ORDER BY seq",
                              arguments: [tripStart.timeIntervalSince1970]).map {
                 MatchedStretch(seq: $0["seq"], wayId: $0["wayId"], fromM: $0["fromM"], toM: $0["toM"], confidence: $0["confidence"],
-                               first: $0["first"], last: $0["last"])
+                               start: Date(timeIntervalSince1970: $0["start"]), end: Date(timeIntervalSince1970: $0["end"]))
             }
         }
     }

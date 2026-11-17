@@ -146,15 +146,17 @@ struct MapOptions: Equatable {
                     }
                     // Confident stretches draw along their street, rail or ferry line, solid even when the fixes were rough; vertices borrow the nearest fix's speed.
                     var nc: [(lat: Double, lon: Double)] = [], ns: [Double] = [], nr: [Bool] = [], next = 0
-                    for m in stretches where m.first >= next && m.first <= m.last && m.last < coords.count {
-                        guard let way = ways?[m.wayId] else { continue }
-                        nc += coords[next..<m.first]; ns += speeds[next..<m.first]; nr += rough[next..<m.first]
-                        var j = m.first   // vertices run in travel order, so the nearest fix only moves forward
+                    // Stretches are timed, not indexed: this trip's points were read in a box and chunks, so only a stretch whose end points are both here applies.
+                    let at = Dictionary(trip.points.enumerated().map { ($1.t, $0) }, uniquingKeysWith: { a, _ in a })
+                    for m in stretches {
+                        guard let first = at[m.start], let last = at[m.end], first >= next, first <= last, let way = ways?[m.wayId] else { continue }
+                        nc += coords[next..<first]; ns += speeds[next..<first]; nr += rough[next..<first]
+                        var j = first   // vertices run in travel order, so the nearest fix only moves forward
                         for v in way.slice(fromM: m.fromM, toM: m.toM) {
-                            while j < m.last, Geo.distance(v.lat, v.lon, coords[j + 1].lat, coords[j + 1].lon) < Geo.distance(v.lat, v.lon, coords[j].lat, coords[j].lon) { j += 1 }
+                            while j < last, Geo.distance(v.lat, v.lon, coords[j + 1].lat, coords[j + 1].lon) < Geo.distance(v.lat, v.lon, coords[j].lat, coords[j].lon) { j += 1 }
                             nc.append(v); ns.append(speeds[j]); nr.append(false)
                         }
-                        next = m.last + 1
+                        next = last + 1
                     }
                     if next > 0 { nc += coords[next...]; ns += speeds[next...]; nr += rough[next...]; coords = nc; speeds = ns; rough = nr }
                 }
