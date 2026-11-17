@@ -47,10 +47,10 @@ enum StreetService {
                 let a = Tile(lat: p.lat - dLat, lon: p.lon - dLon), b = Tile(lat: p.lat + dLat, lon: p.lon + dLon)
                 for x in a.x...b.x { for y in a.y...b.y { needed.insert(Tile(x: x, y: y)) } }
             }
-            for tile in try needed.filter({ try !diary.hasTile($0) }).sorted(by: { ($0.y, $0.x) < ($1.y, $1.x) }) {
+            for tile in try needed.filter({ try !diary.hasTile($0, version: OSM.version) }).sorted(by: { ($0.y, $0.x) < ($1.y, $1.x) }) {
                 guard let session, Date().timeIntervalSince1970 >= retryAt else { waiting = true; break trips }
-                let ways: [Way]
-                do { ways = try await fetch(tile, session).ways }  // stops are stored from Task 5 catch {
+                let fetched: (ways: [Way], stops: [Stop])
+                do { fetched = try await fetch(tile, session) } catch {
                     if Task.isCancelled { throw CancellationError() }
                     // No usable network (offline, or only mobile data while it is not allowed): skip quietly, the next run tries again.
                     if let e = error as? URLError, [URLError.Code.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed].contains(e.code) {
@@ -64,7 +64,7 @@ enum StreetService {
                     // shortcut: a tile that always fails (too dense for 60 s) holds back every later trip, upgrade to skipping it after a few tries if the log shows it
                     waiting = true; break trips
                 }
-                try diary.saveTile(tile, ways: ways)
+                try diary.saveTile(tile, ways: fetched.ways, stops: fetched.stops, version: OSM.version)
                 tiles += 1
                 if backoff > 0 { backoff = 0; try diary.setMeta("streetsBackoff", "0") }
             }
@@ -78,7 +78,7 @@ enum StreetService {
             let roughOnly = !trip.points.contains { $0.kind != .rough && $0.kind != .still }
             let kinds: Set<WayKind> = roughOnly ? [.rail, .tram, .ferry] : [.foot, .road, .rail, .tram, .ferry]
             let graph = RoadGraph(ways: byId.values.filter { kinds.contains($0.kind) }.sorted { $0.id < $1.id })
-            try diary.saveMatches(tripStart: trip.start, MapMatcher.match(trip.points, graph: graph))
+            try diary.saveMatches(tripStart: trip.start, MapMatcher.match(trip.points, graph: graph), modes: [])   // modes from Task 5
             try diary.setMeta("streetsUntil", String(trip.start.timeIntervalSince1970))
             matched += 1
         }
