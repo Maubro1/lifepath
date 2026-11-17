@@ -56,6 +56,73 @@ final class DiaryTests: XCTestCase {
         XCTAssertEqual(try reopened.lastPoint(), pt(100))
     }
 
+    private func sum(_ day: String, _ dist: Double = 100) -> DaySummary {
+        DaySummary(day: day, distance: dist, movingTime: 60, walked: dist / 2, points: 10)
+    }
+
+    func testSaveDaysReplacesFromDay() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.saveDays([sum("2026-11-01"), sum("2026-11-02"), sum("2026-11-03")], from: "2026-11-01")
+        try diary.saveDays([sum("2026-11-02", 999)], from: "2026-11-02")
+        XCTAssertEqual(try diary.days().map(\.summary), [sum("2026-11-02", 999), sum("2026-11-01")])
+    }
+
+    func testDaysJoinSteps() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.saveDays([sum("2026-11-01"), sum("2026-11-02")], from: "2026-11-01")
+        try diary.saveSteps([DaySteps(day: "2026-11-02", steps: 777, distance: nil, floorsUp: nil)])
+        let days = try diary.days()
+        XCTAssertEqual(days.map(\.summary.day), ["2026-11-02", "2026-11-01"])
+        XCTAssertEqual(days.map(\.steps), [777, nil])
+    }
+
+    func testStepsNeverLowered() throws {
+        let path = tempPath()
+        let diary = try Diary(path: path)
+        func row() throws -> Row {
+            try DatabaseQueue(path: path).read { try Row.fetchOne($0, sql: "SELECT * FROM daySteps")! }
+        }
+        try diary.saveSteps([DaySteps(day: "2026-11-01", steps: 5000, distance: 3000, floorsUp: 4)])
+        try diary.saveSteps([DaySteps(day: "2026-11-01", steps: 4000, distance: nil, floorsUp: nil)])
+        var r = try row()
+        XCTAssertEqual(r["steps"] as Int, 5000)
+        XCTAssertEqual(r["distance"] as Double?, 3000)
+        XCTAssertEqual(r["floorsUp"] as Int?, 4)
+        try diary.saveSteps([DaySteps(day: "2026-11-01", steps: 6000, distance: nil, floorsUp: nil)])
+        r = try row()
+        XCTAssertEqual(r["steps"] as Int, 6000)
+    }
+
+    func testLifeStats() throws {
+        let diary = try Diary(path: tempPath())
+        let empty = try diary.lifeStats()
+        XCTAssertNil(empty.steps)
+        XCTAssertEqual(empty.days, 0)
+        try diary.saveDays([sum("2026-11-01", 100), sum("2026-11-02", 300)], from: "2026-11-01")
+        try diary.saveSteps([DaySteps(day: "2026-11-02", steps: 10, distance: nil, floorsUp: 2),
+                             DaySteps(day: "2026-11-01", steps: 20, distance: nil, floorsUp: nil)])
+        XCTAssertEqual(try diary.lifeStats(),
+                       LifeStats(distance: 400, walked: 200, days: 2, points: 20, steps: 30, floorsUp: 2, stepsSince: "2026-11-01"))
+    }
+
+    func testTripLinesByDay() throws {
+        let diary = try Diary(path: tempPath())
+        let day = 10.0 * 86400
+        let a = line(day - 3 * 86400 + 100, day - 3 * 86400 + 200)
+        let b = line(day - 600, day + 600)
+        let c = line(day + 43200, day + 43300)
+        try diary.saveTripLines([a, b, c], replacingFrom: d(0))
+        XCTAssertEqual(try diary.tripLines(from: d(day), to: d(day + 86400)), [b, c])
+    }
+
+    func testV8DiaryMigrates() throws {
+        let path = tempPath()
+        do { let diary = try Diary(path: path); try diary.append([pt(100)]) }
+        let reopened = try Diary(path: path)
+        XCTAssertEqual(try reopened.points(from: d(0), to: d(1000)), [pt(100)])
+        XCTAssertEqual(try reopened.days().count, 0)
+    }
+
     func testCourseRoundTrip() throws {
         let diary = try Diary(path: tempPath())
         var a = pt(100); a.course = 123.5

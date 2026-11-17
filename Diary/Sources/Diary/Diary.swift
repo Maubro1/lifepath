@@ -82,6 +82,13 @@ public final class Diary: Sendable {
                 CREATE TABLE coveredWay(wayId INTEGER PRIMARY KEY, bike INTEGER);
                 """)
         }
+        migrator.registerMigration("v9") { db in
+            // Additive. day is a recomputable cache; daySteps is permanent (CoreMotion keeps only 7 days).
+            try db.execute(sql: """
+                CREATE TABLE day(day TEXT PRIMARY KEY, distance REAL, movingTime REAL, walked REAL, points INTEGER);
+                CREATE TABLE daySteps(day TEXT PRIMARY KEY, steps INTEGER, distance REAL, floorsUp INTEGER);
+                """)
+        }
         try migrator.migrate(pool)
     }
 
@@ -191,6 +198,67 @@ public final class Diary: Sendable {
                 SELECT * FROM tripLine WHERE maxLat >= ? AND minLat <= ? AND maxLon >= ? AND minLon <= ?
                 AND end >= ? AND start <= ? ORDER BY start
                 """, arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970]).map { r in
+                TripLine(start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"]),
+                         minLat: r["minLat"], maxLat: r["maxLat"], minLon: r["minLon"], maxLon: r["maxLon"],
+                         distance: r["distance"], coords: Self.decode(r["coords"]))
+            }
+        }
+    }
+
+    public func saveDays(_ days: [DaySummary], from day: String) throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM day WHERE day >= ?", arguments: [day])
+            for d in days {
+                try db.execute(sql: "INSERT OR REPLACE INTO day(day, distance, movingTime, walked, points) VALUES (?,?,?,?,?)",
+                               arguments: [d.day, d.distance, d.movingTime, d.walked, d.points])
+            }
+        }
+    }
+
+    public func days() throws -> [(summary: DaySummary, steps: Int?)] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT day.*, daySteps.steps AS steps FROM day LEFT JOIN daySteps ON daySteps.day = day.day ORDER BY day.day DESC
+                """).map { r in
+                let steps: Int? = r["steps"]
+                return (summary: DaySummary(day: r["day"], distance: r["distance"], movingTime: r["movingTime"], walked: r["walked"], points: r["points"]),
+                        steps: steps)
+            }
+        }
+    }
+
+    /// Permanent: a later, partial pedometer query never lowers a stored value, and a NULL never replaces a number.
+    public func saveSteps(_ s: [DaySteps]) throws {
+        try pool.write { db in
+            for x in s {
+                try db.execute(sql: """
+                    INSERT INTO daySteps(day, steps, distance, floorsUp) VALUES (?,?,?,?)
+                    ON CONFLICT(day) DO UPDATE SET
+                        steps = MAX(steps, excluded.steps),
+                        distance = COALESCE(MAX(distance, excluded.distance), distance, excluded.distance),
+                        floorsUp = COALESCE(MAX(floorsUp, excluded.floorsUp), floorsUp, excluded.floorsUp)
+                    """, arguments: [x.day, x.steps, x.distance, x.floorsUp])
+            }
+        }
+    }
+
+    public func lifeStats() throws -> LifeStats {
+        try pool.read { db in
+            let a = try Row.fetchOne(db, sql: "SELECT SUM(distance) AS distance, SUM(walked) AS walked, COUNT(*) AS days, SUM(points) AS points FROM day")!
+            let b = try Row.fetchOne(db, sql: "SELECT SUM(steps) AS steps, SUM(floorsUp) AS floorsUp, MIN(day) AS since FROM daySteps")!
+            let distance: Double? = a["distance"], walked: Double? = a["walked"], points: Int? = a["points"]
+            let steps: Int? = b["steps"], floorsUp: Int? = b["floorsUp"], since: String? = b["since"]
+            return LifeStats(distance: distance ?? 0, walked: walked ?? 0, days: a["days"], points: points ?? 0,
+                             steps: steps, floorsUp: floorsUp, stepsSince: since)
+        }
+    }
+
+    /// Trips overlapping [from, to), found by the start primary key.
+    // shortcut: a trip longer than a day before its card's day is missed in the drawing, upgrade if one exists
+    public func tripLines(from: Date, to: Date) throws -> [TripLine] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM tripLine WHERE start >= ? AND start < ? AND end >= ? ORDER BY start",
+                             arguments: [from.timeIntervalSince1970 - 86400, to.timeIntervalSince1970, from.timeIntervalSince1970]).map { r in
                 TripLine(start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"]),
                          minLat: r["minLat"], maxLat: r["maxLat"], minLon: r["minLon"], maxLon: r["maxLon"],
                          distance: r["distance"], coords: Self.decode(r["coords"]))
