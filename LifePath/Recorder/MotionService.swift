@@ -91,6 +91,19 @@ import CoreMotion
         return out
     }
 
+    /// Confident activity changes from CoreMotion history (kept 7 days); empty without motion permission.
+    nonisolated static func activities(from: Date, to: Date) async -> [(t: Date, activity: Activity)] {
+        guard available, from < to else { return [] }
+        let manager = CMMotionActivityManager()
+        let out: [(t: Date, activity: Activity)] = await withCheckedContinuation { c in
+            manager.queryActivityStarting(from: from, to: to, to: .main) { @Sendable list, _ in
+                c.resume(returning: (list ?? []).filter { $0.confidence != .low }.map { (t: $0.startDate, activity: Self.activity($0)) })
+            }
+        }
+        withExtendedLifetime(manager) {}   // the manager must outlive its query
+        return out
+    }
+
     nonisolated static func activity(_ a: CMMotionActivity) -> Activity {
         a.automotive ? .automotive : a.cycling ? .cycling : a.running ? .running
             : a.walking ? .walking : a.stationary ? .stationary : .unknown
