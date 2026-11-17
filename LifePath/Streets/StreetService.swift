@@ -25,8 +25,9 @@ enum StreetService {
         // CoreMotion keeps activity for 7 days only, so each run copies what is new into the diary for good, downloads or not.
         let now = Date()
         let since = try diary.meta("activityUntil").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? .distantPast
+        // An hour back, because CoreMotion can date an activity before it is reported; saving replaces by time, so repeats are harmless.
         // The cursor moves only after a query that worked (an empty answer counts), so a failed one is retried while iOS still has the span.
-        if let copied = await MotionService.activities(from: max(since, now.addingTimeInterval(-7 * 86_400)), to: now) {
+        if let copied = await MotionService.activities(from: max(since.addingTimeInterval(-3600), now.addingTimeInterval(-7 * 86_400)), to: now) {
             try diary.saveActivities(copied)
             try diary.setMeta("activityUntil", String(now.timeIntervalSince1970))
         }
@@ -43,6 +44,7 @@ enum StreetService {
         var tiles = 0, matched = 0, modeCount = 0, unsure = 0, waiting = false
         let session = download ? makeSession(cellular: cellular) : nil
         defer { session?.finishTasksAndInvalidate() }
+        var fetching = session != nil
 
         trips: for line in try diary.tripLines(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180, from: from, to: .distantFuture) {
             try Task.checkCancellation()
@@ -57,13 +59,14 @@ enum StreetService {
                 for x in a.x...b.x { for y in a.y...b.y { needed.insert(Tile(x: x, y: y)) } }
             }
             for tile in try needed.filter({ try !diary.hasTile($0, version: OSM.version) }).sorted(by: { ($0.y, $0.x) < ($1.y, $1.x) }) {
-                guard let session, Date().timeIntervalSince1970 >= retryAt else { waiting = true; break trips }
+                // No session (downloads off), backing off or offline: match with the stored tiles below; the cursor stays here so a later run re-fetches.
+                guard fetching, let session, Date().timeIntervalSince1970 >= retryAt else { waiting = true; break }
                 let fetched: (ways: [Way], stops: [Stop])
                 do { fetched = try await fetch(tile, session) } catch {
                     if Task.isCancelled { throw CancellationError() }
                     // No usable network (offline, or only mobile data while it is not allowed): skip quietly, the next run tries again.
                     if let e = error as? URLError, [URLError.Code.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed].contains(e.code) {
-                        waiting = true; break trips
+                        waiting = true; fetching = false; break
                     }
                     // Any failure waits, remembered across launches: 60 s, doubling to 30 min.
                     backoff = min(max(60, backoff * 2), 1800)
@@ -71,7 +74,7 @@ enum StreetService {
                     try diary.setMeta("streetsBackoff", String(backoff))
                     try diary.setMeta("streetsRetryAt", String(retryAt))
                     // shortcut: a tile that always fails (too dense for 60 s) holds back every later trip, upgrade to skipping it after a few tries if the log shows it
-                    waiting = true; break trips
+                    waiting = true; fetching = false; break
                 }
                 try diary.saveTile(tile, ways: fetched.ways, stops: fetched.stops, version: OSM.version)
                 tiles += 1
@@ -89,11 +92,10 @@ enum StreetService {
             let roughOnly = !trip.points.contains { $0.kind != .rough && $0.kind != .still }
             let kinds: Set<WayKind> = roughOnly ? [.rail, .tram, .ferry] : [.foot, .cycle, .road, .rail, .tram, .ferry]
             let graph = RoadGraph(ways: byId.values.filter { kinds.contains($0.kind) }.sorted { $0.id < $1.id })
-            // shortcut: trips are classified only once their tiles are fresh, so with downloads off nothing gets a mode, upgrade if the owner turns downloads off
             let modes = try TravelModes.classify(trip.points, graph: graph, stops: stopById.values.sorted { $0.id < $1.id },
                                                  activities: diary.activities(from: trip.start, to: trip.end))
             try diary.saveMatches(tripStart: trip.start, MapMatcher.match(trip.points, graph: graph, modes: modes), modes: modes)
-            try diary.setMeta("streetsUntil", String(trip.start.timeIntervalSince1970))
+            if !waiting { try diary.setMeta("streetsUntil", String(trip.start.timeIntervalSince1970)) }   // a trip matched on stale or missing tiles is redone
             matched += 1
             modeCount += modes.count
             unsure += modes.filter { $0.confidence < TravelModes.confident }.count

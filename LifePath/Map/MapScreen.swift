@@ -34,6 +34,7 @@ struct MapOptions: Equatable {
     var customTo = Date()
     var heat = false
     var recorded = false
+    var byMode = false   // colouring by mode: only then are modes read
 
     func range(now: Date) -> (from: Date, to: Date) {
         let cal = Calendar.current, today = cal.startOfDay(for: now)
@@ -65,7 +66,7 @@ struct MapOptions: Equatable {
     private struct Query: Sendable {
         var minLat, maxLat, minLon, maxLon, tolerance: Double
         var from, to: Date
-        var heat, recorded, street, zoomedOut: Bool
+        var heat, recorded, street, zoomedOut, byMode: Bool
         var places: [Place]   // in memory, refreshed by each places run; the loader never reads them per pan
     }
 
@@ -102,7 +103,7 @@ struct MapOptions: Equatable {
         let q = Query(minLat: max(-90, c.latitude - r.span.latitudeDelta * 0.6), maxLat: min(90, c.latitude + r.span.latitudeDelta * 0.6),
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
                       tolerance: Simplify.step(2 * metresPerPoint),
-                      from: range.from, to: range.to, heat: options.heat, recorded: options.recorded,
+                      from: range.from, to: range.to, heat: options.heat, recorded: options.recorded, byMode: options.byMode,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5, places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
         generation += 1
         let gen = generation
@@ -118,6 +119,7 @@ struct MapOptions: Equatable {
 
     private nonisolated static func load(_ diary: Diary, _ q: Query, generation: Int) throws -> MapData {
         var out = MapData(generation: generation)
+        let modesByTrip = q.byMode ? try diary.modes(from: q.from, to: q.to) : [:]   // one read for every trip in range
         var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], modes: [TravelMode?], start: Date, segment: Int, rough: Bool)] = []
         var after = q.from.addingTimeInterval(-0.001)   // reads are `t > after`: keep a point exactly at `from`
         // Zoomed out, trips up to the cache's end come from the trip-line cache (smoothed lines only); points resume where those trips end, never mid-trip.
@@ -126,7 +128,7 @@ struct MapOptions: Equatable {
             // shortcut: cached lines carry no rough flag and draw solid; upgrade when stage 3 stores rail-matched lines
             // Cached lines are simplified, so a point has no index in the trip: the whole line takes the trip's longest confident mode.
             trips = try cached.map { c in
-                let mode = MapColors.dominantMode(try diary.modes(tripStart: c.start))
+                let mode = MapColors.dominantMode(modesByTrip[c.start] ?? [])
                 return (coords: c.coords.map { (lat: $0.lat, lon: $0.lon) }, speeds: MapColors.filledSpeeds(c.coords.map(\.speed)),
                         modes: [TravelMode?](repeating: mode, count: c.coords.count), start: c.start, segment: 0, rough: false)
             }
@@ -146,7 +148,7 @@ struct MapOptions: Equatable {
                 }
                 var speeds = MapColors.filledSpeeds(trip.points.map(\.speed))
                 var rough = trip.points.map { $0.kind == .rough }
-                var modes = MapColors.pointModes(try diary.modes(tripStart: trip.start), times: trip.points.map(\.t))   // the trip's, recorded or matched
+                var modes = MapColors.pointModes(modesByTrip[trip.start] ?? [], times: trip.points.map(\.t))   // the trip's, recorded or matched
                 if !q.recorded {
                     let stretches = try diary.matches(tripStart: trip.start).filter { $0.confidence >= MapMatcher.confident }
                     let missing = Set(stretches.map(\.wayId)).filter { ways[$0] == nil }
@@ -248,6 +250,7 @@ struct MapScreen: View {
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
+        .onChange(of: colour) { _, c in loader.options.byMode = c == .mode }   // changes options, which reloads
         .onChange(of: loader.options) { loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: SmoothingService.linesChanged)) { _ in loader.reload() }   // no-op unless visible
         .onReceive(NotificationCenter.default.publisher(for: PlaceService.changed)) { _ in loader.reload() }

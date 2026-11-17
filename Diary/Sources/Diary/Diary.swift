@@ -326,6 +326,21 @@ public final class Diary: Sendable {
         }
     }
 
+    /// Modes of every trip starting in the range, by trip start.
+    public func modes(from: Date, to: Date) throws -> [Date: [ModeStretch]] {
+        try pool.read { db in
+            var out: [Date: [ModeStretch]] = [:]
+            for r in try Row.fetchAll(db, sql: "SELECT * FROM modeStretch WHERE tripStart >= ? AND tripStart <= ? ORDER BY tripStart, seq",
+                                      arguments: [from.timeIntervalSince1970, to.timeIntervalSince1970]) {
+                guard let m = TravelMode(rawValue: r["mode"]) else { continue }
+                out[Date(timeIntervalSince1970: r["tripStart"]), default: []].append(
+                    ModeStretch(seq: r["seq"], mode: m, confidence: r["confidence"],
+                                start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"])))
+            }
+            return out
+        }
+    }
+
     public func matches(tripStart: Date) throws -> [MatchedStretch] {
         try pool.read { db in
             try Row.fetchAll(db, sql: "SELECT * FROM matchedStretch WHERE tripStart = ? ORDER BY seq",

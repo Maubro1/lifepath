@@ -55,7 +55,7 @@ import CoreMotion
         let steps = CMPedometer.isStepCountingAvailable() && buckets > 0 ? await stepTimes(stillSince, 0, buckets, until: now) : []
         let acts: [(Date, Activity)] = await withCheckedContinuation { c in
             activities.queryActivityStarting(from: stillSince, to: now, to: .main) { @Sendable list, error in
-                c.resume(returning: list == nil || error != nil ? nil : list!.filter { $0.confidence != .low }.map { ($0.startDate, Self.activity($0)) })
+                c.resume(returning: (list ?? []).filter { $0.confidence != .low }.map { ($0.startDate, Self.activity($0)) })
             }
         }
         return Backfill.departure(stillSince: stillSince, activities: acts, stepTimes: steps)
