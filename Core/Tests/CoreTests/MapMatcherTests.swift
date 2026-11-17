@@ -56,19 +56,33 @@ final class MapMatcherTests: XCTestCase {
         XCTAssertFalse(m.contains { $0.wayId == 2 || $0.wayId == 9 }, "\(m.map { ($0.wayId, $0.start, $0.end) })")
     }
 
-    func testRoughTrainMatchesRailNotMotorway() {
-        // 30 min at 25 m/s; rail (1) and motorway (2) 150 m apart; fixes every 10 s, hAcc 700–1500, error ≤ 300 m toward the motorway.
-        let railNodes = (0...100).map { i -> (Int64, Double, Double) in (Int64(i), 0, Double(i) * 500 - 2000) }
-        let roadNodes = (0...100).map { i -> (Int64, Double, Double) in (Int64(i + 1000), 150, Double(i) * 500 - 2000) }
+    /// 30 min of rough fixes at `speed` beside rail (1) and a motorway (2) 150 m apart; fixes every 10 s, hAcc 700–1500,
+    /// error ≤ 300 m toward the motorway.
+    func roughRide(speed: Double) -> (pts: [FilteredPoint], graph: RoadGraph) {
+        let railNodes = (0...120).map { i -> (Int64, Double, Double) in (Int64(i), 0, Double(i) * 500 - 2000) }
+        let roadNodes = (0...120).map { i -> (Int64, Double, Double) in (Int64(i + 1000), 150, Double(i) * 500 - 2000) }
         let rail = way(1, .rail, railNodes), road = way(2, .road, roadNodes)
         var rng = SeededRandom(seed: 3)
         let pts = (0..<180).map { i -> FilteredPoint in
             let a = Double.random(in: 0...Double.pi, using: &rng), r = Double.random(in: 0...300, using: &rng)
-            let p = Geo.offset(lat: 52.37, lon: 4.90, north: r * sin(a), east: Double(i) * 250 + r * cos(a))
+            let p = Geo.offset(lat: 52.37, lon: 4.90, north: r * sin(a), east: Double(i) * speed * 10 + r * cos(a))
             return FilteredPoint(t: t0.addingTimeInterval(Double(i) * 10), lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon,
                                  hAcc: .random(in: 700...1500, using: &rng), speed: -1, kind: .rough)
         }
-        let m = MapMatcher.match(pts, graph: RoadGraph(ways: [rail, road]))
+        return (pts, RoadGraph(ways: [rail, road]))
+    }
+
+    func testRoughCarBesideRailwayStaysUnsure() {
+        // 20 m/s: a car in struggle mode as likely as a train; until 3b's travel modes it is never drawn solid on the rail.
+        let (pts, g) = roughRide(speed: 20)
+        let m = MapMatcher.match(pts, graph: g)
+        XCTAssertFalse(m.isEmpty)
+        XCTAssertFalse(m.contains { $0.confidence >= MapMatcher.confident })
+    }
+
+    func testRoughTrainMatchesRailNotMotorway() {
+        let (pts, g) = roughRide(speed: 30)
+        let m = MapMatcher.match(pts, graph: g)
         let s = share(m, pts, on: 1)
         print("MEAS rough train rail share", s, "stretches", m.count)
         XCTAssertFalse(m.isEmpty)

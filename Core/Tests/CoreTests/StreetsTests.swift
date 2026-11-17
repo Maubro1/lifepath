@@ -81,6 +81,18 @@ final class StreetsTests: XCTestCase {
         XCTAssertEqual(Set(grid.candidates(lat: p.lat, lon: p.lon, radius: 60).map(\.wayId)), [101, 201, 202])
     }
 
+    func testGraphHoldsMoreThan32768Ways() {
+        // A tile in a city holds tens of thousands of ways; a 32-bit packed segment key trapped past 32,767.
+        let ways: [Way] = (0..<33_000).map { (k: Int) -> Way in
+            let lat: Double = 52 + Double(k) * 1e-5
+            let coords: [(lat: Double, lon: Double)] = [(lat, 5), (lat + 5e-6, 5)]
+            return Way(id: Int64(k), kind: .road, name: nil, oneway: false, nodes: [Int64(2 * k), Int64(2 * k + 1)], coords: coords)
+        }
+        let g = RoadGraph(ways: ways)
+        let last: Double = 52 + 32_999 * 1e-5
+        XCTAssertEqual(g.candidates(lat: last, lon: 5, radius: 0.1).map { (c: Candidate) -> Int64 in c.wayId }, [32_999])
+    }
+
     /// Two parallel 200 m streets 30 m apart, joined only at the west end.
     var ladder: RoadGraph {
         RoadGraph(ways: [way(1, [(1, 0, 0), (2, 0, 200)]), way(2, [(3, 30, 0), (4, 30, 200)]), way(3, [(1, 0, 0), (3, 30, 0)])])

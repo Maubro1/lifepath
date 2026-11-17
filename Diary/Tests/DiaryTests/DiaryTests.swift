@@ -331,6 +331,15 @@ final class DiaryTests: XCTestCase {
         XCTAssertTrue(try diary.ways(minLat: 52, maxLat: 53, minLon: 4, maxLon: 5).isEmpty)
     }
 
+    func testWaysByIdInChunks() throws {
+        let diary = try Diary(path: tempPath())
+        let ids: [Int64] = Array(1...600)
+        try diary.saveTile(Tile(x: 0, y: 0), ways: ids.map { (id: Int64) -> Way in way(id) })
+        XCTAssertEqual(try diary.ways(ids: [3, 1, 999]).map { (w: Way) -> Int64 in w.id }, [1, 3])
+        XCTAssertEqual(try diary.ways(ids: Array(ids.reversed())).count, 600)   // past one 500-id chunk
+        XCTAssertTrue(try diary.ways(ids: []).isEmpty)
+    }
+
     func testMatchesReplacePerTrip() throws {
         let diary = try Diary(path: tempPath())
         func s(_ seq: Int, _ way: Int64) -> MatchedStretch {
