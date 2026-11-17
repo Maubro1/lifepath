@@ -22,7 +22,7 @@ The owner opens LifePath mostly to **watch the map fill up**: see which streets 
 
 ## 1. Visual system
 
-**Colours** live in the asset catalog with separate Any and Dark values; nothing is inverted automatically.
+**Colours** are dynamic colours with separate light and dark values, defined once in Core so they can be contrast-tested; nothing is inverted automatically.
 
 | Role | Light | Dark |
 |---|---|---|
