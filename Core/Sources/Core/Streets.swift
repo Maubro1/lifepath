@@ -18,11 +18,12 @@ public struct Way: Sendable, Equatable {
     public var oneway: Bool
     public var nodes: [Int64]
     public var coords: [(lat: Double, lon: Double)]
-    public init(id: Int64, kind: WayKind, name: String?, oneway: Bool, nodes: [Int64], coords: [(lat: Double, lon: Double)]) {
-        self.id = id; self.kind = kind; self.name = name; self.oneway = oneway; self.nodes = nodes; self.coords = coords
+    public var countable: Bool
+    public init(id: Int64, kind: WayKind, name: String?, oneway: Bool, nodes: [Int64], coords: [(lat: Double, lon: Double)], countable: Bool = true) {
+        self.id = id; self.kind = kind; self.name = name; self.oneway = oneway; self.nodes = nodes; self.coords = coords; self.countable = countable
     }
     public static func == (a: Way, b: Way) -> Bool {
-        a.id == b.id && a.kind == b.kind && a.name == b.name && a.oneway == b.oneway && a.nodes == b.nodes
+        a.id == b.id && a.kind == b.kind && a.name == b.name && a.oneway == b.oneway && a.nodes == b.nodes && a.countable == b.countable
             && a.coords.count == b.coords.count && zip(a.coords, b.coords).allSatisfy { $0.lat == $1.lat && $0.lon == $1.lon }
     }
 }
