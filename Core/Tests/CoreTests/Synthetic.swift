@@ -103,3 +103,53 @@ func multipath(_ samples: [Sample], range: Range<Int>, east: Double, hAcc: Doubl
     }
     return out
 }
+
+/// A vehicle (or walker) along `path` (metres north/east of 52.37, 4.90) at `speed` m/s, halting `seconds` at `atM` metres along it.
+/// Precise: `.moving` fixes every `every` s, Gaussian `noise` per axis, Doppler speed + N(0, 0.3) (0 in halts).
+/// `rough`: `.rough` fixes every 10 s, hAcc 700–1500, error ≤ 300 m, speed -1, as trains report.
+func ride(path: [(north: Double, east: Double)], speed: Double, every: TimeInterval, noise: Double, seed: UInt64, start: Date,
+          halts: [(atM: Double, seconds: Double)] = [], rough: Bool = false) -> [FilteredPoint] {
+    var rng = SeededRandom(seed: seed)
+    let legs = zip(path, path.dropFirst()).map { a, b -> Double in
+        let dn = b.north - a.north, de = b.east - a.east
+        return (dn * dn + de * de).squareRoot()
+    }
+    let length = legs.reduce(0, +), stops = halts.sorted { $0.atM < $1.atM }
+    // Metres along the path at time t, and whether halted then.
+    func along(_ t: Double) -> (m: Double, halted: Bool) {
+        var t = t, m = 0.0
+        for h in stops {
+            let reach = (h.atM - m) / speed
+            if t < reach { return (m + t * speed, false) }
+            t -= reach; m = h.atM
+            if t < h.seconds { return (m, true) }
+            t -= h.seconds
+        }
+        return (min(length, m + t * speed), false)
+    }
+    func position(_ m: Double) -> (north: Double, east: Double) {
+        var m = m
+        for (k, l) in legs.enumerated() {
+            if m <= l || k == legs.count - 1 {
+                let f = l > 0 ? min(1, m / l) : 0, a = path[k], b = path[k + 1]
+                return (a.north + f * (b.north - a.north), a.east + f * (b.east - a.east))
+            }
+            m -= l
+        }
+        return path[0]
+    }
+    let duration = length / speed + halts.map(\.seconds).reduce(0, +)
+    return stride(from: 0.0, through: duration, by: rough ? 10 : every).map { t -> FilteredPoint in
+        let (m, halted) = along(t), at = position(m)
+        var en = rng.gaussian() * noise, ee = rng.gaussian() * noise
+        if rough {
+            let a = Double.random(in: 0..<2 * .pi, using: &rng), r = Double.random(in: 0...300, using: &rng)
+            en = r * sin(a); ee = r * cos(a)
+        }
+        let p = Geo.offset(lat: 52.37, lon: 4.90, north: at.north + en, east: at.east + ee)
+        let hAcc: Double = rough ? .random(in: 700...1500, using: &rng) : noise * 1.5
+        let v: Double = rough ? -1 : halted ? 0 : max(0, speed + 0.3 * rng.gaussian())
+        return FilteredPoint(t: start.addingTimeInterval(t), lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon,
+                             hAcc: hAcc, speed: v, kind: rough ? .rough : .moving)
+    }
+}

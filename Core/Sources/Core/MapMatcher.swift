@@ -21,7 +21,7 @@ public enum MapMatcher {
     struct Step { var i: Int; var sigma: Double; var rough: Bool; var walking: Bool; var cands: [Candidate]; var emis: [Double]; var fwd: [Double] }
 
     public static func match(_ points: [FilteredPoint], graph: RoadGraph) -> [MatchedStretch] {
-        let fast = fastRough(points)
+        let fast = roughRunSpeed(points).map { $0 > 15 }
         var out: [MatchedStretch] = [], chain: [Step] = [], trans: [[[Double]]] = []  // trans[k]: log transition chain[k-1] -> chain[k]
         func flush() { out += stretches(chain, trans, points, graph: graph, seq: out.count); chain = []; trans = [] }
 
@@ -106,15 +106,15 @@ public enum MapMatcher {
         return dt <= 0 || distance(p[lo], p[hi]) / dt < 2.5
     }
 
-    /// Per point: a rough fix in a run of rough fixes whose straight-line speed, first to last, exceeds 15 m/s.
-    static func fastRough(_ p: [FilteredPoint]) -> [Bool] {
-        var out = [Bool](repeating: false, count: p.count), a = 0
+    /// Per point: the straight-line speed, first to last, of its run of rough fixes (0 for precise points).
+    static func roughRunSpeed(_ p: [FilteredPoint]) -> [Double] {
+        var out = [Double](repeating: 0, count: p.count), a = 0
         while a < p.count {
             guard p[a].kind == .rough else { a += 1; continue }
             var b = a
             while b + 1 < p.count, p[b + 1].kind == .rough { b += 1 }
             let dt = p[b].t.timeIntervalSince(p[a].t)
-            if dt > 0, distance(p[a], p[b]) / dt > 15 { for k in a...b { out[k] = true } }
+            if dt > 0 { for k in a...b { out[k] = distance(p[a], p[b]) / dt } }
             a = b + 1
         }
         return out
