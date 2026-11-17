@@ -206,6 +206,39 @@ public struct RoadGraph: Sendable {
         }
         return best <= limit ? best : nil
     }
+
+    /// `routeDistance` from `a` to each target with one search: same rules, same results.
+    public func routeDistances(from a: Candidate, to targets: [Candidate], limit: Double, oneway: Bool = true) -> [Double?] {
+        var out = [Double?](repeating: nil, count: targets.count)
+        guard let ai = index[a.wayId] else { return out }
+        let aw = ways[ai], al = lens[ai][a.segment], aOne = oneway && aw.oneway
+        var tail: [Int64: [(k: Int, len: Double)]] = [:], open: [Int] = []
+        for (k, b) in targets.enumerated() {
+            guard let bi = index[b.wayId] else { continue }
+            let bw = ways[bi], bl = lens[bi][b.segment]
+            if ai == bi && a.segment == b.segment {
+                let d = (b.t - a.t) * al
+                if d >= 0 || !aOne { out[k] = abs(d) <= limit ? abs(d) : nil; continue }
+            }
+            tail[bw.nodes[b.segment], default: []].append((k, b.t * bl))
+            if !(oneway && bw.oneway) { tail[bw.nodes[b.segment + 1], default: []].append((k, (1 - b.t) * bl)) }
+            open.append(k)
+        }
+        guard !open.isEmpty else { return out }
+        var dist: [Int64: Double] = [:], heap = MinHeap(), best = [Double](repeating: .infinity, count: targets.count)
+        func push(_ n: Int64, _ d: Double) {
+            if d <= limit, d < dist[n, default: .infinity] { dist[n] = d; heap.push(d, n) }
+        }
+        push(aw.nodes[a.segment + 1], (1 - a.t) * al)
+        if !aOne { push(aw.nodes[a.segment], a.t * al) }
+        while let (d, n) = heap.pop(), open.contains(where: { d < best[$0] }) {
+            if d > dist[n]! { continue }
+            for t in tail[n] ?? [] { best[t.k] = min(best[t.k], d + t.len) }
+            for e in edges[n] ?? [] where !(oneway && e.against) { push(e.to, d + e.len) }
+        }
+        for k in open where best[k] <= limit { out[k] = best[k] }
+        return out
+    }
 }
 
 /// Binary min-heap of (distance, node); stale entries are skipped by the caller.

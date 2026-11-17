@@ -141,6 +141,24 @@ final class StreetsTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(one.routeDistance(from: y, to: x, limit: 1000, oneway: false)), 100, accuracy: 1)  // on foot
     }
 
+    func testBatchRouteDistancesMatchPairwise() {
+        // 4×4 grid, 100 m apart: rows are 3-segment ways (rows 1 and 3 one-way east), columns two-way.
+        let node = { (r: Int, c: Int) -> (Int64, Double, Double) in (Int64(r * 4 + c), Double(r) * 100, Double(c) * 100) }
+        let rows: [Way] = (0..<4).map { (r: Int) -> Way in way(Int64(10 + r), (0..<4).map { (c: Int) in node(r, c) }, oneway: r % 2 == 1) }
+        let cols: [Way] = (0..<4).map { (c: Int) -> Way in way(Int64(20 + c), (0..<4).map { (r: Int) in node(r, c) }) }
+        let g = RoadGraph(ways: rows + cols)
+        let spots: [(n: Double, e: Double)] = [(0, 40), (0, 70), (100, 30), (100, 80), (100, 250), (200, 150), (300, 10), (300, 290), (150, 100), (50, 300)]
+        let cands: [Candidate] = spots.flatMap { (s: (n: Double, e: Double)) -> [Candidate] in
+            let p = Geo.offset(lat: 52, lon: 5, north: s.n, east: s.e)
+            return g.candidates(lat: p.lat, lon: p.lon, radius: 5)
+        }
+        XCTAssertEqual(cands.count, spots.count)
+        for limit in [60.0, 250, 10_000] { for oneway in [true, false] { for a in cands {
+            let pair: [Double?] = cands.map { (b: Candidate) -> Double? in g.routeDistance(from: a, to: b, limit: limit, oneway: oneway) }
+            XCTAssertEqual(g.routeDistances(from: a, to: cands, limit: limit, oneway: oneway), pair)
+        } } }
+    }
+
     func testSliceBothDirectionsAndPartialSegments() {
         let w = way(1, [(1, 0, 0), (2, 0, 100), (3, 100, 100)])   // 100 m east, then 100 m north
         let fwd = w.slice(fromM: 50, toM: 150)

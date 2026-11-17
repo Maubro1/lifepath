@@ -55,10 +55,10 @@ public enum MapMatcher {
             var step = Step(i: i, sigma: sigma, rough: rough, walking: walking, mode: mode, cands: cands, emis: emis, fwd: emis)
             if let prev = chain.last {
                 let straight = distance(points[prev.i], p), beta = rough || prev.rough ? 50.0 : 3.0
-                let t = prev.cands.map { a in cands.map { b in
-                    graph.routeDistance(from: a, to: b, limit: 2 * straight + 200, oneway: !(walking && prev.walking))
-                        .map { -abs($0 - straight) / beta } ?? -.infinity
-                } }
+                let t = prev.cands.map { a in
+                    graph.routeDistances(from: a, to: cands, limit: 2 * straight + 200, oneway: !(walking && prev.walking))
+                        .map { $0.map { -abs($0 - straight) / beta } ?? -.infinity }
+                }
                 step.fwd = cands.indices.map { j in prev.fwd.indices.map { prev.fwd[$0] + t[$0][j] }.max()! + emis[j] }
                 if step.fwd.allSatisfy({ $0 == -.infinity }) { flush(); step.fwd = emis } else { trans.append(t) }
             }
