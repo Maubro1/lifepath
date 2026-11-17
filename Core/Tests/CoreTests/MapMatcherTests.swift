@@ -73,11 +73,56 @@ final class MapMatcherTests: XCTestCase {
     }
 
     func testRoughCarBesideRailwayStaysUnsure() {
-        // 20 m/s: a car in struggle mode as likely as a train; until 3b's travel modes it is never drawn solid on the rail.
+        // 20 m/s: without a confident mode a car in struggle mode is as likely as a train, so never drawn solid on the rail;
+        // inside a confident car stretch rough fixes are not matched at all.
         let (pts, g) = roughRide(speed: 20)
         let m = MapMatcher.match(pts, graph: g)
         XCTAssertFalse(m.isEmpty)
         XCTAssertFalse(m.contains { $0.confidence >= MapMatcher.confident })
+        XCTAssertTrue(MapMatcher.match(pts, graph: g, modes: [whole(.car, pts)]).isEmpty)
+    }
+
+    /// One stretch of `mode` over all of `pts`.
+    func whole(_ mode: TravelMode, _ pts: [FilteredPoint], confidence: Double = 0.9) -> ModeStretch {
+        ModeStretch(seq: 0, mode: mode, confidence: confidence, start: pts[0].t, end: pts[pts.count - 1].t)
+    }
+
+    func testTrainStretchNeverMatchesRoad() {
+        // Rail (1) along east 0, road (2) along east 30; fixes along east 40 at 25 m/s.
+        let g = RoadGraph(ways: [way(1, .rail, [(1, 0, 0), (2, 3000, 0)]), way(2, .road, [(11, 0, 30), (12, 3000, 30)])])
+        let pts = ride(path: [(0, 40), (3000, 40)], speed: 25, every: 1, noise: 3, seed: 21, start: t0).map { p -> FilteredPoint in
+            var p = p; p.hAcc = 25; return p
+        }
+        XCTAssertTrue(MapMatcher.match(pts, graph: g).contains { $0.wayId == 2 })   // without modes the road wins
+        let m = MapMatcher.match(pts, graph: g, modes: [whole(.train, pts)])
+        XCTAssertFalse(m.isEmpty)
+        XCTAssertTrue(m.allSatisfy { $0.wayId == 1 }, "\(m.map { ($0.wayId, $0.start, $0.end) })")
+    }
+
+    func testBikePrefersCyclePath() {
+        // Road (1) along east 0, cycle way (2) along east 8; fixes centred between them.
+        let g = RoadGraph(ways: [way(1, .road, [(1, 0, 0), (2, 1000, 0)]), way(2, .cycle, [(11, 0, 8), (12, 1000, 8)])])
+        let pts = ride(path: [(0, 4), (1000, 4)], speed: 5, every: 1, noise: 4, seed: 23, start: t0)
+        let m = MapMatcher.match(pts, graph: g, modes: [whole(.bike, pts)])
+        let s = share(m, pts, on: 2)
+        print("MEAS bike cycle share", s)
+        XCTAssertGreaterThanOrEqual(s, 0.9)
+    }
+
+    func testSlowRoughTrainStillMatchesRail() {
+        let (pts, g) = roughRide(speed: 8)
+        XCTAssertTrue(MapMatcher.match(pts, graph: g).isEmpty)   // 3a: slow rough fixes stay unmatched
+        let m = MapMatcher.match(pts, graph: g, modes: [whole(.train, pts)])
+        let s = share(m, pts, on: 1)
+        print("MEAS slow rough train rail share", s)
+        XCTAssertFalse(m.isEmpty)
+        XCTAssertTrue(m.allSatisfy { $0.wayId == 1 })
+        XCTAssertGreaterThanOrEqual(s, 0.9)
+    }
+
+    func testUnsureModeKeepsOldRules() {
+        let pts = canyonWalk()
+        XCTAssertEqual(MapMatcher.match(pts, graph: canyon, modes: [whole(.car, pts, confidence: 0.3)]), MapMatcher.match(pts, graph: canyon))
     }
 
     func testRoughTrainMatchesRailNotMotorway() {

@@ -54,7 +54,7 @@ import CoreMotion
         let buckets = Int((now.timeIntervalSince(stillSince) / 30).rounded(.up))
         let steps = CMPedometer.isStepCountingAvailable() && buckets > 0 ? await stepTimes(stillSince, 0, buckets, until: now) : []
         let acts: [(Date, Activity)] = await withCheckedContinuation { c in
-            activities.queryActivityStarting(from: stillSince, to: now, to: .main) { @Sendable list, _ in
+            activities.queryActivityStarting(from: stillSince, to: now, to: .main) { @Sendable list, error in
                 c.resume(returning: (list ?? []).filter { $0.confidence != .low }.map { ($0.startDate, Self.activity($0)) })
             }
         }
@@ -88,6 +88,20 @@ import CoreMotion
             if let d { out.append((a, d / b.timeIntervalSince(a))) }
             a = b
         }
+        return out
+    }
+
+    /// Confident activity changes from CoreMotion history (kept 7 days); empty when there is nothing to read, nil when the query failed (no motion permission, say), so the caller does not skip that span.
+    nonisolated static func activities(from: Date, to: Date) async -> [(t: Date, activity: Activity)]? {
+        guard available, from < to else { return [] }
+        let manager = CMMotionActivityManager()
+        let out: [(t: Date, activity: Activity)]? = await withCheckedContinuation { c in
+            manager.queryActivityStarting(from: from, to: to, to: .main) { @Sendable list, error in
+                guard let list, error == nil else { c.resume(returning: nil); return }
+                c.resume(returning: list.filter { $0.confidence != .low }.map { (t: $0.startDate, activity: Self.activity($0)) })
+            }
+        }
+        withExtendedLifetime(manager) {}   // the manager must outlive its query
         return out
     }
 

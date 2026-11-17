@@ -1,6 +1,15 @@
 import Foundation
 
-public enum WayKind: String, Sendable { case foot, road, rail, tram, ferry }
+public enum WayKind: String, Sendable { case foot, road, rail, tram, ferry, cycle }
+
+public enum StopKind: String, Sendable { case bus, tram, rail, ferry }
+
+public struct Stop: Sendable, Equatable {
+    public var id: Int64
+    public var kind: StopKind
+    public var lat: Double, lon: Double
+    public init(id: Int64, kind: StopKind, lat: Double, lon: Double) { self.id = id; self.kind = kind; self.lat = lat; self.lon = lon }
+}
 
 public struct Way: Sendable, Equatable {
     public var id: Int64
@@ -9,11 +18,12 @@ public struct Way: Sendable, Equatable {
     public var oneway: Bool
     public var nodes: [Int64]
     public var coords: [(lat: Double, lon: Double)]
-    public init(id: Int64, kind: WayKind, name: String?, oneway: Bool, nodes: [Int64], coords: [(lat: Double, lon: Double)]) {
-        self.id = id; self.kind = kind; self.name = name; self.oneway = oneway; self.nodes = nodes; self.coords = coords
+    public var countable: Bool   // a street for Streets walked
+    public init(id: Int64, kind: WayKind, name: String?, oneway: Bool, nodes: [Int64], coords: [(lat: Double, lon: Double)], countable: Bool = true) {
+        self.id = id; self.kind = kind; self.name = name; self.oneway = oneway; self.nodes = nodes; self.coords = coords; self.countable = countable
     }
     public static func == (a: Way, b: Way) -> Bool {
-        a.id == b.id && a.kind == b.kind && a.name == b.name && a.oneway == b.oneway && a.nodes == b.nodes
+        a.id == b.id && a.kind == b.kind && a.name == b.name && a.oneway == b.oneway && a.nodes == b.nodes && a.countable == b.countable
             && a.coords.count == b.coords.count && zip(a.coords, b.coords).allSatisfy { $0.lat == $1.lat && $0.lon == $1.lon }
     }
 }
@@ -53,14 +63,15 @@ public enum OSM {
     private struct Doc: Decodable {
         struct El: Decodable {
             struct P: Decodable { var lat: Double; var lon: Double }
-            var type: String; var id: Int64; var nodes: [Int64]?; var geometry: [P]?; var tags: [String: String]?
+            var type: String; var id: Int64; var lat: Double?; var lon: Double?; var nodes: [Int64]?; var geometry: [P]?; var tags: [String: String]?
         }
         var elements: [El]
     }
 
     static func kind(_ t: [String: String]) -> WayKind? {
         if let h = t["highway"] {
-            return ["footway", "path", "pedestrian", "steps", "cycleway", "track", "living_street"].contains(h) ? .foot : .road
+            if h == "cycleway" || (["path", "footway", "track"].contains(h) && t["bicycle"] == "designated") { return .cycle }
+            return ["footway", "path", "pedestrian", "steps", "track", "living_street"].contains(h) ? .foot : .road
         }
         switch t["railway"] {
         case "rail", "light_rail", "subway": return .rail
@@ -69,20 +80,47 @@ public enum OSM {
         }
     }
 
-    /// Ways from Overpass JSON made with `out body geom`; elements that are not mapped travel ways are dropped.
-    public static func parse(_ data: Data) throws -> [Way] {
-        try JSONDecoder().decode(Doc.self, from: data).elements.compactMap { e in
+    /// A street for Streets walked: foot, cycle and road ways, without motorways, driveways, sidewalks, crossings and private ways.
+    static func countable(_ t: [String: String], _ kind: WayKind) -> Bool {
+        guard [.foot, .cycle, .road].contains(kind) else { return false }
+        if ["motorway", "motorway_link", "trunk_link", "service", "construction", "proposed", "platform", "raceway", "bus_guideway",
+            "busway", "corridor", "elevator", "escape"].contains(t["highway"] ?? "") || t["motorroad"] == "yes" { return false }
+        if ["sidewalk", "crossing"].contains(t["footway"] ?? "") || t["cycleway"] == "crossing" || t["path"] == "crossing" { return false }
+        if ["private", "no"].contains(t["access"] ?? "") || t["foot"] == "no" { return ["yes", "designated", "permissive"].contains(t["foot"] ?? "") }
+        return true
+    }
+
+    /// What a stored tile contains: 1 = ways only, 2 = plus stops and cycle ways, 3 = plus street flags.
+    public static let version = 3
+
+    static func stopKind(_ t: [String: String]) -> StopKind? {
+        if t["highway"] == "bus_stop" { return .bus }
+        if t["railway"] == "tram_stop" { return .tram }
+        if t["railway"] == "station" || t["railway"] == "halt" { return .rail }
+        return t["amenity"] == "ferry_terminal" ? .ferry : nil
+    }
+
+    /// Ways and stops from Overpass JSON made with `out body geom`; elements that are not mapped travel ways or stops are dropped.
+    public static func parse(_ data: Data) throws -> (ways: [Way], stops: [Stop]) {
+        let els = try JSONDecoder().decode(Doc.self, from: data).elements
+        let stops: [Stop] = els.compactMap { e in
+            guard e.type == "node", let tags = e.tags, let k = stopKind(tags), let lat = e.lat, let lon = e.lon else { return nil }
+            return Stop(id: e.id, kind: k, lat: lat, lon: lon)
+        }
+        let ways: [Way] = els.compactMap { e in
             guard e.type == "way", let tags = e.tags, let kind = kind(tags), let nodes = e.nodes, let geo = e.geometry,
                   nodes.count >= 2, nodes.count == geo.count else { return nil }
             // shortcut: oneway=-1 (against the drawn direction) is read as two-way, upgrade if it shows in matches
             let oneway = kind == .road && (["yes", "1", "true"].contains(tags["oneway"] ?? "") || tags["junction"] == "roundabout")
-            return Way(id: e.id, kind: kind, name: tags["name"], oneway: oneway, nodes: nodes, coords: geo.map { ($0.lat, $0.lon) })
+            return Way(id: e.id, kind: kind, name: tags["name"], oneway: oneway, nodes: nodes, coords: geo.map { ($0.lat, $0.lon) },
+                       countable: countable(tags, kind))
         }
+        return (ways, stops)
     }
 
     public static func query(minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) -> String {
         let b = "(\(minLat),\(minLon),\(maxLat),\(maxLon))"
-        return "[out:json][timeout:60];(way[\"highway\"]\(b);way[\"railway\"~\"^(rail|light_rail|subway|tram)$\"]\(b);way[\"route\"=\"ferry\"]\(b););out body geom;"
+        return "[out:json][timeout:60];(way[\"highway\"]\(b);way[\"railway\"~\"^(rail|light_rail|subway|tram)$\"]\(b);way[\"route\"=\"ferry\"]\(b);node[\"highway\"=\"bus_stop\"]\(b);node[\"railway\"~\"^(tram_stop|station|halt)$\"]\(b);node[\"amenity\"=\"ferry_terminal\"]\(b););out body geom;"
     }
 }
 

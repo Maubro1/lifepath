@@ -21,6 +21,16 @@ Next per the spec: OSM street and rail download, HMM/Viterbi map matching (snaps
 
 v0.3.1 ("tracking under pressure": rough fixes kept, consistency-weighted smoothing with walking pace and spike removal, pottering vs leaving, keep-alive first at pins, struggle mode in vehicles, live steady map) is released as v0.3.1-preview.1; decisions in `docs/decisions/v0.3.1.md`. Not yet tested on the phone: ask the owner for health reports (new: rough counts per hour, struggle minutes, wake outcomes).
 
+## Questions for the owner (collected overnight, 2026-11-17)
+
+None of these block work; each has a default already built.
+
+1. Travel mode: when you walk to a train, the switch point on the map can be up to 30 s late. Fine, or should it be sharper?
+2. Travel mode: stretches LifePath isn't sure about are drawn grey. OK, or would you rather see them in the date colour?
+3. Streets walked: running counts as walking; a walk within 15 m of a street (e.g. on a separately mapped sidewalk) counts for that street; motorways, service roads, sidewalks and private roads don't count as streets. Agree?
+4. Streets walked: the tally (e.g. "312 of 1,840 streets") sits under the map controls until the Stats screen arrives in stage 4. OK?
+5. Privacy check: LifePath now keeps your motion activity (walking, cycling, in a vehicle) in the diary for good, because iOS forgets it after 7 days. It never leaves the phone. OK?
+
 ## Owner decision on places (made 2026-11-15)
 
 One kind of place, shown as a pin: 4 points per different day + 1 point per hour; the pin appears at 100 points. A real visit lasts at least 5 h, or at least half the median of that place's last 20 visits. Hiding is dynamic: hideAfterDays = min(730, max(180, 3 × typical gap) + 30 × min(6, years known)). A stay is a run of consecutive days touched by a real visit; a gap runs from the end of one stay to the start of the next; the typical gap is the lower median of the last 8 gaps; years known counts whole years from the first visit to the last real visit. In the owner's words: a pin stays at least 6 months after the last real visit, or three times the usual gap between stays if that is longer, plus one month per year the place has been in their life (up to 6), at most 2 years. One real visit brings it back. Nothing is deleted; past map periods show the pins of that time. No invisible places, no fading, no manual "moved away" button for now. Worked examples (all in the tests): home 8 yrs → 360 days, former home after 5 yrs → 330, school 4 yrs → 300, gym → 240, parents monthly → 360, grandparents 3×/yr → 450, holiday home yearly → 730, café → 270, internship → 180.

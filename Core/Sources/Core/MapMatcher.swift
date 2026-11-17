@@ -14,32 +14,45 @@ public struct MatchedStretch: Sendable, Equatable, Codable {
 
 /// Hidden Markov Model map matching with Viterbi decoding (Newson & Krumm 2009), in log space.
 public enum MapMatcher {
-    public static let version = 1
+    public static let version = 2
     public static let confident = 0.6
 
     /// A used point: its candidates, their log emissions, and the best log score of a path ending in each (forward Viterbi).
-    struct Step { var i: Int; var sigma: Double; var rough: Bool; var walking: Bool; var cands: [Candidate]; var emis: [Double]; var fwd: [Double] }
+    struct Step { var i: Int; var sigma: Double; var rough: Bool; var walking: Bool; var mode: TravelMode?; var cands: [Candidate]; var emis: [Double]; var fwd: [Double] }
 
-    public static func match(_ points: [FilteredPoint], graph: RoadGraph) -> [MatchedStretch] {
-        let fast = fastRough(points)
+    /// Points inside a stretch of `modes` with confidence ≥ `TravelModes.confident` match only that mode's networks.
+    public static func match(_ points: [FilteredPoint], graph: RoadGraph, modes: [ModeStretch] = []) -> [MatchedStretch] {
+        let fast = roughRunSpeed(points).map { $0 > 15 }
+        var modeAt = [TravelMode?](repeating: nil, count: points.count)
+        for m in modes where m.confidence >= TravelModes.confident {
+            for i in points.indices where m.start <= points[i].t && points[i].t <= m.end { modeAt[i] = m.mode }
+        }
         var out: [MatchedStretch] = [], chain: [Step] = [], trans: [[[Double]]] = []  // trans[k]: log transition chain[k-1] -> chain[k]
         func flush() { out += stretches(chain, trans, points, graph: graph, seq: out.count); chain = []; trans = [] }
 
         for (i, p) in points.enumerated() where p.kind != .still {
-            let rough = p.kind == .rough
-            // shortcut: slow rough fixes (trams, buses, walks with ~1 km error) stay unmatched, upgrade with 3b travel modes
-            if rough && !fast[i] { continue }
+            let rough = p.kind == .rough, mode = modeAt[i]
+            // Rough fixes match only in a confident tram, train or boat stretch; without one, only fast (3a).
+            if rough && !(mode.map { [.tram, .train, .boat].contains($0) } ?? fast[i]) { continue }
             let sigma = rough ? min(p.hAcc, 300) : max(4, p.hAcc)
             if let prev = chain.last, distance(points[prev.i], p) < 2 * sigma { continue }
-            let walking = !rough && isWalking(points, i)
-            // shortcut: cycle paths are foot ways, so a bike on a separate path matches the road beside it, upgrade with 3b travel modes
-            let kinds: Set<WayKind> = rough ? [.rail, .tram, .ferry] : walking ? [.foot, .road] : [.road, .rail, .tram, .ferry]
+            let walking = mode.map { [.walk, .run, .bike].contains($0) } ?? (!rough && isWalking(points, i))   // walking ignores one-way
+            let kinds: Set<WayKind> = switch mode {
+            case .walk?, .run?, .bike?: [.foot, .cycle, .road]
+            case .car?, .bus?: [.road]
+            case .tram?: [.tram, .rail]
+            case .train?: [.rail]
+            case .boat?: [.ferry]
+            case nil: rough ? [.rail, .tram, .ferry] : walking ? [.foot, .cycle, .road] : [.road, .rail, .tram, .ferry]
+            }
             // shortcut: the 8 nearest segments keep Viterbi at 64 routes a step; a dense square can crowd out the true way, raise if matches show it
             let cands = Array(graph.candidates(lat: p.lat, lon: p.lon, radius: rough ? min(p.hAcc, 1500) : max(30, 2 * p.hAcc))
                 .filter { kinds.contains(graph.ways[graph.index[$0.wayId]!].kind) }.prefix(8))
             if cands.isEmpty { flush(); continue }
-            let emis = cands.map { -0.5 * ($0.distance / sigma) * ($0.distance / sigma) }
-            var step = Step(i: i, sigma: sigma, rough: rough, walking: walking, cands: cands, emis: emis, fwd: emis)
+            // shortcut: bikes may ride against one-way roads and the -2 road penalty ignores oneway:bicycle and cycle lanes on the road, upgrade if matches show bikes on the wrong side
+            let emis = cands.map { -0.5 * ($0.distance / sigma) * ($0.distance / sigma)
+                - (mode == .bike && graph.ways[graph.index[$0.wayId]!].kind == .road ? 2 : 0) }
+            var step = Step(i: i, sigma: sigma, rough: rough, walking: walking, mode: mode, cands: cands, emis: emis, fwd: emis)
             if let prev = chain.last {
                 let straight = distance(points[prev.i], p), beta = rough || prev.rough ? 50.0 : 3.0
                 let t = prev.cands.map { a in cands.map { b in
@@ -84,10 +97,10 @@ public enum MapMatcher {
         return kept.enumerated().map { n, r -> MatchedStretch in
             let run = picks[r.a..<r.b], len = Double(run.count)
             var conf = Double(run.filter(\.near).count) / len * run.map(\.margin).reduce(0, +) / len
-            // shortcut: rough fixes see only rail/tram/ferry, so no road competes and a fast car beside a railway would draw solid;
-            // below train-only speeds (25 m/s) such a stretch stays unsure, upgrade with 3b travel modes
+            // Without a confident mode rough fixes see only rail/tram/ferry, so no road competes: below train-only speeds
+            // (25 m/s) a car beside a railway is as likely, and the stretch stays unsure.
             let steps = chain[r.a..<r.b]
-            if steps.allSatisfy(\.rough) {
+            if steps.allSatisfy({ $0.rough && $0.mode == nil }) {
                 let v = zip(steps, steps.dropFirst()).map { a, b -> Double in
                     let dt = points[b.i].t.timeIntervalSince(points[a.i].t)
                     return dt > 0 ? distance(points[a.i], points[b.i]) / dt : 0
@@ -117,15 +130,15 @@ public enum MapMatcher {
         return dt <= 0 || distance(p[lo], p[hi]) / dt < 2.5
     }
 
-    /// Per point: a rough fix in a run of rough fixes whose straight-line speed, first to last, exceeds 15 m/s.
-    static func fastRough(_ p: [FilteredPoint]) -> [Bool] {
-        var out = [Bool](repeating: false, count: p.count), a = 0
+    /// Per point: the straight-line speed, first to last, of its run of rough fixes (0 for precise points).
+    static func roughRunSpeed(_ p: [FilteredPoint]) -> [Double] {
+        var out = [Double](repeating: 0, count: p.count), a = 0
         while a < p.count {
             guard p[a].kind == .rough else { a += 1; continue }
             var b = a
             while b + 1 < p.count, p[b + 1].kind == .rough { b += 1 }
             let dt = p[b].t.timeIntervalSince(p[a].t)
-            if dt > 0, distance(p[a], p[b]) / dt > 15 { for k in a...b { out[k] = true } }
+            if dt > 0 { for k in a...b { out[k] = distance(p[a], p[b]) / dt } }
             a = b + 1
         }
         return out

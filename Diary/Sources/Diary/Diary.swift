@@ -61,6 +61,27 @@ public final class Diary: Sendable {
                     PRIMARY KEY(tripStart, seq));
                 """)
         }
+        migrator.registerMigration("v7") { db in
+            // Additive. activity is kept like points (CoreMotion history lasts only 7 days); stop and modeStretch are recomputable caches.
+            // tile.version NULL marks a tile stored before stops and cycle ways existed.
+            try db.execute(sql: """
+                CREATE TABLE activity(t REAL PRIMARY KEY, kind TEXT);
+                CREATE TABLE stop(id INTEGER PRIMARY KEY, kind TEXT, lat REAL, lon REAL);
+                CREATE INDEX stop_lat ON stop(lat);
+                CREATE TABLE modeStretch(
+                    tripStart REAL, seq INTEGER, mode TEXT, confidence REAL, start REAL, end REAL,
+                    PRIMARY KEY(tripStart, seq));
+                ALTER TABLE tile ADD COLUMN version INTEGER;
+                """)
+        }
+        migrator.registerMigration("v8") { db in
+            // Additive. NULL countable reads as false, so a pre-v8 way never counts. Hits and covered ways are recomputable caches.
+            try db.execute(sql: """
+                ALTER TABLE way ADD COLUMN countable INTEGER;
+                CREATE TABLE segmentHit(tripStart REAL, wayId INTEGER, seg INTEGER, bike INTEGER, PRIMARY KEY(tripStart, wayId, seg, bike));
+                CREATE TABLE coveredWay(wayId INTEGER PRIMARY KEY, bike INTEGER);
+                """)
+        }
         try migrator.migrate(pool)
     }
 
@@ -200,22 +221,61 @@ public final class Diary: Sendable {
     }
 
     /// One transaction, tile row last: a crash never leaves a tile marked fetched without its ways. A way in two tiles is stored once.
-    public func saveTile(_ tile: Tile, ways: [Way]) throws {
+    public func saveTile(_ tile: Tile, ways: [Way], stops: [Stop], version: Int) throws {
         try pool.write { db in
             for w in ways {
                 var row: StatementArguments = [w.id, w.kind.rawValue, w.name, w.oneway, Self.pack(w.nodes.map { UInt64(bitPattern: $0) })]
                 row += [Self.pack(w.coords.flatMap { [$0.lat.bitPattern, $0.lon.bitPattern] })]
                 row += [w.coords.map(\.lat).min(), w.coords.map(\.lat).max(), w.coords.map(\.lon).min(), w.coords.map(\.lon).max()]
-                try db.execute(sql: "INSERT OR REPLACE INTO way(id, kind, name, oneway, nodes, coords, minLat, maxLat, minLon, maxLon) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                row += [w.countable]
+                try db.execute(sql: "INSERT OR REPLACE INTO way(id, kind, name, oneway, nodes, coords, minLat, maxLat, minLon, maxLon, countable) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                                arguments: row)
             }
-            try db.execute(sql: "INSERT OR REPLACE INTO tile(x, y, fetchedAt) VALUES (?,?,?)",
-                           arguments: [tile.x, tile.y, Date().timeIntervalSince1970])
+            for s in stops {
+                try db.execute(sql: "INSERT OR REPLACE INTO stop(id, kind, lat, lon) VALUES (?,?,?,?)",
+                               arguments: [s.id, s.kind.rawValue, s.lat, s.lon])
+            }
+            var tileRow: StatementArguments = [tile.x, tile.y, Date().timeIntervalSince1970]
+            tileRow += [version]
+            try db.execute(sql: "INSERT OR REPLACE INTO tile(x, y, fetchedAt, version) VALUES (?,?,?,?)", arguments: tileRow)
         }
     }
 
-    public func hasTile(_ tile: Tile) throws -> Bool {
-        try pool.read { db in try Row.fetchOne(db, sql: "SELECT 1 FROM tile WHERE x = ? AND y = ?", arguments: [tile.x, tile.y]) != nil }
+    /// True only when the stored tile is at least that version; a tile from before v7 has none and is stale.
+    public func hasTile(_ tile: Tile, version: Int) throws -> Bool {
+        try pool.read { db in
+            try Row.fetchOne(db, sql: "SELECT 1 FROM tile WHERE x = ? AND y = ? AND version >= ?", arguments: [tile.x, tile.y, version]) != nil
+        }
+    }
+
+    public func stops(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) throws -> [Stop] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM stop WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? ORDER BY id",
+                             arguments: [minLat, maxLat, minLon, maxLon]).compactMap { r in
+                StopKind(rawValue: r["kind"]).map { Stop(id: r["id"], kind: $0, lat: r["lat"], lon: r["lon"]) }
+            }
+        }
+    }
+
+    /// Permanent, like points: CoreMotion keeps only 7 days.
+    public func saveActivities(_ a: [(t: Date, activity: Activity)]) throws {
+        try pool.write { db in
+            for x in a {
+                try db.execute(sql: "INSERT OR REPLACE INTO activity(t, kind) VALUES (?,?)", arguments: [x.t.timeIntervalSince1970, x.activity.rawValue])
+            }
+        }
+    }
+
+    /// The rows in range plus the latest one before it, so the first point has a state.
+    public func activities(from: Date, to: Date) throws -> [(t: Date, activity: Activity)] {
+        try pool.read { db in
+            let f = from.timeIntervalSince1970
+            let before = try Double.fetchOne(db, sql: "SELECT MAX(t) FROM activity WHERE t < ?", arguments: [f]) ?? f
+            return try Row.fetchAll(db, sql: "SELECT t, kind FROM activity WHERE t >= ? AND t <= ? ORDER BY t",
+                                    arguments: [before, to.timeIntervalSince1970]).map {
+                (t: Date(timeIntervalSince1970: $0["t"]), activity: Activity(rawValue: $0["kind"]) ?? .unknown)
+            }
+        }
     }
 
     /// Ways whose bounding box overlaps the box.
@@ -243,19 +303,103 @@ public final class Diary: Sendable {
         let ll = unpack(r["coords"]).map { Double(bitPattern: $0) }
         return Way(id: r["id"], kind: WayKind(rawValue: r["kind"]) ?? .road, name: r["name"], oneway: r["oneway"],
                    nodes: unpack(r["nodes"]).map { Int64(bitPattern: $0) },
-                   coords: (0..<ll.count / 2).map { (ll[$0 * 2], ll[$0 * 2 + 1]) })
+                   coords: (0..<ll.count / 2).map { (ll[$0 * 2], ll[$0 * 2 + 1]) },
+                   countable: (r["countable"] as Bool?) ?? false)
     }
 
-    /// Derived cache: replaces that trip's rows in one transaction.
-    public func saveMatches(tripStart: Date, _ stretches: [MatchedStretch]) throws {
+    /// Derived cache: replaces that trip's matches, modes and segment hits in one transaction.
+    public func saveMatches(tripStart: Date, _ stretches: [MatchedStretch], modes: [ModeStretch], hits: Set<SegmentHit> = []) throws {
         try pool.write { db in
+            try db.execute(sql: "DELETE FROM segmentHit WHERE tripStart = ?", arguments: [tripStart.timeIntervalSince1970])
+            for h in hits {
+                let row: StatementArguments = [tripStart.timeIntervalSince1970, h.wayId, h.seg, h.bike]
+                try db.execute(sql: "INSERT INTO segmentHit(tripStart, wayId, seg, bike) VALUES (?,?,?,?)", arguments: row)
+            }
             try db.execute(sql: "DELETE FROM matchedStretch WHERE tripStart = ?", arguments: [tripStart.timeIntervalSince1970])
+            try db.execute(sql: "DELETE FROM modeStretch WHERE tripStart = ?", arguments: [tripStart.timeIntervalSince1970])
+            for m in modes {
+                var row: StatementArguments = [tripStart.timeIntervalSince1970, m.seq, m.mode.rawValue, m.confidence]
+                row += [m.start.timeIntervalSince1970, m.end.timeIntervalSince1970]
+                try db.execute(sql: "INSERT INTO modeStretch(tripStart, seq, mode, confidence, start, end) VALUES (?,?,?,?,?,?)", arguments: row)
+            }
             for m in stretches {
                 var row: StatementArguments = [tripStart.timeIntervalSince1970, m.seq, m.wayId, m.fromM, m.toM]
                 row += [m.confidence, m.start.timeIntervalSince1970, m.end.timeIntervalSince1970]
                 try db.execute(sql: "INSERT INTO matchedStretch(tripStart, seq, wayId, fromM, toM, confidence, start, end) VALUES (?,?,?,?,?,?,?,?)",
                                arguments: row)
             }
+        }
+    }
+
+    /// A full re-match starts from none: hits of re-cut trips would otherwise stay under their old start.
+    public func clearSegmentHits() throws {
+        try pool.write { db in try db.execute(sql: "DELETE FROM segmentHit") }
+    }
+
+    /// Distinct hits over all trips.
+    public func segmentHits() throws -> [SegmentHit] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT DISTINCT wayId, seg, bike FROM segmentHit ORDER BY wayId, seg, bike").map {
+                SegmentHit(wayId: $0["wayId"], seg: $0["seg"], bike: $0["bike"])
+            }
+        }
+    }
+
+    public func countableWays() throws -> [Way] {
+        try pool.read { db in try Row.fetchAll(db, sql: "SELECT * FROM way WHERE countable = 1 ORDER BY id").map(Self.way) }
+    }
+
+    /// One transaction: replaces every covered way and the tally "onFoot withBike total".
+    public func saveCoverage(_ r: CoverageResult) throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM coveredWay")
+            for (id, bike) in r.ways {
+                try db.execute(sql: "INSERT INTO coveredWay(wayId, bike) VALUES (?,?)", arguments: [id, bike])
+            }
+            try db.execute(sql: "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)",
+                           arguments: ["streetsWalked", "\(r.onFoot) \(r.withBike) \(r.total)"])
+        }
+    }
+
+    /// Covered ways whose box overlaps the box; without bike, ways covered only by cycling are left out.
+    public func coveredWays(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, bike: Bool) throws -> [Way] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT way.* FROM way JOIN coveredWay ON coveredWay.wayId = way.id
+                WHERE way.maxLat >= ? AND way.minLat <= ? AND way.maxLon >= ? AND way.minLon <= ? AND (? OR coveredWay.bike = 0)
+                ORDER BY way.id
+                """, arguments: [minLat, maxLat, minLon, maxLon, bike]).map(Self.way)
+        }
+    }
+
+    public func streetsWalked(bike: Bool) throws -> (covered: Int, total: Int)? {
+        guard let m = try meta("streetsWalked") else { return nil }
+        let n = m.split(separator: " ").compactMap { Int($0) }
+        return n.count == 3 ? (bike ? n[1] : n[0], n[2]) : nil
+    }
+
+    public func modes(tripStart: Date) throws -> [ModeStretch] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM modeStretch WHERE tripStart = ? ORDER BY seq",
+                             arguments: [tripStart.timeIntervalSince1970]).compactMap { r in
+                TravelMode(rawValue: r["mode"]).map { ModeStretch(seq: r["seq"], mode: $0, confidence: r["confidence"],
+                                                       start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"])) }
+            }
+        }
+    }
+
+    /// Modes of every trip starting in the range, by trip start.
+    public func modes(from: Date, to: Date) throws -> [Date: [ModeStretch]] {
+        try pool.read { db in
+            var out: [Date: [ModeStretch]] = [:]
+            for r in try Row.fetchAll(db, sql: "SELECT * FROM modeStretch WHERE tripStart >= ? AND tripStart <= ? ORDER BY tripStart, seq",
+                                      arguments: [from.timeIntervalSince1970, to.timeIntervalSince1970]) {
+                guard let m = TravelMode(rawValue: r["mode"]) else { continue }
+                out[Date(timeIntervalSince1970: r["tripStart"]), default: []].append(
+                    ModeStretch(seq: r["seq"], mode: m, confidence: r["confidence"],
+                                start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"])))
+            }
+            return out
         }
     }
 

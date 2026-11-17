@@ -314,17 +314,17 @@ final class DiaryTests: XCTestCase {
     func testTileSavedAtomicallyWithWays() throws {
         let diary = try Diary(path: tempPath())
         let tile = Tile(x: 1, y: 2)
-        XCTAssertFalse(try diary.hasTile(tile))
-        try diary.saveTile(tile, ways: [way(1), way(2)])
-        XCTAssertTrue(try diary.hasTile(tile))
-        XCTAssertFalse(try diary.hasTile(Tile(x: 1, y: 3)))
-        try diary.saveTile(Tile(x: 2, y: 2), ways: [way(1)])   // a way shared by two tiles is stored once
+        XCTAssertFalse(try diary.hasTile(tile, version: 1))
+        try diary.saveTile(tile, ways: [way(1), way(2)], stops: [], version: 1)
+        XCTAssertTrue(try diary.hasTile(tile, version: 1))
+        XCTAssertFalse(try diary.hasTile(Tile(x: 1, y: 3), version: 1))
+        try diary.saveTile(Tile(x: 2, y: 2), ways: [way(1)], stops: [], version: 1)   // a way shared by two tiles is stored once
         XCTAssertEqual(try diary.ways(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90).count, 2)
     }
 
     func testWaysInBox() throws {
         let diary = try Diary(path: tempPath())
-        try diary.saveTile(Tile(x: 0, y: 0), ways: [way(1, lat: 50), way(2, lat: 51)])
+        try diary.saveTile(Tile(x: 0, y: 0), ways: [way(1, lat: 50), way(2, lat: 51)], stops: [], version: 1)
         let got = try diary.ways(minLat: 49.9, maxLat: 50.5, minLon: 4, maxLon: 5)
         XCTAssertEqual(got, [way(1, lat: 50)])
         XCTAssertEqual(got.first?.coords.first?.lon, 4.1234567890123)
@@ -334,7 +334,7 @@ final class DiaryTests: XCTestCase {
     func testWaysByIdInChunks() throws {
         let diary = try Diary(path: tempPath())
         let ids: [Int64] = Array(1...600)
-        try diary.saveTile(Tile(x: 0, y: 0), ways: ids.map { (id: Int64) -> Way in way(id) })
+        try diary.saveTile(Tile(x: 0, y: 0), ways: ids.map { (id: Int64) -> Way in way(id) }, stops: [], version: 1)
         XCTAssertEqual(try diary.ways(ids: [3, 1, 999]).map { (w: Way) -> Int64 in w.id }, [1, 3])
         XCTAssertEqual(try diary.ways(ids: Array(ids.reversed())).count, 600)   // past one 500-id chunk
         XCTAssertTrue(try diary.ways(ids: []).isEmpty)
@@ -345,10 +345,91 @@ final class DiaryTests: XCTestCase {
         func s(_ seq: Int, _ way: Int64) -> MatchedStretch {
             MatchedStretch(seq: seq, wayId: way, fromM: 1.5, toM: 20, confidence: 0.9, start: d(Double(seq * 3)), end: d(Double(seq * 3 + 2)))
         }
-        try diary.saveMatches(tripStart: d(100), [s(0, 7), s(1, 8)])
-        try diary.saveMatches(tripStart: d(200), [s(0, 9)])
-        try diary.saveMatches(tripStart: d(100), [s(0, 5)])
+        try diary.saveMatches(tripStart: d(100), [s(0, 7), s(1, 8)], modes: [])
+        try diary.saveMatches(tripStart: d(200), [s(0, 9)], modes: [])
+        try diary.saveMatches(tripStart: d(100), [s(0, 5)], modes: [])
         XCTAssertEqual(try diary.matches(tripStart: d(100)), [s(0, 5)])
         XCTAssertEqual(try diary.matches(tripStart: d(200)), [s(0, 9)])
+    }
+
+    func testCountableStored() throws {
+        let diary = try Diary(path: tempPath())
+        var w2 = way(2); w2.countable = false
+        try diary.saveTile(Tile(x: 0, y: 0), ways: [way(1), w2], stops: [], version: 1)
+        XCTAssertEqual(try diary.countableWays().map(\.id), [1])
+    }
+
+    func testHitsReplacedWithMatches() throws {
+        let diary = try Diary(path: tempPath())
+        let hits = Set((0..<3).map { SegmentHit(wayId: 1, seg: $0, bike: false) })
+        try diary.saveMatches(tripStart: d(100), [], modes: [], hits: hits)
+        XCTAssertEqual(try diary.segmentHits().count, 3)
+        try diary.saveMatches(tripStart: d(100), [], modes: [], hits: [SegmentHit(wayId: 1, seg: 0, bike: false)])
+        XCTAssertEqual(try diary.segmentHits().count, 1)
+    }
+
+    func testCoveredWaysRespectBike() throws {
+        let diary = try Diary(path: tempPath())
+        XCTAssertNil(try diary.streetsWalked(bike: false))
+        try diary.saveTile(Tile(x: 0, y: 0), ways: [way(1), way(2)], stops: [], version: 1)
+        try diary.saveCoverage(CoverageResult(ways: [1: false, 2: true], onFoot: 1, withBike: 2, total: 5))
+        func ids(_ bike: Bool) throws -> [Int64] {
+            try diary.coveredWays(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90, bike: bike).map(\.id)
+        }
+        XCTAssertEqual(try ids(false), [1])
+        XCTAssertEqual(try ids(true), [1, 2])
+        XCTAssertEqual(try diary.streetsWalked(bike: false)?.covered, 1)
+        XCTAssertEqual(try diary.streetsWalked(bike: true)?.covered, 2)
+        XCTAssertEqual(try diary.streetsWalked(bike: true)?.total, 5)
+    }
+
+    func testStaleTileIsNotFresh() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.saveTile(Tile(x: 1, y: 1), ways: [], stops: [], version: 1)
+        XCTAssertFalse(try diary.hasTile(Tile(x: 1, y: 1), version: 2))
+        try diary.saveTile(Tile(x: 1, y: 1), ways: [], stops: [], version: 2)
+        XCTAssertTrue(try diary.hasTile(Tile(x: 1, y: 1), version: 2))
+    }
+
+    func testStopsInBox() throws {
+        let diary = try Diary(path: tempPath())
+        let stops = [Stop(id: 1, kind: .bus, lat: 50.1, lon: 4.1), Stop(id: 2, kind: .rail, lat: 50.2, lon: 4.2), Stop(id: 3, kind: .ferry, lat: 51, lon: 4.1)]
+        try diary.saveTile(Tile(x: 0, y: 0), ways: [], stops: stops, version: 2)
+        XCTAssertEqual(try diary.stops(minLat: 50, maxLat: 50.5, minLon: 4, maxLon: 5), Array(stops[0...1]))
+    }
+
+    func testActivitiesIncludeStateBeforeRange() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.saveActivities([(d(10), .walking), (d(50), .automotive), (d(90), .stationary), (d(150), .cycling)])
+        let got = try diary.activities(from: d(60), to: d(100))
+        XCTAssertEqual(got.map(\.t), [d(50), d(90)])
+        XCTAssertEqual(got.map(\.activity), [.automotive, .stationary])
+    }
+
+    func testModesSavedWithMatches() throws {
+        let diary = try Diary(path: tempPath())
+        func m(_ seq: Int, _ mode: TravelMode) -> ModeStretch { ModeStretch(seq: seq, mode: mode, confidence: 0.8, start: d(Double(seq * 5)), end: d(Double(seq * 5 + 4))) }
+        try diary.saveMatches(tripStart: d(100), [], modes: [m(0, .walk), m(1, .bus)])
+        try diary.saveMatches(tripStart: d(200), [], modes: [m(0, .car)])
+        XCTAssertEqual(try diary.modes(tripStart: d(100)), [m(0, .walk), m(1, .bus)])
+        try diary.saveMatches(tripStart: d(100), [], modes: [m(0, .train)])
+        XCTAssertEqual(try diary.modes(tripStart: d(100)), [m(0, .train)])
+        XCTAssertEqual(try diary.modes(tripStart: d(200)), [m(0, .car)])
+    }
+
+    func testV6DiaryMigrates() throws {
+        let path = tempPath()
+        do { let diary = try Diary(path: path); try diary.append([pt(100)]) }
+        let diary = try Diary(path: path)
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(100)])
+    }
+
+    func testV7DiaryMigrates() throws {
+        let path = tempPath()
+        let m = MatchedStretch(seq: 0, wayId: 7, fromM: 1, toM: 2, confidence: 0.9, start: d(1), end: d(2))
+        do { let diary = try Diary(path: path); try diary.append([pt(100)]); try diary.saveMatches(tripStart: d(100), [m], modes: []) }
+        let diary = try Diary(path: path)
+        XCTAssertEqual(try diary.points(from: d(0), to: d(1000)), [pt(100)])
+        XCTAssertEqual(try diary.matches(tripStart: d(100)), [m])
     }
 }

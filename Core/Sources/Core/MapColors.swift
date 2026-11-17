@@ -21,6 +21,19 @@ public enum MapColors {
         return speeds.map { $0 >= 0 ? $0 : median }
     }
 
+    /// One mode per point time: the confident stretch whose `start...end` holds it, else nil. Timed, so points read only in part still line up.
+    public static func pointModes(_ stretches: [ModeStretch], times: [Date]) -> [TravelMode?] {
+        let confident = stretches.filter { $0.confidence >= TravelModes.confident }
+        return times.map { t in confident.first { $0.start <= t && t <= $0.end }?.mode }
+    }
+
+    /// The confident mode that covers the most time, nil when none is confident.
+    public static func dominantMode(_ stretches: [ModeStretch]) -> TravelMode? {
+        var total: [TravelMode: Double] = [:]
+        for s in stretches where s.confidence >= TravelModes.confident { total[s.mode, default: 0] += s.end.timeIntervalSince(s.start) }
+        return total.max { $0.value < $1.value || ($0.value == $1.value && $0.key.rawValue > $1.key.rawValue) }?.key
+    }
+
     public static func heatAlpha(_ seconds: Double, max maxSeconds: Double) -> Double {
         guard maxSeconds > 0 else { return 0.85 }
         return min(0.85, 0.15 + 0.7 * log(1 + seconds) / log(1 + maxSeconds))
