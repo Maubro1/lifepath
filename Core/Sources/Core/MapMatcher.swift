@@ -32,8 +32,7 @@ public enum MapMatcher {
             let sigma = rough ? min(p.hAcc, 300) : max(4, p.hAcc)
             if let prev = chain.last, distance(points[prev.i], p) < 2 * sigma { continue }
             let walking = !rough && isWalking(points, i)
-            // shortcut: cycle paths are foot ways, so a bike on a separate path matches the road beside it, upgrade with 3b travel modes
-            let kinds: Set<WayKind> = rough ? [.rail, .tram, .ferry] : walking ? [.foot, .road] : [.road, .rail, .tram, .ferry]
+            let kinds: Set<WayKind> = rough ? [.rail, .tram, .ferry] : walking ? [.foot, .cycle, .road] : [.road, .rail, .tram, .ferry]
             // shortcut: the 8 nearest segments keep Viterbi at 64 routes a step; a dense square can crowd out the true way, raise if matches show it
             let cands = Array(graph.candidates(lat: p.lat, lon: p.lon, radius: rough ? min(p.hAcc, 1500) : max(30, 2 * p.hAcc))
                 .filter { kinds.contains(graph.ways[graph.index[$0.wayId]!].kind) }.prefix(8))

@@ -28,7 +28,7 @@ final class StreetsTests: XCTestCase {
     """
 
     func testParseOverpassJSON() throws {
-        let ways = try OSM.parse(Data(json.utf8))
+        let ways = try OSM.parse(Data(json.utf8)).ways
         XCTAssertEqual(ways.map(\.id), [1, 2, 3, 4, 5])  // platform dropped
         XCTAssertEqual(ways.map(\.kind), [.foot, .road, .rail, .ferry, .road])
         XCTAssertEqual(ways.map(\.name), ["Parkpad", "Dorpsstraat", nil, "Veer", nil])
@@ -39,6 +39,35 @@ final class StreetsTests: XCTestCase {
         XCTAssertEqual(ways[0].coords[1].lon, 5.001, accuracy: 1e-9)
         XCTAssertThrowsError(try OSM.parse(Data("nope".utf8)))
         XCTAssertTrue(OSM.query(minLat: 52, minLon: 5, maxLat: 52.1, maxLon: 5.1).contains("(52.0,5.0,52.1,5.1)"))
+    }
+
+    func testParseStopsAndCycleways() throws {
+        let j = """
+        {"elements":[
+         {"type":"way","id":1,"nodes":[1,2],"geometry":[{"lat":52.0,"lon":5.0},{"lat":52.0,"lon":5.001}],"tags":{"highway":"cycleway"}},
+         {"type":"way","id":2,"nodes":[3,4],"geometry":[{"lat":52.0,"lon":5.0},{"lat":52.0,"lon":5.001}],"tags":{"highway":"path","bicycle":"designated"}},
+         {"type":"way","id":3,"nodes":[5,6],"geometry":[{"lat":52.0,"lon":5.0},{"lat":52.0,"lon":5.001}],"tags":{"highway":"path"}},
+         {"type":"node","id":10,"lat":52.1,"lon":5.1,"tags":{"highway":"bus_stop"}},
+         {"type":"node","id":11,"lat":52.2,"lon":5.2,"tags":{"railway":"tram_stop"}},
+         {"type":"node","id":12,"lat":52.3,"lon":5.3,"tags":{"railway":"station"}},
+         {"type":"node","id":13,"lat":52.4,"lon":5.4,"tags":{"amenity":"ferry_terminal"}},
+         {"type":"node","id":14,"lat":52.5,"lon":5.5,"tags":{"railway":"halt"}},
+         {"type":"node","id":15,"lat":52.6,"lon":5.6,"tags":{"public_transport":"platform"}},
+         {"type":"node","id":16,"lat":52.7,"lon":5.7}
+        ]}
+        """
+        let r = try OSM.parse(Data(j.utf8))
+        XCTAssertEqual(r.ways.map(\.kind), [.cycle, .cycle, .foot])
+        XCTAssertEqual(WayKind.cycle.rawValue, "cycle")
+        XCTAssertEqual(r.stops.map(\.id), [10, 11, 12, 13, 14])
+        XCTAssertEqual(r.stops.map(\.kind), [.bus, .tram, .rail, .ferry, .rail])
+        XCTAssertEqual(r.stops[3].lat, 52.4, accuracy: 1e-9); XCTAssertEqual(r.stops[3].lon, 5.4, accuracy: 1e-9)
+        XCTAssertEqual(OSM.version, 2)
+    }
+
+    func testQueryAsksForStops() {
+        let q = OSM.query(minLat: 52, minLon: 5, maxLat: 52.1, maxLon: 5.1)
+        for s in ["bus_stop", "tram_stop", "ferry_terminal"] { XCTAssertTrue(q.contains(s), s) }
     }
 
     func testCandidatesWithinRadius() throws {

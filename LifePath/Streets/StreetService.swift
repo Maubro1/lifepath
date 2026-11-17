@@ -48,7 +48,7 @@ enum StreetService {
             for tile in try needed.filter({ try !diary.hasTile($0) }).sorted(by: { ($0.y, $0.x) < ($1.y, $1.x) }) {
                 guard let session, Date().timeIntervalSince1970 >= retryAt else { waiting = true; break trips }
                 let ways: [Way]
-                do { ways = try await fetch(tile, session) } catch {
+                do { ways = try await fetch(tile, session).ways }  // stops are stored from Task 5 catch {
                     if Task.isCancelled { throw CancellationError() }
                     // Any failure waits, remembered across launches: 60 s, doubling to 30 min.
                     backoff = min(max(60, backoff * 2), 1800)
@@ -90,7 +90,7 @@ enum StreetService {
         return URLSession(configuration: c)
     }
 
-    private static func fetch(_ tile: Tile, _ session: URLSession) async throws -> [Way] {
+    private static func fetch(_ tile: Tile, _ session: URLSession) async throws -> (ways: [Way], stops: [Stop]) {
         let b = tile.bounds
         var allowed = CharacterSet.alphanumerics; allowed.insert(charactersIn: "-._~")
         let query = OSM.query(minLat: b.minLat, minLon: b.minLon, maxLat: b.maxLat, maxLon: b.maxLon)
