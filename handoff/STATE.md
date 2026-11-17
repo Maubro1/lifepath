@@ -10,6 +10,8 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.7.0-preview.1 | Stage 5: Export tracks (GPX, GeoJSON, KML), Save a backup, Restore from a backup (preview, adds only, keeps a copy first, also on the first-launch page), Last backup row. |
+| v0.6.0-preview.1 | Stage 4: Timeline tab (a card per day: route, distance, moving time, steps), Stats tab (where you went, on foot, Streets walked), steps kept permanently. |
 | v0.5.0-preview.1 | Stages 3b + 3c: travel mode per stretch (walk, run, bike, car, bus, tram, train, boat) with a Mode colouring; trains match rail only, bikes cycle paths; Streets walked toggle and tally (20 m segments, 90% rule). |
 | v0.4.0-preview.1 | Stage 3a: OpenStreetMap streets, rail and ferry downloaded along trips (only a map rectangle leaves the phone), HMM map matching, walks drawn on the street taken and train rides on the railway. |
 | v0.3.1-preview.1 | Tracking under pressure: train positions kept (rough), better walking and vehicle lines, home pottering no longer keeps GPS on, battery-saving mode in trains, live steady map with dashed rough stretches. |
@@ -17,9 +19,9 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## In progress: stage 4, timeline, stats and steps
+## Next: stage 6, design (together with the owner)
 
-Stage 3 is released (v0.4.0, v0.5.0; decisions in `docs/decisions/stage-3a.md` and `stage-3b-3c.md`). Next per the spec: Timeline (days newest first, route drawing, distance, moving time, steps), Stats (Where you went, On foot, Streets walked), CMPedometer days copied into the diary. Then stage 5 (export, backup, import, restore). Stage 6 (design) is done together with the owner.
+Stages 0–5 are built, reviewed and released (latest v0.7.0-preview.1; decisions in `docs/decisions/`). Stage 6 is done with the owner: visual direction (they want many design questions here), restyle all screens, rest dots clearly different from pins, mode colours, timeline route drawing (plain line now; a map snapshot is possible), onboarding copy (humanizer pass), settings polish. Use the `impeccable` plugin. Start by asking the owner the questions below plus the design questions, and by collecting their health reports on v0.7.0.
 
 ## Questions for the owner (collected overnight, 2026-11-17)
 
