@@ -18,11 +18,12 @@ public struct Way: Sendable, Equatable {
     public var oneway: Bool
     public var nodes: [Int64]
     public var coords: [(lat: Double, lon: Double)]
-    public init(id: Int64, kind: WayKind, name: String?, oneway: Bool, nodes: [Int64], coords: [(lat: Double, lon: Double)]) {
-        self.id = id; self.kind = kind; self.name = name; self.oneway = oneway; self.nodes = nodes; self.coords = coords
+    public var countable: Bool   // a street for Streets walked
+    public init(id: Int64, kind: WayKind, name: String?, oneway: Bool, nodes: [Int64], coords: [(lat: Double, lon: Double)], countable: Bool = true) {
+        self.id = id; self.kind = kind; self.name = name; self.oneway = oneway; self.nodes = nodes; self.coords = coords; self.countable = countable
     }
     public static func == (a: Way, b: Way) -> Bool {
-        a.id == b.id && a.kind == b.kind && a.name == b.name && a.oneway == b.oneway && a.nodes == b.nodes
+        a.id == b.id && a.kind == b.kind && a.name == b.name && a.oneway == b.oneway && a.nodes == b.nodes && a.countable == b.countable
             && a.coords.count == b.coords.count && zip(a.coords, b.coords).allSatisfy { $0.lat == $1.lat && $0.lon == $1.lon }
     }
 }
@@ -79,8 +80,18 @@ public enum OSM {
         }
     }
 
-    /// What a stored tile contains: 1 = ways only, 2 = plus stops and cycle ways.
-    public static let version = 2
+    /// A street for Streets walked: foot, cycle and road ways, without motorways, driveways, sidewalks, crossings and private ways.
+    static func countable(_ t: [String: String], _ kind: WayKind) -> Bool {
+        guard [.foot, .cycle, .road].contains(kind) else { return false }
+        if ["motorway", "motorway_link", "trunk_link", "service", "construction", "proposed", "platform", "raceway", "bus_guideway",
+            "busway", "corridor", "elevator", "escape"].contains(t["highway"] ?? "") || t["motorroad"] == "yes" { return false }
+        if ["sidewalk", "crossing"].contains(t["footway"] ?? "") || t["cycleway"] == "crossing" || t["path"] == "crossing" { return false }
+        if ["private", "no"].contains(t["access"] ?? "") || t["foot"] == "no" { return ["yes", "designated", "permissive"].contains(t["foot"] ?? "") }
+        return true
+    }
+
+    /// What a stored tile contains: 1 = ways only, 2 = plus stops and cycle ways, 3 = plus street flags.
+    public static let version = 3
 
     static func stopKind(_ t: [String: String]) -> StopKind? {
         if t["highway"] == "bus_stop" { return .bus }
@@ -101,7 +112,8 @@ public enum OSM {
                   nodes.count >= 2, nodes.count == geo.count else { return nil }
             // shortcut: oneway=-1 (against the drawn direction) is read as two-way, upgrade if it shows in matches
             let oneway = kind == .road && (["yes", "1", "true"].contains(tags["oneway"] ?? "") || tags["junction"] == "roundabout")
-            return Way(id: e.id, kind: kind, name: tags["name"], oneway: oneway, nodes: nodes, coords: geo.map { ($0.lat, $0.lon) })
+            return Way(id: e.id, kind: kind, name: tags["name"], oneway: oneway, nodes: nodes, coords: geo.map { ($0.lat, $0.lon) },
+                       countable: countable(tags, kind))
         }
         return (ways, stops)
     }

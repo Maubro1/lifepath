@@ -62,7 +62,26 @@ final class StreetsTests: XCTestCase {
         XCTAssertEqual(r.stops.map(\.id), [10, 11, 12, 13, 14])
         XCTAssertEqual(r.stops.map(\.kind), [.bus, .tram, .rail, .ferry, .rail])
         XCTAssertEqual(r.stops[3].lat, 52.4, accuracy: 1e-9); XCTAssertEqual(r.stops[3].lon, 5.4, accuracy: 1e-9)
-        XCTAssertEqual(OSM.version, 2)
+        XCTAssertEqual(OSM.version, 3)
+    }
+
+    func testCountableWays() throws {
+        func w(_ id: Int, _ tags: String) -> String {
+            "{\"type\":\"way\",\"id\":\(id),\"nodes\":[1,2],\"geometry\":[{\"lat\":52.0,\"lon\":5.0},{\"lat\":52.0,\"lon\":5.001}],\"tags\":{\(tags)}}"
+        }
+        let j = "{\"elements\":[" + [
+            w(1, "\"highway\":\"residential\",\"name\":\"Dorpsstraat\""),
+            w(2, "\"highway\":\"motorway\""),
+            w(3, "\"highway\":\"service\""),
+            w(4, "\"highway\":\"footway\",\"footway\":\"sidewalk\""),
+            w(5, "\"highway\":\"residential\",\"access\":\"private\",\"foot\":\"yes\""),
+            w(6, "\"highway\":\"trunk\",\"foot\":\"no\""),
+            w(7, "\"railway\":\"rail\""),
+        ].joined(separator: ",") + "]}"
+        let ways = try OSM.parse(Data(j.utf8)).ways
+        XCTAssertEqual(ways.map(\.id), [1, 2, 3, 4, 5, 6, 7])
+        XCTAssertEqual(ways.map(\.countable), [true, false, false, false, true, false, false])
+        XCTAssertNotEqual(ways[0], { var x = ways[0]; x.countable = false; return x }())
     }
 
     func testQueryAsksForStops() {
