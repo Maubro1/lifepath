@@ -312,7 +312,7 @@ struct MapScreen: View {
             }
             .toggleStyle(.button)
             .buttonStyle(.bordered)
-            if loader.options.streets { Text(tally).font(.caption) }
+            if loader.options.streets { Text(Self.tallyText(loader.data?.walked, bike: loader.data?.bike == true)).font(.caption) }
         }
         .padding(10)
         .background(.regularMaterial, in: .rect(cornerRadius: 12))
@@ -320,9 +320,9 @@ struct MapScreen: View {
     }
 
     /// "Streets walked: 42 of 1,310 (3.2%)", in the locale's number format.
-    private var tally: String {
-        let title = loader.data?.bike == true ? "Streets walked or cycled" : "Streets walked"
-        guard let w = loader.data?.walked, w.total > 0 else { return "\(title): no street maps yet" }
+    static func tallyText(_ w: (covered: Int, total: Int)?, bike: Bool) -> String {
+        let title = bike ? "Streets walked or cycled" : "Streets walked"
+        guard let w, w.total > 0 else { return "\(title): no street maps yet" }
         let percent = (Double(w.covered) / Double(w.total)).formatted(.percent.precision(.fractionLength(1)))
         return "\(title): \(w.covered.formatted()) of \(w.total.formatted()) (\(percent))"
     }

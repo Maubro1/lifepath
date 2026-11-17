@@ -29,6 +29,8 @@ private struct Root: View {
         if settings.onboarded || startedBefore {
             TabView {
                 Tab("Map", systemImage: "map") { MapScreen() }
+                Tab("Timeline", systemImage: "calendar") { TimelineScreen() }
+                Tab("Stats", systemImage: "chart.bar") { StatsScreen() }
                 Tab("Settings", systemImage: "gear") { SettingsView() }
             }
         } else { OnboardingView() }
