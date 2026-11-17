@@ -22,6 +22,8 @@ struct MapData: Sendable {
     var still: [(lat: Double, lon: Double)] = []
     var places: [Place] = []                    // pins visible at the end of the range, in the visible region
     var outlines: [Int64: Set<PlaceCell>] = [:] // their regions, at street zoom only
+    var covered: [(key: String, coords: [(lat: Double, lon: Double)])] = []   // walked streets in the region, with the Streets toggle on
+    var walked: (covered: Int, total: Int)?     // the tally; nil before the first coverage run
 }
 
 enum TimeFilter: String, CaseIterable {
@@ -34,6 +36,7 @@ struct MapOptions: Equatable {
     var customTo = Date()
     var heat = false
     var recorded = false
+    var streets = false
     var byMode = false   // colouring by mode: only then are modes read
 
     func range(now: Date) -> (from: Date, to: Date) {
@@ -66,7 +69,7 @@ struct MapOptions: Equatable {
     private struct Query: Sendable {
         var minLat, maxLat, minLon, maxLon, tolerance: Double
         var from, to: Date
-        var heat, recorded, street, zoomedOut, byMode: Bool
+        var heat, recorded, byMode, street, zoomedOut, streets, bike: Bool   // in the order the call passes them
         var places: [Place]   // in memory, refreshed by each places run; the loader never reads them per pan
     }
 
@@ -104,7 +107,8 @@ struct MapOptions: Equatable {
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
                       tolerance: Simplify.step(2 * metresPerPoint),
                       from: range.from, to: range.to, heat: options.heat, recorded: options.recorded, byMode: options.byMode,
-                      street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5, places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
+                      street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5,
+                      streets: options.streets, bike: UserDefaults.standard.bool(forKey: "countCycling"), places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
         generation += 1
         let gen = generation
         task = Task {
@@ -206,6 +210,13 @@ struct MapOptions: Equatable {
             out.still = try diary.stillPoints(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: q.to,
                                               cell: cell, lonCell: cell / cos((q.minLat + q.maxLat) / 2 * .pi / 180))
         }
+        if q.streets {   // stored by the street run; the map only reads them
+            for w in try diary.coveredWays(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, bike: q.bike) {
+                let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)   // zoomed out: less detail, never fewer streets
+                out.covered.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
+            }
+            out.walked = try diary.streetsWalked(bike: q.bike)
+        }
         let lo = q.from == .distantPast ? (trips.map(\.start).min() ?? q.to) : q.from
         let span = max(1, q.to.timeIntervalSince(lo))
         try Task.checkCancellation()
@@ -287,6 +298,9 @@ struct MapScreen: View {
                 Toggle("Recorded line", isOn: $loader.options.recorded)
                     .accessibilityLabel("Recorded line")
                     .accessibilityHint("Shows the line as recorded instead of smoothed")
+                Toggle("Streets", isOn: $loader.options.streets)
+                    .accessibilityLabel("Streets walked")
+                    .accessibilityHint("Highlights the streets you have walked")
                 if loader.options.filter == .custom {
                     Button("Dates") { choosingDates = true }
                         .accessibilityLabel("Choose custom dates")
@@ -294,10 +308,19 @@ struct MapScreen: View {
             }
             .toggleStyle(.button)
             .buttonStyle(.bordered)
+            if loader.options.streets { Text(tally).font(.caption) }
         }
         .padding(10)
         .background(.regularMaterial, in: .rect(cornerRadius: 12))
         .padding(8)
+    }
+
+    /// "Streets walked: 42 of 1,310 (3.2%)", in the locale's number format.
+    private var tally: String {
+        let title = UserDefaults.standard.bool(forKey: "countCycling") ? "Streets walked or cycled" : "Streets walked"
+        guard let w = loader.data?.walked, w.total > 0 else { return "\(title): no street maps yet" }
+        let percent = (Double(w.covered) / Double(w.total)).formatted(.percent.precision(.fractionLength(1)))
+        return "\(title): \(w.covered.formatted()) of \(w.total.formatted()) (\(percent))"
     }
 
     private var legend: some View {

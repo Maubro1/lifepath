@@ -79,6 +79,11 @@ struct SettingsView: View {
                     Text("Off: street maps download only on Wi-Fi.")
                 }
                 Section {
+                    Toggle("Count cycling in Streets walked", isOn: settings.$countCycling)
+                } footer: {
+                    Text("On: streets you cycled count too, like on CityStrides. Off: only walking and running count. Car, bus, tram, train and boat never count.")
+                }
+                Section {
                     Button("Save a backup") {
                         Task {
                             do { backup = try await recorder.backup(); movingBackup = true } catch { backupError = error.localizedDescription }

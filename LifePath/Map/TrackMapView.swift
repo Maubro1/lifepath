@@ -24,6 +24,9 @@ extension TravelMode {
     var label: String { rawValue.capitalized }
 }
 
+/// A walked street, drawn under the trip lines.
+final class StreetLine: MKPolyline {}
+
 /// A learned place's pin; the marker size follows the time spent there.
 final class PlaceAnnotation: MKPointAnnotation {
     var placeId: Int64 = 0
@@ -85,6 +88,12 @@ struct TrackMapView: UIViewRepresentable {
                     }
                     return MKPolygon(coordinates: &corners, count: 4)
                 })
+            }))
+        }
+        for w in data.covered {   // under the labels, so trip lines draw on top
+            wanted.append(("w\(w.key)", .aboveRoads, {
+                let coords = w.coords.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                return StreetLine(coordinates: coords, count: coords.count)
             }))
         }
         for l in data.lines {
@@ -168,6 +177,12 @@ struct TrackMapView: UIViewRepresentable {
                 return r
             }
             if let heat = overlay as? HeatOverlay { return HeatRenderer(heat) }
+            if let street = overlay as? StreetLine {
+                let r = MKPolylineRenderer(polyline: street)
+                r.strokeColor = UIColor.systemCyan.withAlphaComponent(0.8)   // placeholder until the design stage
+                r.lineWidth = 6
+                return r
+            }
             if let circle = overlay as? MKCircle {
                 let r = MKCircleRenderer(circle: circle)
                 r.fillColor = .systemGray
