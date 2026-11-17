@@ -2,30 +2,10 @@ import Core
 import MapKit
 import SwiftUI
 
-/// A trip line that carries its own colouring data to the renderer.
-final class TrackLine: MKPolyline {
-    var line: MapLine!
-}
-
 extension TravelMode {
-    // placeholders until the design stage
-    var color: UIColor {
-        switch self {
-        case .walk: .systemGreen
-        case .run: .systemMint
-        case .bike: .systemBlue
-        case .car: .systemRed
-        case .bus: .systemOrange
-        case .tram: .systemYellow
-        case .train: .systemPurple
-        case .boat: .systemTeal
-        }
-    }
+    var color: UIColor { UIColor(Palette.mode(self)) }
     var label: String { rawValue.capitalized }
 }
-
-/// A walked street, drawn under the trip lines.
-final class StreetLine: MKPolyline {}
 
 /// A learned place's pin; the marker size follows the time spent there.
 final class PlaceAnnotation: MKPointAnnotation {
@@ -35,7 +15,9 @@ final class PlaceAnnotation: MKPointAnnotation {
 
 struct TrackMapView: UIViewRepresentable {
     let data: MapData?
+    let mode: MapMode
     let colour: LineColour
+    let dark: Bool
     let satellite: Bool
     let visible: Bool
     let onRegion: @MainActor (MKCoordinateRegion, Double) -> Void   // region, view width in points
@@ -53,6 +35,11 @@ struct TrackMapView: UIViewRepresentable {
         locate.layer.cornerRadius = 8
         locate.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(locate)
+        // The three layers live as long as the map; only their content changes.
+        let c = context.coordinator
+        map.addOverlay(c.streets, level: .aboveRoads)
+        map.addOverlay(c.fog, level: .aboveLabels)
+        map.addOverlay(c.lines, level: .aboveLabels)
         NSLayoutConstraint.activate([
             locate.topAnchor.constraint(equalTo: map.safeAreaLayoutGuide.topAnchor, constant: 8),
             locate.trailingAnchor.constraint(equalTo: map.safeAreaLayoutGuide.trailingAnchor, constant: -8),
@@ -69,9 +56,18 @@ struct TrackMapView: UIViewRepresentable {
             standard.pointOfInterestFilter = .excludingAll   // as makeUIView
             map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : standard
         }
-        guard let data, data.generation != c.shownGeneration || colour != c.shownColour else { return }
+        guard let data, data.generation != c.shownGeneration || colour != c.shownColour || dark != c.shownDark else { return }
         c.shownGeneration = data.generation
         c.shownColour = colour
+        c.shownDark = dark
+        func keyed(_ items: [(key: String, coords: [(lat: Double, lon: Double)])]) -> [(key: String, rect: MKMapRect, coords: [(lat: Double, lon: Double)])] {
+            items.map { ($0.key, mapRect($0.coords, pad: 2000), $0.coords) }
+        }
+        c.streetsRenderer.set(mode == .streets ? StreetsContent(
+            walked: keyed(data.covered), unwalked: keyed(data.unwalked),
+            shading: data.shading.map { ($0.key, mapRect($0.rings.flatMap { $0 }, pad: 0), $0.rings, $0.holes, $0.share) }, dark: dark) : nil)
+        c.fogRenderer.set(mode == .fog ? FogContent(data.fog, dark: dark) : nil)
+        c.linesRenderer.set(LinesContent(data.lines, colour: colour, edged: mode == .streets, dark: dark))
         // Overlays are keyed: unchanged ones stay on the map, new ones are added before stale ones go, so nothing blinks.
         var wanted: [(key: String, level: MKOverlayLevel, make: () -> MKOverlay)] = []
         if !data.heat.isEmpty {   // under the labels, so lines always draw on top
@@ -88,20 +84,6 @@ struct TrackMapView: UIViewRepresentable {
                     }
                     return MKPolygon(coordinates: &corners, count: 4)
                 })
-            }))
-        }
-        for w in data.covered {   // under the labels, so trip lines draw on top
-            wanted.append(("w\(w.key)", .aboveRoads, {
-                let coords = w.coords.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                return StreetLine(coordinates: coords, count: coords.count)
-            }))
-        }
-        for l in data.lines {
-            wanted.append(("l\(colour)-\(l.key)", .aboveLabels, {   // the renderer depends on the colouring
-                let coords = l.coords.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                let poly = TrackLine(coordinates: coords, count: coords.count)
-                poly.line = l
-                return poly
             }))
         }
         for p in data.still {
@@ -132,7 +114,12 @@ struct TrackMapView: UIViewRepresentable {
     @MainActor final class Coordinator: NSObject, MKMapViewDelegate {
         var parent: TrackMapView
         var shownGeneration = -1
-        var shownColour = LineColour.date
+        var shownColour = LineColour.plain
+        var shownDark = false
+        let streets = LayerOverlay(), fog = LayerOverlay(), lines = LayerOverlay()
+        lazy var streetsRenderer = LayerRenderer(overlay: streets)
+        lazy var fogRenderer = LayerRenderer(overlay: fog)
+        lazy var linesRenderer = LayerRenderer(overlay: lines)
         var shown: [String: MKOverlay] = [:]   // overlays on the map by key
         private var centered = false
 
@@ -171,50 +158,21 @@ struct TrackMapView: UIViewRepresentable {
         }
 
         func mapView(_ map: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if overlay === streets { return streetsRenderer }
+            if overlay === fog { return fogRenderer }
+            if overlay === lines { return linesRenderer }
             if let shape = overlay as? MKMultiPolygon {
                 let r = MKMultiPolygonRenderer(multiPolygon: shape)
-                r.fillColor = UIColor.systemIndigo.withAlphaComponent(0.15)
+                r.fillColor = UIColor(Palette.text).withAlphaComponent(0.12)
                 return r
             }
             if let heat = overlay as? HeatOverlay { return HeatRenderer(heat) }
-            if let street = overlay as? StreetLine {
-                let r = MKPolylineRenderer(polyline: street)
-                r.strokeColor = UIColor.systemCyan.withAlphaComponent(0.8)   // placeholder until the design stage
-                r.lineWidth = 6
-                return r
-            }
             if let circle = overlay as? MKCircle {
                 let r = MKCircleRenderer(circle: circle)
-                r.fillColor = .systemGray
+                r.fillColor = UIColor(Palette.muted)
                 return r
             }
-            guard let track = overlay as? TrackLine else { return MKOverlayRenderer(overlay: overlay) }
-            let l = track.line!
-            if parent.colour == .speed {
-                let r = MKGradientPolylineRenderer(polyline: track)
-                r.setColors(l.speeds.map { s -> UIColor in
-                    switch SpeedBand(speed: s) { case .walk: .systemGreen; case .bike: .systemBlue; case .drive: .systemRed }
-                }, locations: l.locations.map { CGFloat($0) })
-                rough(r, l)
-                return r
-            }
-            if parent.colour == .mode {
-                let r = MKGradientPolylineRenderer(polyline: track)
-                r.setColors(l.modes.map { $0?.color ?? .systemGray }, locations: l.locations.map { CGFloat($0) })
-                rough(r, l)
-                return r
-            }
-            let r = MKPolylineRenderer(polyline: track)
-            let c = MapColors.byDate(l.dateFraction)
-            r.strokeColor = UIColor(red: c.r, green: c.g, blue: c.b, alpha: 1)
-            rough(r, l)
-            return r
-        }
-
-        /// Rough stretches draw thinner and dashed, so their precision is never overstated.
-        private func rough(_ r: MKPolylineRenderer, _ l: MapLine) {
-            r.lineWidth = l.rough ? 2 : 3
-            if l.rough { r.lineDashPattern = [4, 4] }
+            return MKOverlayRenderer(overlay: overlay)
         }
     }
 }

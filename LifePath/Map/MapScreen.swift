@@ -3,7 +3,10 @@ import Diary
 import MapKit
 import SwiftUI
 
-enum LineColour: String, CaseIterable { case date = "Date", speed = "Speed", mode = "Mode" }
+enum LineColour: String, CaseIterable { case plain = "One colour", mode = "Mode", date = "Date", speed = "Speed" }
+
+/// What the map shows filling up: walked streets lit, or fog cleared where you have been.
+enum MapMode: String, CaseIterable { case streets = "Streets", fog = "Fog" }
 
 struct MapLine: Sendable {
     var key: String           // trip start, segment, rough flag, tolerance and a content hash: equal keys draw the same line
@@ -22,13 +25,16 @@ struct MapData: Sendable {
     var still: [(lat: Double, lon: Double)] = []
     var places: [Place] = []                    // pins visible at the end of the range, in the visible region
     var outlines: [Int64: Set<PlaceCell>] = [:] // their regions, at street zoom only
-    var covered: [(key: String, coords: [(lat: Double, lon: Double)])] = []   // walked streets in the region, with the Streets toggle on
+    var covered: [(key: String, coords: [(lat: Double, lon: Double)])] = []   // walked streets in the region, in Streets mode
+    var unwalked: [(key: String, coords: [(lat: Double, lon: Double)])] = []  // countable streets not walked yet, in Streets mode
+    var shading: [(key: String, rings: [[(lat: Double, lon: Double)]], holes: [[(lat: Double, lon: Double)]], share: Double)] = []   // neighbourhoods, zoomed out
+    var fog: [(key: String, stroke: FogStroke)] = []   // what clears the fog, in Fog mode
     var walked: (covered: Int, total: Int)?     // the tally; nil before the first coverage run
     var bike = false                            // whether the tally counted cycling
 }
 
 enum TimeFilter: String, CaseIterable {
-    case today = "Today", week = "Week", month = "Month", year = "Year", all = "All", custom = "Custom"
+    case today = "Today", week = "Week", month = "Month", year = "Year", all = "All", custom = "Custom", off = "Off"
 }
 
 struct MapOptions: Equatable {
@@ -37,7 +43,7 @@ struct MapOptions: Equatable {
     var customTo = Date()
     var heat = false
     var recorded = false
-    var streets = false
+    var mode = MapMode.streets
     var byMode = false   // colouring by mode: only then are modes read
 
     func range(now: Date) -> (from: Date, to: Date) {
@@ -48,6 +54,7 @@ struct MapOptions: Equatable {
         case .month: return (cal.date(byAdding: .month, value: -1, to: today)!, now)
         case .year: return (cal.date(byAdding: .year, value: -1, to: today)!, now)
         case .all: return (.distantPast, now)
+        case .off: return (now, now)
         case .custom:
             let a = cal.startOfDay(for: min(customFrom, customTo)), b = cal.startOfDay(for: max(customFrom, customTo))
             return (a, cal.date(byAdding: .day, value: 1, to: b)!)
@@ -70,7 +77,10 @@ struct MapOptions: Equatable {
     private struct Query: Sendable {
         var minLat, maxLat, minLon, maxLon, tolerance: Double
         var from, to: Date
-        var heat, recorded, byMode, street, zoomedOut, streets, bike: Bool   // in the order the call passes them
+        var heat, recorded, byMode, street, zoomedOut: Bool   // in the order the call passes them
+        var mode: MapMode
+        var bike: Bool
+        var metresPerPoint: Double
         var places: [Place]   // in memory, refreshed by each places run; the loader never reads them per pan
     }
 
@@ -109,7 +119,8 @@ struct MapOptions: Equatable {
                       tolerance: Simplify.step(2 * metresPerPoint),
                       from: range.from, to: range.to, heat: options.heat, recorded: options.recorded, byMode: options.byMode,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5,
-                      streets: options.streets, bike: UserDefaults.standard.bool(forKey: "countCycling"), places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
+                      mode: options.mode, bike: UserDefaults.standard.bool(forKey: "countCycling"), metresPerPoint: metresPerPoint,
+                      places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
         generation += 1
         let gen = generation
         task = Task {
@@ -124,7 +135,7 @@ struct MapOptions: Equatable {
 
     private nonisolated static func load(_ diary: Diary, _ q: Query, generation: Int) throws -> MapData {
         var out = MapData(generation: generation)
-        let modesByTrip = q.byMode ? try diary.modes(from: q.from, to: q.to) : [:]   // one read for every trip in range
+        let modesByTrip = q.byMode || q.mode == .fog ? try diary.modes(from: q.from, to: q.to) : [:]   // one read for every trip in range
         var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], modes: [TravelMode?], start: Date, segment: Int, rough: Bool)] = []
         var after = q.from.addingTimeInterval(-0.001)   // reads are `t > after`: keep a point exactly at `from`
         // Zoomed out, trips up to the cache's end come from the trip-line cache (smoothed lines only); points resume where those trips end, never mid-trip.
@@ -211,13 +222,40 @@ struct MapOptions: Equatable {
             out.still = try diary.stillPoints(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: q.to,
                                               cell: cell, lonCell: cell / cos((q.minLat + q.maxLat) / 2 * .pi / 180))
         }
-        if q.streets {   // stored by the street run; the map only reads them
-            out.bike = q.bike
-            for w in q.zoomedOut ? [] : try diary.coveredWays(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, bike: q.bike) {
-                let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)   // zoomed out: less detail, never fewer streets
-                out.covered.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
+        out.bike = q.bike
+        out.walked = try diary.streetsWalked(bike: q.bike)
+        if q.mode == .streets {   // stored by the street run; the map only reads them
+            // Streets while a 20 m segment is at least 0.5 pt on screen, neighbourhood shading while it is at most 1 pt.
+            if q.metresPerPoint <= 40 {
+                let covered = try diary.coveredWays(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, bike: q.bike)
+                let ids = Set(covered.map(\.id))
+                for w in covered {
+                    let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)   // zoomed out: less detail, never fewer streets
+                    out.covered.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
+                }
+                for w in try diary.ways(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon) where w.countable && !ids.contains(w.id) {
+                    let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)
+                    out.unwalked.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
+                }
             }
-            out.walked = try diary.streetsWalked(bike: q.bike)
+            if q.metresPerPoint >= 20 {
+                let progress = Dictionary(try diary.areaProgress(bike: q.bike).map { ($0.areaId, $0) }, uniquingKeysWith: { a, _ in a })
+                let areas = try diary.areas(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon).filter { progress[$0.id] != nil }
+                // Neighbourhoods; a city only where none of its neighbourhoods has streets.
+                let fine = areas.filter { $0.level > 8 }
+                for a in areas where a.level > 8 || !fine.contains(where: { f in Areas.locate(lat: f.rings[0][0].lat, lon: f.rings[0][0].lon, in: [a]).city != nil }) {
+                    let p = progress[a.id]!
+                    out.shading.append((key: "\(a.id)-\(p.covered)", rings: a.rings, holes: a.holes, share: p.total > 0 ? Double(p.covered) / Double(p.total) : 0))
+                }
+            }
+        } else {
+            // Fog: every cached trip line in the region, all time, plus this period's lines so a trip clears at once.
+            let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
+            let modes = cached.isEmpty ? [:] : try diary.modes(from: cached.map(\.start).min()!, to: q.to)
+            for l in cached {
+                for (i, st) in Fog.strokes(line: l, modes: modes[l.start] ?? []).enumerated() { out.fog.append(("c\(l.start.timeIntervalSince1970)-\(i)", st)) }
+            }
+            for st in Fog.circles(places: q.places) { out.fog.append(("p\(st.coords[0].lat),\(st.coords[0].lon)", st)) }
         }
         let lo = q.from == .distantPast ? (trips.map(\.start).min() ?? q.to) : q.from
         let span = max(1, q.to.timeIntervalSince(lo))
@@ -239,6 +277,19 @@ struct MapOptions: Equatable {
                                      locations: along.enumerated().map { total > 0 ? $1 / total : Double($0) / Double(max(1, keep.count - 1)) },
                                      dateFraction: fraction))
         }
+        if q.mode == .fog {
+            for l in out.lines where l.coords.count > 1 {
+                var a = 0
+                func width(_ m: TravelMode?) -> Double {
+                    switch m { case .walk?, .run?, .bike?: Fog.onFoot; case .train?, .boat?: 0; default: Fog.road }
+                }
+                for b in 1..<l.coords.count where b == l.coords.count - 1 || width(l.modes[b]) != width(l.modes[a]) {
+                    let w = width(l.modes[a]), run = Array(l.coords[a...b])
+                    out.fog += w > 0 ? [("l\(l.key)-\(a)", FogStroke(coords: run, halfWidth: w))] : []
+                    a = b
+                }
+            }
+        }
         return out
     }
 }
@@ -246,18 +297,19 @@ struct MapOptions: Equatable {
 struct MapScreen: View {
     @State private var loader = MapLoader()
     @AppStorage("recordedLine") private var recordedLine = false
-    @State private var colour = LineColour.date
+    @AppStorage("lineColour") private var colour = LineColour.plain
     @State private var satellite = false
     @State private var onScreen = false
     @State private var choosingDates = false
     @State private var openPlace: Place?
     @AppStorage("countCycling") private var countCycling = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var scheme
 
     private var visible: Bool { onScreen && scenePhase == .active }
 
     var body: some View {
-        TrackMapView(data: loader.data, colour: colour, satellite: satellite, visible: visible) { region, width in
+        TrackMapView(data: loader.data, mode: loader.options.mode, colour: colour, dark: scheme == .dark, satellite: satellite, visible: visible) { region, width in
             loader.regionChanged(region, width: width)
         } onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } }
         .ignoresSafeArea(edges: .top)
@@ -279,6 +331,10 @@ struct MapScreen: View {
 
     private var controls: some View {
         VStack(spacing: 8) {
+            Picker("Map", selection: $loader.options.mode) {
+                ForEach(MapMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
             Picker("Time range", selection: $loader.options.filter) {
                 ForEach(TimeFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -301,9 +357,6 @@ struct MapScreen: View {
             HStack {
                 Toggle("Heat", isOn: $loader.options.heat)
                     .accessibilityLabel("Heat map")
-                Toggle("Streets", isOn: $loader.options.streets)
-                    .accessibilityLabel("Streets walked")
-                    .accessibilityHint("Highlights the streets you have walked")
                 if loader.options.filter == .custom {
                     Button("Dates") { choosingDates = true }
                         .accessibilityLabel("Choose custom dates")
@@ -311,7 +364,7 @@ struct MapScreen: View {
             }
             .toggleStyle(.button)
             .buttonStyle(.bordered)
-            if loader.options.streets { Text(Self.tallyText(loader.data?.walked, bike: loader.data?.bike == true)).font(.caption) }
+            if loader.options.mode == .streets { Text(Self.tallyText(loader.data?.walked, bike: loader.data?.bike == true)).font(.caption) }
         }
         .padding(10)
         .background(.regularMaterial, in: .rect(cornerRadius: 12))
