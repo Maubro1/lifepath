@@ -58,8 +58,9 @@ final class MapMatcherTests: XCTestCase {
 
     func testRoughTrainMatchesRailNotMotorway() {
         // 30 min at 25 m/s; rail (1) and motorway (2) 150 m apart; fixes every 10 s, hAcc 700–1500, error ≤ 300 m toward the motorway.
-        let rail = way(1, .rail, (0...100).map { (Int64($0), 0, Double($0) * 500 - 2000) })
-        let road = way(2, .road, (0...100).map { (Int64($0 + 1000), 150, Double($0) * 500 - 2000) })
+        let railNodes = (0...100).map { i -> (Int64, Double, Double) in (Int64(i), 0, Double(i) * 500 - 2000) }
+        let roadNodes = (0...100).map { i -> (Int64, Double, Double) in (Int64(i + 1000), 150, Double(i) * 500 - 2000) }
+        let rail = way(1, .rail, railNodes), road = way(2, .road, roadNodes)
         var rng = SeededRandom(seed: 3)
         let pts = (0..<180).map { i -> FilteredPoint in
             let a = Double.random(in: 0...Double.pi, using: &rng), r = Double.random(in: 0...300, using: &rng)
