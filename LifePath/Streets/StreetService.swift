@@ -33,7 +33,7 @@ enum StreetService {
         }
         // A new matcher or classifier version re-matches all history once: the cursor restarts at 0 and the version is stored at once,
         // so an interrupted re-match resumes where it stopped.
-        let version = "\(MapMatcher.version).\(TravelModes.version)"
+        let version = "\(MapMatcher.version).\(TravelModes.version).\(Coverage.version)"
         let rematch = try diary.meta("matcherVersion") != version
         if rematch { try diary.setMeta("streetsUntil", "0"); try diary.setMeta("matcherVersion", version) }
         // The last matched trip is matched again: the next smoothing run may have extended it.
@@ -94,14 +94,23 @@ enum StreetService {
             let graph = RoadGraph(ways: byId.values.filter { kinds.contains($0.kind) }.sorted { $0.id < $1.id })
             let modes = try TravelModes.classify(trip.points, graph: graph, stops: stopById.values.sorted { $0.id < $1.id },
                                                  activities: diary.activities(from: trip.start, to: trip.end))
-            try diary.saveMatches(tripStart: trip.start, MapMatcher.match(trip.points, graph: graph, modes: modes), modes: modes)
+            let matches = MapMatcher.match(trip.points, graph: graph, modes: modes)
+            try diary.saveMatches(tripStart: trip.start, matches, modes: modes, hits: Coverage.hits(matches, modes: modes, graph: graph))
             if !waiting { try diary.setMeta("streetsUntil", String(trip.start.timeIntervalSince1970)) }   // a trip matched on stale or missing tiles is redone
             matched += 1
             modeCount += modes.count
             unsure += modes.filter { $0.confidence < TravelModes.confident }.count
         }
+        var walked = ""
+        if matched > 0 || tiles > 0 {
+            try Task.checkCancellation()
+            // shortcut: coverage is recomputed over every downloaded street after each run that matched or fetched, upgrade to per-tile if the run time or memory shows it
+            let coverage = Coverage.streets(ways: try diary.countableWays(), hits: try diary.segmentHits())
+            try diary.saveCoverage(coverage)
+            walked = " walked=\(coverage.onFoot)/\(coverage.total)"
+        }
         if matched > 0 { await MainActor.run { NotificationCenter.default.post(name: SmoothingService.linesChanged, object: nil) } }   // the map redraws on the matched streets
-        return "tiles=\(tiles) matched=\(matched) modes=\(modeCount) unsure=\(unsure)" + (waiting ? " waiting" : "")
+        return "tiles=\(tiles) matched=\(matched) modes=\(modeCount) unsure=\(unsure)" + walked + (waiting ? " waiting" : "")
     }
 
     /// Only a map rectangle leaves the phone: no cookies, no cache, nothing but the User-Agent.

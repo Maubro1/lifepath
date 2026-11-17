@@ -7,5 +7,6 @@ import SwiftUI
     @AppStorage("deepSleep") var deepSleep = false
     @AppStorage("downloadStreets") var downloadStreets = true   // read by StreetService through UserDefaults
     @AppStorage("streetsOnCellular") var streetsOnCellular = true
+    @AppStorage("countCycling") var countCycling = false   // read by the map through UserDefaults
     @AppStorage("onboarded") var onboarded = false
 }
