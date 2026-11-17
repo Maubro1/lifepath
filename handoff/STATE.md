@@ -10,16 +10,16 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.5.0-preview.1 | Stages 3b + 3c: travel mode per stretch (walk, run, bike, car, bus, tram, train, boat) with a Mode colouring; trains match rail only, bikes cycle paths; Streets walked toggle and tally (20 m segments, 90% rule). |
+| v0.4.0-preview.1 | Stage 3a: OpenStreetMap streets, rail and ferry downloaded along trips (only a map rectangle leaves the phone), HMM map matching, walks drawn on the street taken and train rides on the railway. |
 | v0.3.1-preview.1 | Tracking under pressure: train positions kept (rough), better walking and vehicle lines, home pottering no longer keeps GPS on, battery-saving mode in trains, live steady map with dashed rough stretches. |
 | v0.3.0-preview.1 | Stage 2b: learned places as pins (time-density shapes, dynamic hiding, pins per period, outlines, rename), calm resting at pins, confirmed presence for still points, Save a backup, "Not saving since" status, resume after first unlock, clearer settings, walking steps keep a resumed walk awake. |
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## In progress: stage 3, streets
+## In progress: stage 4, timeline, stats and steps
 
-Next per the spec: OSM street and rail download, HMM/Viterbi map matching (snaps walks to the street taken and rough train stretches to the railway), travel-mode classification, Streets walked. Branch and plan to be created from `places` after v0.3.1.
-
-v0.3.1 ("tracking under pressure": rough fixes kept, consistency-weighted smoothing with walking pace and spike removal, pottering vs leaving, keep-alive first at pins, struggle mode in vehicles, live steady map) is released as v0.3.1-preview.1; decisions in `docs/decisions/v0.3.1.md`. Not yet tested on the phone: ask the owner for health reports (new: rough counts per hour, struggle minutes, wake outcomes).
+Stage 3 is released (v0.4.0, v0.5.0; decisions in `docs/decisions/stage-3a.md` and `stage-3b-3c.md`). Next per the spec: Timeline (days newest first, route drawing, distance, moving time, steps), Stats (Where you went, On foot, Streets walked), CMPedometer days copied into the diary. Then stage 5 (export, backup, import, restore). Stage 6 (design) is done together with the owner.
 
 ## Questions for the owner (collected overnight, 2026-11-17)
 
