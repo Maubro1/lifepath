@@ -327,6 +327,7 @@ struct MapScreen: View {
     @State private var openPlace: Place?
     @State private var openCity: CityRef?
     @State private var target: MKMapRect?
+    @State private var openToday = false
     @AppStorage("countCycling") private var countCycling = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var scheme
@@ -362,6 +363,21 @@ struct MapScreen: View {
         }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
+        .sheet(isPresented: $openToday) { NavigationStack { DayPage(day: Calendar.current.startOfDay(for: Date())) } }
+        .onChange(of: AppNav.shared.showDay) { _, day in
+            // A day page asked to show its day: that day alone, framed on its lines.
+            guard let day else { return }
+            AppNav.shared.showDay = nil
+            openToday = false
+            loader.options.customFrom = day; loader.options.customTo = day; loader.options.filter = .custom
+            guard let diary = Recorder.shared.readDiary else { return }
+            let end = Calendar.current.date(byAdding: .day, value: 1, to: day)!
+            Task {
+                let lines = await Task.detached(priority: .userInitiated) { (try? diary.tripLines(from: day, to: end)) ?? [] }.value
+                let coords = lines.flatMap { $0.coords.map { (lat: $0.lat, lon: $0.lon) } }
+                if !coords.isEmpty { target = mapRect(coords, pad: 200) }
+            }
+        }
     }
 
     /// Top left: the area under the map centre and how much of it is walked.
@@ -433,6 +449,9 @@ struct MapScreen: View {
                 .foregroundStyle(Color.ink)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Today")
+                .accessibilityHint("Opens today")
+                .contentShape(.rect)
+                .onTapGesture { openToday = true }
             }
         }
         .padding(12)

@@ -25,16 +25,15 @@ private struct Root: View {
     /// Same test as `init`: settings read before the first unlock can come back as defaults, but the permission can't.
     @State private var startedBefore = AppSettings().onboarded || CLLocationManager().authorizationStatus != .notDetermined
     @AppStorage("appearance") private var appearance: Appearance = .system
+    @Bindable private var nav = AppNav.shared
 
     var body: some View { themed }
 
     @ViewBuilder private var content: some View {
         if settings.onboarded || startedBefore {
-            TabView {
-                Tab("Map", systemImage: "map") { MapScreen() }
-                Tab("Timeline", systemImage: "calendar") { TimelineScreen() }
-                Tab("Stats", systemImage: "chart.bar") { StatsScreen() }
-                Tab("Settings", systemImage: "gear") { SettingsView() }
+            TabView(selection: $nav.tab) {
+                Tab("Map", systemImage: "map", value: 0) { MapScreen() }
+                Tab("You", systemImage: "person.crop.circle", value: 1) { YouScreen() }
             }
         } else { OnboardingView() }
     }

@@ -43,7 +43,7 @@ struct SettingsView: View {
             authorization: recorder.authorization, preciseLocation: recorder.preciseLocation, state: recorder.state,
             stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn, notSavingSince: recorder.notSavingSince,
             signingExpiry: expiry, now: now)
-        NavigationStack {
+        Group {   // pushed from the You tab, inside its navigation stack
             List {
                 Section("Status") {
                     Label(s.headline, systemImage: s.level == .problem ? "exclamationmark.triangle" : s.level == .resting ? "moon" : "checkmark.circle")
