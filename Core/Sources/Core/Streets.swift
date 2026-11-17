@@ -99,7 +99,7 @@ public struct RoadGraph: Sendable {
     let ways: [Way]
     let index: [Int64: Int]
     let lens: [[Double]]
-    var grid: [PlaceCell: [Int32]] = [:]  // cell -> (way index << 16 | segment), see seg(_:)
+    var grid: [PlaceCell: [Int]] = [:]  // cell -> (way index << 16 | segment), see seg(_:)
     var edges: [Int64: [(to: Int64, len: Double, against: Bool)]] = [:]  // against: backwards on a one-way road
 
     // shortcut: a way has < 65536 segments, and metres per degree of longitude are those at 52°N (PlaceGrid); upgrade for far-away travel
@@ -113,7 +113,7 @@ public struct RoadGraph: Sendable {
                 edges[w.nodes[i + 1], default: []].append((w.nodes[i], lens[wi][i], w.oneway))
                 let a = Self.metres(w.coords[i]), b = Self.metres(w.coords[i + 1])
                 for cx in Self.span(a.x, b.x) { for cy in Self.span(a.y, b.y) {
-                    grid[PlaceCell(x: cx, y: cy), default: []].append(Int32(wi << 16 | i))
+                    grid[PlaceCell(x: cx, y: cy), default: []].append(wi << 16 | i)
                 } }
             }
         }
@@ -125,7 +125,7 @@ public struct RoadGraph: Sendable {
     /// Segments within `radius` metres of the point, nearest first, one candidate (the closest position) per segment.
     public func candidates(lat: Double, lon: Double, radius: Double) -> [Candidate] {
         let p = Self.metres((lat, lon))
-        var seen = Set<Int32>(), out: [Candidate] = []
+        var seen = Set<Int>(), out: [Candidate] = []
         for cx in Self.span(p.x - radius, p.x + radius) { for cy in Self.span(p.y - radius, p.y + radius) {
             for s in grid[PlaceCell(x: cx, y: cy)] ?? [] where seen.insert(s).inserted {
                 let w = ways[Int(s >> 16)], i = Int(s & 0xFFFF)

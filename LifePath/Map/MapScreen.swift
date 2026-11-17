@@ -126,7 +126,7 @@ struct MapOptions: Equatable {
         }
         let tripsAfter = after
         if q.heat { after = q.from.addingTimeInterval(-0.001) }   // dwell over the whole range
-        var ways: [Int64: Way]?   // streets of the visible box, read once on the first trip that has matches
+        var ways: [Int64: Way] = [:]   // the streets confident stretches use, each read once
         func add(_ split: [Trip]) throws {
             for trip in split {
                 try Task.checkCancellation()
@@ -140,16 +140,14 @@ struct MapOptions: Equatable {
                 var rough = trip.points.map { $0.kind == .rough }
                 if !q.recorded {
                     let stretches = try diary.matches(tripStart: trip.start).filter { $0.confidence >= MapMatcher.confident }
-                    if !stretches.isEmpty, ways == nil {
-                        let all = try diary.ways(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon)
-                        ways = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-                    }
+                    let missing = Set(stretches.map(\.wayId)).filter { ways[$0] == nil }
+                    if !missing.isEmpty { for w in try diary.ways(ids: Array(missing)) { ways[w.id] = w } }
                     // Confident stretches draw along their street, rail or ferry line, solid even when the fixes were rough; vertices borrow the nearest fix's speed.
                     var nc: [(lat: Double, lon: Double)] = [], ns: [Double] = [], nr: [Bool] = [], next = 0
                     // Stretches are timed, not indexed: this trip's points were read in a box and chunks, so only a stretch whose end points are both here applies.
                     let at = Dictionary(trip.points.enumerated().map { ($1.t, $0) }, uniquingKeysWith: { a, _ in a })
                     for m in stretches {
-                        guard let first = at[m.start], let last = at[m.end], first >= next, first <= last, let way = ways?[m.wayId] else { continue }
+                        guard let first = at[m.start], let last = at[m.end], first >= next, first <= last, let way = ways[m.wayId] else { continue }
                         nc += coords[next..<first]; ns += speeds[next..<first]; nr += rough[next..<first]
                         var j = first   // vertices run in travel order, so the nearest fix only moves forward
                         for v in way.slice(fromM: m.fromM, toM: m.toM) {

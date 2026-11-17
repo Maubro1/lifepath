@@ -22,8 +22,10 @@ enum StreetService {
         let defaults = UserDefaults.standard
         let download = defaults.object(forKey: "downloadStreets") as? Bool ?? true
         let cellular = defaults.object(forKey: "streetsOnCellular") as? Bool ?? true
-        // A new matcher version re-matches all history once; the version is stored when a run ends uncancelled.
+        // A new matcher version re-matches all history once: the cursor restarts at 0 and the version is stored at once,
+        // so an interrupted re-match resumes where it stopped.
         let rematch = try diary.meta("matcherVersion") != String(MapMatcher.version)
+        if rematch { try diary.setMeta("streetsUntil", "0"); try diary.setMeta("matcherVersion", String(MapMatcher.version)) }
         // The last matched trip is matched again: the next smoothing run may have extended it.
         let from: Date = try rematch ? .distantPast
             : diary.meta("streetsUntil").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? .distantPast
@@ -50,6 +52,10 @@ enum StreetService {
                 let ways: [Way]
                 do { ways = try await fetch(tile, session) } catch {
                     if Task.isCancelled { throw CancellationError() }
+                    // No usable network (offline, or only mobile data while it is not allowed): skip quietly, the next run tries again.
+                    if let e = error as? URLError, [URLError.Code.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed].contains(e.code) {
+                        waiting = true; break trips
+                    }
                     // Any failure waits, remembered across launches: 60 s, doubling to 30 min.
                     backoff = min(max(60, backoff * 2), 1800)
                     retryAt = Date().timeIntervalSince1970 + backoff
@@ -68,12 +74,15 @@ enum StreetService {
                 let b = tile.bounds
                 for w in try diary.ways(minLat: b.minLat, maxLat: b.maxLat, minLon: b.minLon, maxLon: b.maxLon) { byId[w.id] = w }
             }
-            let graph = RoadGraph(ways: byId.values.sorted { $0.id < $1.id })
+            // Rough fixes match only rail, tram and ferry, so a trip of nothing else needs no streets in its graph.
+            let roughOnly = !trip.points.contains { $0.kind != .rough && $0.kind != .still }
+            let kinds: Set<WayKind> = roughOnly ? [.rail, .tram, .ferry] : [.foot, .road, .rail, .tram, .ferry]
+            let graph = RoadGraph(ways: byId.values.filter { kinds.contains($0.kind) }.sorted { $0.id < $1.id })
             try diary.saveMatches(tripStart: trip.start, MapMatcher.match(trip.points, graph: graph))
             try diary.setMeta("streetsUntil", String(trip.start.timeIntervalSince1970))
             matched += 1
         }
-        if rematch { try diary.setMeta("matcherVersion", String(MapMatcher.version)) }   // trips past the cursor are matched by this version later
+        if matched > 0 { await MainActor.run { NotificationCenter.default.post(name: SmoothingService.linesChanged, object: nil) } }   // the map redraws on the matched streets
         return "tiles=\(tiles) matched=\(matched)" + (waiting ? " waiting" : "")
     }
 
@@ -81,9 +90,9 @@ enum StreetService {
     private static func makeSession(cellular: Bool) -> URLSession {
         let c = URLSessionConfiguration.ephemeral
         c.allowsCellularAccess = cellular
-        c.waitsForConnectivity = true
+        c.waitsForConnectivity = false         // no usable network fails at once and is skipped quietly, no waiting radio
         c.timeoutIntervalForRequest = 90       // Overpass may queue before its own 60 s
-        c.timeoutIntervalForResource = 180     // no network for 3 min counts as a failure and backs off
+        c.timeoutIntervalForResource = 180     // a stalled download counts as a failure and backs off
         c.httpCookieStorage = nil; c.httpShouldSetCookies = false; c.urlCache = nil
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         c.httpAdditionalHeaders = ["User-Agent": "LifePath/\(version) (personal location diary)"]

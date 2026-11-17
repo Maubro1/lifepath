@@ -222,13 +222,28 @@ public final class Diary: Sendable {
     public func ways(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) throws -> [Way] {
         try pool.read { db in
             try Row.fetchAll(db, sql: "SELECT * FROM way WHERE maxLat >= ? AND minLat <= ? AND maxLon >= ? AND minLon <= ? ORDER BY id",
-                             arguments: [minLat, maxLat, minLon, maxLon]).map { r in
-                let ll = Self.unpack(r["coords"]).map { Double(bitPattern: $0) }
-                return Way(id: r["id"], kind: WayKind(rawValue: r["kind"]) ?? .road, name: r["name"], oneway: r["oneway"],
-                           nodes: Self.unpack(r["nodes"]).map { Int64(bitPattern: $0) },
-                           coords: (0..<ll.count / 2).map { (ll[$0 * 2], ll[$0 * 2 + 1]) })
-            }
+                             arguments: [minLat, maxLat, minLon, maxLon]).map(Self.way)
         }
+    }
+
+    /// Ways by id, in id order; ids are bound 500 at a time, under SQLite's argument limit.
+    public func ways(ids: [Int64]) throws -> [Way] {
+        try pool.read { db in
+            var out: [Way] = []
+            for k in stride(from: 0, to: ids.count, by: 500) {
+                let chunk = Array(ids[k..<min(k + 500, ids.count)])
+                let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+                out += try Row.fetchAll(db, sql: "SELECT * FROM way WHERE id IN (\(marks))", arguments: StatementArguments(chunk)).map(Self.way)
+            }
+            return out.sorted { $0.id < $1.id }
+        }
+    }
+
+    private static func way(_ r: Row) -> Way {
+        let ll = unpack(r["coords"]).map { Double(bitPattern: $0) }
+        return Way(id: r["id"], kind: WayKind(rawValue: r["kind"]) ?? .road, name: r["name"], oneway: r["oneway"],
+                   nodes: unpack(r["nodes"]).map { Int64(bitPattern: $0) },
+                   coords: (0..<ll.count / 2).map { (ll[$0 * 2], ll[$0 * 2 + 1]) })
     }
 
     /// Derived cache: replaces that trip's rows in one transaction.

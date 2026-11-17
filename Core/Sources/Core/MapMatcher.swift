@@ -81,9 +81,19 @@ public enum MapMatcher {
         for r in runs where r.b - r.a > 1 {
             if kept.last?.way == r.way { kept[kept.count - 1].b = r.b } else { kept.append(r) }
         }
-        return kept.enumerated().map { n, r in
+        return kept.enumerated().map { n, r -> MatchedStretch in
             let run = picks[r.a..<r.b], len = Double(run.count)
-            let conf = Double(run.filter(\.near).count) / len * run.map(\.margin).reduce(0, +) / len
+            var conf = Double(run.filter(\.near).count) / len * run.map(\.margin).reduce(0, +) / len
+            // shortcut: rough fixes see only rail/tram/ferry, so no road competes and a fast car beside a railway would draw solid;
+            // below train-only speeds (25 m/s) such a stretch stays unsure, upgrade with 3b travel modes
+            let steps = chain[r.a..<r.b]
+            if steps.allSatisfy(\.rough) {
+                let v = zip(steps, steps.dropFirst()).map { a, b -> Double in
+                    let dt = points[b.i].t.timeIntervalSince(points[a.i].t)
+                    return dt > 0 ? distance(points[a.i], points[b.i]) / dt : 0
+                }.sorted()
+                if v[v.count / 2] < 25 { conf = min(conf, confident / 2) }
+            }
             return MatchedStretch(seq: seq + n, wayId: r.way, fromM: along(picks[r.a].c, graph), toM: along(picks[r.b - 1].c, graph),
                                   confidence: max(0, min(1, conf)), start: points[chain[r.a].i].t, end: points[chain[r.b - 1].i].t)
         }
