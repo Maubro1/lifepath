@@ -12,6 +12,8 @@ import Observation
     /// True from before the chain is stopped until the merge has ended; nothing in the chain starts meanwhile.
     var merging = false
     var phase: Phase = .idle
+    /// The copy being merged; a rebuild that ends after a newer restore began must not close that one.
+    private var mergingCopy: URL?
 
     /// Copies the picked file into the temporary folder (an iCloud file downloads first) and reads its summary from the copy.
     func read(_ picked: URL) async {
@@ -27,6 +29,7 @@ import Observation
             if coordinatorError != nil || copyError != nil { return .failure(CocoaError(.fileReadUnknown)) }
             return Result { try Diary.backupSummary(at: copy.path) }
         }.value
+        guard phase == .reading else { try? FileManager.default.removeItem(at: copy); return }   // cancelled while checking
         switch result {
         case .success(let summary): phase = .ready(summary, copy)
         case .failure(let error):
@@ -44,6 +47,7 @@ import Observation
             return
         }
         merging = true
+        mergingCopy = copy
         phase = .merging
         await SmoothingService.stop()
         Recorder.shared.holdWrites = true   // points recorded meanwhile stay in memory and are written right after
@@ -80,7 +84,7 @@ import Observation
             Recorder.shared.flush()
             phase = .rebuilding
             await SmoothingService.start().value
-            if phase == .rebuilding { phase = .done(r.addedPoints) }   // "Done" while rebuilding closed the sheet: stay closed
+            if phase == .rebuilding, mergingCopy == copy { phase = .done(r.addedPoints) }   // "Done" while rebuilding closed the sheet: stay closed
         }
     }
 

@@ -687,7 +687,7 @@ public final class Diary: Sendable {
                     // The backup's caches and cursors describe exactly its points.
                     for t in ["smoothedPoint", "tripLine", "matchedStretch", "modeStretch", "segmentHit", "coveredWay", "day"] { try copy(t) }
                     try db.execute(sql: "INSERT OR REPLACE INTO main.meta(key, value) SELECT key, value FROM b.meta")
-                } else {
+                } else if result.addedPoints > 0 {
                     try db.execute(sql: "DELETE FROM main.meta WHERE key IN ('smoothingVersion', 'matcherVersion', 'daysVersion')")
                     // Visits already stored are skipped by Places.settle, so the rewind cannot count a visit twice.
                     let cursor = try placeless

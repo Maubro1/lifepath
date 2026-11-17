@@ -116,11 +116,12 @@ enum SmoothingService {
     static func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
             nonisolated(unsafe) let task = task
-            let work = Task.detached(priority: .utility) {
-                await execute()
-                task.setTaskCompleted(success: !Task.isCancelled)
+            Task { @MainActor in
+                let work = start()   // tracked in `running`, so stop() can cancel it
+                task.expirationHandler = { work.cancel() }
+                await work.value
+                task.setTaskCompleted(success: !work.isCancelled)
             }
-            task.expirationHandler = { work.cancel() }
         }
     }
 }

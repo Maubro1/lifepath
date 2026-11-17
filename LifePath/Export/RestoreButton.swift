@@ -23,7 +23,9 @@ struct RestoreButton: View {
     @ViewBuilder private var content: some View {
         switch service.phase {
         case .idle: EmptyView()
-        case .reading: List { ProgressView("Checking the backup…") }
+        case .reading:
+            List { ProgressView("Checking the backup…") }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { service.cancel() } } }
         case .ready(let s, _):
             List {
                 Section {

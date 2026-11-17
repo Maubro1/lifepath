@@ -635,8 +635,10 @@ final class DiaryTests: XCTestCase {
         let diary = try Diary(path: mainPath)
         let path = try backupFile(fillRich)
         XCTAssertEqual(try diary.merge(backupAt: path).addedPoints, 3)
+        try diary.setMeta("smoothingVersion", "3")
         let before = try Diary.mergedTables.map { try count(mainPath, $0) }
         XCTAssertEqual(try diary.merge(backupAt: path), MergeResult(addedPoints: 0, fresh: false))
+        XCTAssertEqual(try diary.meta("smoothingVersion"), "3")
         XCTAssertEqual(try Diary.mergedTables.map { try count(mainPath, $0) }, before)
     }
 
