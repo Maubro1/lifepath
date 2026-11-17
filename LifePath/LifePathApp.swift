@@ -24,8 +24,11 @@ private struct Root: View {
     let settings = AppSettings()
     /// Same test as `init`: settings read before the first unlock can come back as defaults, but the permission can't.
     @State private var startedBefore = AppSettings().onboarded || CLLocationManager().authorizationStatus != .notDetermined
+    @AppStorage("appearance") private var appearance: Appearance = .system
 
-    var body: some View {
+    var body: some View { themed }
+
+    @ViewBuilder private var content: some View {
         if settings.onboarded || startedBefore {
             TabView {
                 Tab("Map", systemImage: "map") { MapScreen() }
@@ -35,4 +38,6 @@ private struct Root: View {
             }
         } else { OnboardingView() }
     }
+
+    var themed: some View { content.tint(.satsuma).preferredColorScheme(appearance.scheme) }
 }

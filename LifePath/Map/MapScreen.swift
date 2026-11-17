@@ -245,6 +245,7 @@ struct MapOptions: Equatable {
 
 struct MapScreen: View {
     @State private var loader = MapLoader()
+    @AppStorage("recordedLine") private var recordedLine = false
     @State private var colour = LineColour.date
     @State private var satellite = false
     @State private var onScreen = false
@@ -266,6 +267,7 @@ struct MapScreen: View {
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
         .onChange(of: colour) { _, c in loader.options.byMode = c == .mode }   // changes options, which reloads
         .onChange(of: loader.options) { loader.reload() }
+        .onChange(of: recordedLine, initial: true) { _, r in loader.options.recorded = r }
         .onChange(of: countCycling) { loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: SmoothingService.linesChanged)) { _ in loader.reload() }   // no-op unless visible
         .onReceive(NotificationCenter.default.publisher(for: PlaceService.changed)) { _ in loader.reload() }
@@ -299,9 +301,6 @@ struct MapScreen: View {
             HStack {
                 Toggle("Heat", isOn: $loader.options.heat)
                     .accessibilityLabel("Heat map")
-                Toggle("Recorded line", isOn: $loader.options.recorded)
-                    .accessibilityLabel("Recorded line")
-                    .accessibilityHint("Shows the line as recorded instead of smoothed")
                 Toggle("Streets", isOn: $loader.options.streets)
                     .accessibilityLabel("Streets walked")
                     .accessibilityHint("Highlights the streets you have walked")

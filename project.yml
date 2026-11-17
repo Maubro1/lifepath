@@ -41,6 +41,7 @@ targets:
         BGTaskSchedulerPermittedIdentifiers: [app.lifepath.LifePath.smooth]
         NSLocationWhenInUseUsageDescription: "LifePath draws a private map of where you go. Your location never leaves this iPhone."
         NSLocationAlwaysAndWhenInUseUsageDescription: "LifePath records in the background so your map stays complete, even when the app is closed. Nothing leaves this iPhone."
+        UIAppFonts: [BricolageGrotesque.ttf]
         NSMotionUsageDescription: "LifePath uses your steps and motion to notice when you set off and to save battery while you're still."
 schemes:
   LifePath:
