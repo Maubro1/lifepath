@@ -112,6 +112,14 @@ public final class Diary: Sendable {
                 CREATE TABLE daySteps(day TEXT PRIMARY KEY, steps INTEGER, distance REAL, floorsUp INTEGER);
                 """)
         }
+        migrator.registerMigration("v10") { db in
+            // Additive, and a cache: borders are downloaded again when missing, so a backup never carries them.
+            try db.execute(sql: """
+                CREATE TABLE area(id INTEGER PRIMARY KEY, level INTEGER, name TEXT, minLat REAL, maxLat REAL, minLon REAL, maxLon REAL,
+                                  rings BLOB, holes BLOB);
+                CREATE TABLE areaTile(x INTEGER, y INTEGER, PRIMARY KEY(x, y));
+                """)
+        }
         return migrator
     }
 
@@ -505,6 +513,59 @@ public final class Diary: Sendable {
     }
 
     /// Little-endian 64-bit words (Float64 bit patterns or Int64 node ids).
+    /// Borders found for a tile; the tile is then marked so its borders are not asked for again.
+    public func saveAreas(_ areas: [Area], tile: Tile) throws {
+        try pool.write { db in
+            for a in areas {
+                let b = a.bounds
+                var row: StatementArguments = [a.id, a.level, a.name, b.minLat, b.maxLat, b.minLon, b.maxLon]
+                row += [Self.packRings(a.rings), Self.packRings(a.holes)]
+                try db.execute(sql: "INSERT OR REPLACE INTO area(id, level, name, minLat, maxLat, minLon, maxLon, rings, holes) VALUES (?,?,?,?,?,?,?,?,?)",
+                               arguments: row)
+            }
+            try db.execute(sql: "INSERT OR REPLACE INTO areaTile(x, y) VALUES (?, ?)", arguments: [tile.x, tile.y])
+        }
+    }
+
+    public func hasAreas(_ tile: Tile) throws -> Bool {
+        try pool.read { db in try Row.fetchOne(db, sql: "SELECT 1 FROM areaTile WHERE x = ? AND y = ?", arguments: [tile.x, tile.y]) != nil }
+    }
+
+    /// Which of these relation ids already have a stored shape.
+    public func storedAreaIds(_ ids: [Int64]) throws -> Set<Int64> {
+        guard !ids.isEmpty else { return [] }
+        return try pool.read { db in
+            Set(try Int64.fetchAll(db, sql: "SELECT id FROM area WHERE id IN (\(ids.map { _ in "?" }.joined(separator: ",")))",
+                                   arguments: StatementArguments(ids)))
+        }
+    }
+
+    public func areas(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) throws -> [Area] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM area WHERE maxLat >= ? AND minLat <= ? AND maxLon >= ? AND minLon <= ? ORDER BY id",
+                             arguments: [minLat, maxLat, minLon, maxLon]).map { r in
+                Area(id: r["id"], level: r["level"], name: r["name"], rings: Self.unpackRings(r["rings"]), holes: Self.unpackRings(r["holes"]))
+            }
+        }
+    }
+
+    /// Rings as words: per ring its point count, then lat and lon bit patterns.
+    private static func packRings(_ rings: [[(lat: Double, lon: Double)]]) -> Data {
+        pack(rings.flatMap { r in [UInt64(r.count)] + r.flatMap { [$0.lat.bitPattern, $0.lon.bitPattern] } })
+    }
+
+    private static func unpackRings(_ d: Data) -> [[(lat: Double, lon: Double)]] {
+        let w = unpack(d)
+        var out: [[(lat: Double, lon: Double)]] = [], i = 0
+        while i < w.count {
+            let n = Int(w[i]); i += 1
+            guard i + 2 * n <= w.count else { break }
+            out.append((0..<n).map { k in (Double(bitPattern: w[i + 2 * k]), Double(bitPattern: w[i + 2 * k + 1])) })
+            i += 2 * n
+        }
+        return out
+    }
+
     private static func pack(_ words: [UInt64]) -> Data {
         var d = Data(capacity: words.count * 8)
         for w in words { withUnsafeBytes(of: w.littleEndian) { d.append(contentsOf: $0) } }

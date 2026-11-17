@@ -80,6 +80,15 @@ enum StreetService {
                 tiles += 1
                 if backoff > 0 { backoff = 0; try diary.setMeta("streetsBackoff", "0") }
             }
+            // Borders for progress per place; a failure only stops border downloads for this run, never matching.
+            if fetching, !waiting, let session {
+                for tile in try needed.filter({ try diary.hasTile($0, version: OSM.version) && !diary.hasAreas($0) }) {
+                    do { try diary.saveAreas(await fetchAreas(tile, session, diary), tile: tile); tiles += 1 } catch {
+                        if Task.isCancelled { throw CancellationError() }
+                        break
+                    }
+                }
+            }
             // Ways and stops overlapping the trip's tiles, which already reach the candidate radius past every point.
             var byId: [Int64: Way] = [:], stopById: [Int64: Stop] = [:]
             for tile in needed {
@@ -128,8 +137,21 @@ enum StreetService {
 
     private static func fetch(_ tile: Tile, _ session: URLSession) async throws -> (ways: [Way], stops: [Stop]) {
         let b = tile.bounds
+        return try OSM.parse(await post(OSM.query(minLat: b.minLat, minLon: b.minLon, maxLat: b.maxLat, maxLon: b.maxLon), session))
+    }
+
+    /// A tile's borders: the light index first, then the shape of each relation not stored yet, in one request.
+    private static func fetchAreas(_ tile: Tile, _ session: URLSession, _ diary: Diary) async throws -> [Area] {
+        let b = tile.bounds
+        let index = try OSM.parseAreas(await post(OSM.areaIndexQuery(minLat: b.minLat, minLon: b.minLon, maxLat: b.maxLat, maxLon: b.maxLon), session))
+        let stored = try diary.storedAreaIds(index.missing)
+        let needed = index.missing.filter { !stored.contains($0) }
+        guard !needed.isEmpty else { return index.areas }
+        return try index.areas + OSM.parseAreas(await post(OSM.areaGeometryQuery(ids: needed), session)).areas
+    }
+
+    private static func post(_ query: String, _ session: URLSession) async throws -> Data {
         var allowed = CharacterSet.alphanumerics; allowed.insert(charactersIn: "-._~")
-        let query = OSM.query(minLat: b.minLat, minLon: b.minLon, maxLat: b.maxLat, maxLon: b.maxLon)
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"   // the rectangle travels in the body, not the URL
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -139,6 +161,6 @@ enum StreetService {
         guard (response as? HTTPURLResponse)?.statusCode == 200, try JSONDecoder().decode(Remark.self, from: data).remark == nil else {
             throw URLError(.badServerResponse)
         }
-        return try OSM.parse(data)
+        return data
     }
 }
