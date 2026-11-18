@@ -291,7 +291,9 @@ struct HeatContent: LayerContent {
         let ow = Swift.max(1, Int((rect.width * Double(scale)).rounded())), oh = Swift.max(1, Int((rect.height * Double(scale)).rounded()))
         guard w > 2 * m, h > 2 * m, max > 0,
               let density = CGContext(data: nil, width: w, height: h, bitsPerComponent: 32, bytesPerRow: w * 4,
-                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.floatComponents.rawValue)
+                                      space: CGColorSpaceCreateDeviceGray(),
+                                      // little-endian floats, as vImage reads them (the default byte order is big-endian)
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.floatComponents.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
         else { return }
         density.clear(CGRect(x: 0, y: 0, width: w, height: h))   // a new bitmap's memory is not guaranteed empty
         // Buffer coordinates: y grows downwards like map points.
