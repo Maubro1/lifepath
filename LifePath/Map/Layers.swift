@@ -143,7 +143,7 @@ struct FogContent: LayerContent {
     }
 
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
-        ctx.setFillColor(cgColor(Palette.page, dark: dark, alpha: Self.opacity))
+        ctx.setFillColor(cgColor(Palette.fog, dark: dark, alpha: Self.opacity))
         ctx.fill(renderer.rect(for: rect))
         ctx.setLineCap(.round); ctx.setLineJoin(.round)
         let near = rect.insetBy(dx: -8 / scale, dy: -8 / scale)   // strokes wider than an item's padding when zoomed out
@@ -285,17 +285,20 @@ struct HeatContent: LayerContent {
     }
 
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
-        let px = Double(scale) / 4, m = 6   // buffer pixels per map point; margin pixels so blur and strokes cross tile seams
+        // Density at half the tile's points, a margin so strokes and blur cross tile seams, then smoothly scaled up to full points.
+        let px = Double(scale) / 2, m = 10
         let w = Int((rect.width * px).rounded(.up)) + 2 * m, h = Int((rect.height * px).rounded(.up)) + 2 * m
+        let ow = Swift.max(1, Int((rect.width * Double(scale)).rounded())), oh = Swift.max(1, Int((rect.height * Double(scale)).rounded()))
         guard w > 2 * m, h > 2 * m, max > 0,
               let density = CGContext(data: nil, width: w, height: h, bitsPerComponent: 32, bytesPerRow: w * 4,
                                       space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.floatComponents.rawValue)
         else { return }
+        density.clear(CGRect(x: 0, y: 0, width: w, height: h))   // a new bitmap's memory is not guaranteed empty
         // Buffer coordinates: y grows downwards like map points.
         density.translateBy(x: 0, y: CGFloat(h)); density.scaleBy(x: 1, y: -1)
         func b(_ p: MKMapPoint) -> CGPoint { CGPoint(x: (p.x - rect.minX) * px + Double(m), y: (p.y - rect.minY) * px + Double(m)) }
         density.setBlendMode(.plusLighter); density.setLineCap(.round); density.setLineJoin(.round)
-        density.setStrokeColor(gray: 1, alpha: CGFloat(Self.pass)); density.setLineWidth(1.5)
+        density.setStrokeColor(gray: 1, alpha: CGFloat(Self.pass)); density.setLineWidth(2)
         let near = rect.insetBy(dx: -Double(m) / px, dy: -Double(m) / px)
         for i in grid.items(in: near) where lines[i].rect.intersects(near) && lines[i].points.count > 1 {
             let path = CGMutablePath()
@@ -303,34 +306,37 @@ struct HeatContent: LayerContent {
             density.addPath(path); density.strokePath()   // one stroke per trip: a trip counts once where it overlaps itself
         }
         for p in places where near.contains(p.point) {
-            let c = b(p.point), r = 3.0
+            let c = b(p.point), r = 5.0
             density.setFillColor(gray: 1, alpha: CGFloat(Swift.min(1, Double(Self.pass) * (1 + log1p(p.hours)))))
             density.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
         }
         guard let data = density.data else { return }
-        // Blur once: a 5×5 Gaussian (binomial 1-4-6-4-1) softens the lines into gradients.
+        // Blur once: a 9×9 Gaussian (binomial) softens the lines into gradients.
         var src = vImage_Buffer(data: data, height: vImagePixelCount(h), width: vImagePixelCount(w), rowBytes: w * 4)
-        let row: [Float] = [1, 4, 6, 4, 1], kernel = row.flatMap { a in row.map { a * $0 / 256 } }
+        let row: [Float] = [1, 8, 28, 56, 70, 56, 28, 8, 1], kernel = row.flatMap { a in row.map { a * $0 / 65_536 } }
         var blurred = [Float](repeating: 0, count: w * h)
+        var big = [Float](repeating: 0, count: ow * oh)
         blurred.withUnsafeMutableBytes { t in
             var dst = vImage_Buffer(data: t.baseAddress, height: src.height, width: src.width, rowBytes: w * 4)
-            _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, 5, 5, 0, vImage_Flags(kvImageEdgeExtend))
-        }
-        blurred.withUnsafeBytes { data.copyMemory(from: $0.baseAddress!, byteCount: w * h * 4) }
-        // Colour through the ramp into an RGBA image, margins cropped.
-        let values = data.bindMemory(to: Float.self, capacity: w * h)
-        let cw = w - 2 * m, ch = h - 2 * m
-        var rgba = [UInt8](repeating: 0, count: cw * ch * 4)
-        for y in 0..<ch {
-            for x in 0..<cw {
-                let count = Double(values[(y + m) * w + x + m] / Self.pass)
-                guard count > 0.05 else { continue }
-                let c = HeatRamp.colour(HeatRamp.level(count: count, max: max)), k = (y * cw + x) * 4
-                rgba[k] = UInt8(c.r * c.a * 255); rgba[k + 1] = UInt8(c.g * c.a * 255); rgba[k + 2] = UInt8(c.b * c.a * 255); rgba[k + 3] = UInt8(c.a * 255)
+            _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, 9, 9, 0, vImage_Flags(kvImageEdgeExtend))
+            // Crop the margins and scale up to the tile's points with high-quality resampling: no visible pixels.
+            var crop = vImage_Buffer(data: t.baseAddress! + (m * w + m) * 4, height: vImagePixelCount(h - 2 * m),
+                                     width: vImagePixelCount(w - 2 * m), rowBytes: w * 4)
+            big.withUnsafeMutableBytes { o in
+                var out = vImage_Buffer(data: o.baseAddress, height: vImagePixelCount(oh), width: vImagePixelCount(ow), rowBytes: ow * 4)
+                _ = vImageScale_PlanarF(&crop, &out, nil, vImage_Flags(kvImageHighQualityResampling))
             }
         }
+        // Colour through the ramp. The blur spreads a line's weight over its width, so a count is restored ×2.
+        var rgba = [UInt8](repeating: 0, count: ow * oh * 4)
+        for i in 0..<(ow * oh) {
+            let count = Double(big[i] / Self.pass) * 2
+            guard count > 0.05 else { continue }
+            let c = HeatRamp.colour(HeatRamp.level(count: count, max: max)), k = i * 4
+            rgba[k] = UInt8(c.r * c.a * 255); rgba[k + 1] = UInt8(c.g * c.a * 255); rgba[k + 2] = UInt8(c.b * c.a * 255); rgba[k + 3] = UInt8(c.a * 255)
+        }
         guard let provider = CGDataProvider(data: Data(rgba) as CFData),
-              let image = CGImage(width: cw, height: ch, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: cw * 4,
+              let image = CGImage(width: ow, height: oh, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: ow * 4,
                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
                                   provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
         else { return }
