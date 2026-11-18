@@ -6,7 +6,7 @@ import SwiftUI
 struct PlaceCard: View {
     let cityId: Int64
     let fly: (MKMapRect) -> Void
-    @State private var city: (area: Area, share: Double)?
+    @State private var city: (area: Area, share: Double, counts: AreaProgress?)?
     @State private var parts: [(area: Area, share: Double)] = []
     @AppStorage("countCycling") private var countCycling = false
 
@@ -20,6 +20,10 @@ struct PlaceCard: View {
                                 .font(.display(56, relativeTo: .largeTitle))
                                 .foregroundStyle(Color.satsuma)
                             Text(countCycling ? "of streets walked or cycled" : "of streets walked").foregroundStyle(Color.muted)
+                            if let p = city.counts {
+                                Text("\(p.covered.formatted()) of \(p.total.formatted()) streets · a street counts once you have covered 90% of it")
+                                    .font(.footnote).foregroundStyle(Color.muted)
+                            }
                         }
                         .accessibilityElement(children: .combine)
                     }
@@ -65,7 +69,7 @@ struct PlaceCard: View {
     private func load() async {
         guard let diary = Recorder.shared.readDiary else { return }
         let id = cityId, bike = countCycling
-        let read = await Task.detached(priority: .userInitiated) { () -> ((Area, Double), [(Area, Double)])? in
+        let read = await Task.detached(priority: .userInitiated) { () -> ((Area, Double, AreaProgress?), [(Area, Double)])? in
             guard let progress = try? Dictionary(diary.areaProgress(bike: bike).map { ($0.areaId, $0) }, uniquingKeysWith: { a, _ in a }),
                   let all = try? diary.areas(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180),
                   let city = all.first(where: { $0.id == id }) else { return nil }
@@ -76,10 +80,10 @@ struct PlaceCard: View {
             }
             // An area holding finer ones only keeps the streets left over between them: list the finer ones.
             let parts = inCity.filter { a in !inCity.contains { $0.id != a.id && a.contains(lat: $0.rings[0][0].lat, lon: $0.rings[0][0].lon) } }
-            return ((city, share(city)), parts.map { ($0, share($0)) }.sorted { $0.1 > $1.1 })
+            return ((city, share(city), progress[city.id]), parts.map { ($0, share($0)) }.sorted { $0.1 > $1.1 })
         }.value
         guard let read else { return }
-        city = (read.0.0, read.0.1)
+        city = (read.0.0, read.0.1, read.0.2)
         parts = read.1.map { (area: $0.0, share: $0.1) }
     }
 }

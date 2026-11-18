@@ -42,13 +42,22 @@ struct TrackMapView: UIViewRepresentable {
         let compass = MKCompassButton(mapView: map)
         compass.compassVisibility = .adaptive
         for v in [layers, locate] as [UIView] {
-            v.backgroundColor = UIColor(Palette.card)
             v.tintColor = UIColor(Palette.satsuma)
-            v.layer.cornerRadius = 3
             v.widthAnchor.constraint(equalToConstant: 44).isActive = true
             v.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
-        let column = UIStackView(arrangedSubviews: [layers, locate, compass])
+        // Layers and locate share one glass capsule (system Liquid Glass); the compass sits below it when the map is rotated.
+        let pair = UIStackView(arrangedSubviews: [layers, locate])
+        pair.axis = .vertical
+        let glass = UIVisualEffectView(effect: UIGlassEffect())
+        glass.layer.cornerRadius = 22; glass.layer.cornerCurve = .continuous; glass.clipsToBounds = true
+        pair.translatesAutoresizingMaskIntoConstraints = false
+        glass.contentView.addSubview(pair)
+        NSLayoutConstraint.activate([
+            pair.topAnchor.constraint(equalTo: glass.contentView.topAnchor), pair.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
+            pair.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor), pair.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
+        ])
+        let column = UIStackView(arrangedSubviews: [glass, compass])
         column.axis = .vertical; column.spacing = 8; column.alignment = .center
         column.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(column)

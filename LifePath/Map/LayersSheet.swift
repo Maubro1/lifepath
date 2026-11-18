@@ -5,12 +5,18 @@ import SwiftUI
 struct LayersSheet: View {
     @Binding var colour: LineColour
     @Binding var satellite: Bool
+    @Binding var period: TimeFilter
+    var chooseDates: () -> Void
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Colour lines by", selection: $colour) {
+                    Picker("Show", selection: $period) {
+                        ForEach(TimeFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    if period == .custom { Button("Choose dates", action: chooseDates) }
+                    Picker("Colour", selection: $colour) {
                         ForEach(LineColour.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     legend
@@ -40,6 +46,6 @@ struct LayersSheet: View {
         }
         .padding(.horizontal, 8)
         .frame(minHeight: 32)
-        .background(Color.inset, in: .rect(cornerRadius: 3))
+        .background(Color.inset, in: .rect(cornerRadius: 12, style: .continuous))
     }
 }

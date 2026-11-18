@@ -6,7 +6,10 @@ import SwiftUI
 enum LineColour: String, CaseIterable { case plain = "One colour", date = "By age" }
 
 /// What the map shows filling up: walked streets lit, or fog cleared where you have been.
-enum MapMode: String, CaseIterable { case streets = "Streets", fog = "Fog", heat = "Heat" }
+enum MapMode: String, CaseIterable {
+    case streets = "Streets", fog = "Fog", heat = "Heat"
+    var symbol: String { switch self { case .streets: "road.lanes"; case .fog: "cloud.fog"; case .heat: "flame" } }
+}
 
 struct MapLine: Sendable {
     var key: String           // trip start, segment, rough flag, tolerance and a content hash: equal keys draw the same line
@@ -369,7 +372,7 @@ struct MapScreen: View {
         .sheet(item: $openPlace, onDismiss: { loader.reload() }) { PlaceSheet(place: $0) }
         .sheet(item: $openCity) { ref in PlaceCard(cityId: ref.id) { rect in openCity = nil; target = rect } }
         .sheet(isPresented: $choosingLayers) {
-            LayersSheet(colour: $colour, satellite: $satellite)
+            LayersSheet(colour: $colour, satellite: $satellite, period: $loader.options.filter, chooseDates: { choosingLayers = false; choosingDates = true })
         }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
@@ -401,9 +404,9 @@ struct MapScreen: View {
                         .foregroundStyle(Color.satsuma)
                         .contentTransition(.numericText(value: h.share))
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 14)
                 .frame(minHeight: 44)
-                .background(Color.card, in: .rect(cornerRadius: 3))
+                .glassEffect(.regular, in: .capsule)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.ink)
@@ -418,29 +421,11 @@ struct MapScreen: View {
     /// Bottom: Streets or Fog, the period of your lines, and today in one line.
     private var bottom: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Picker("Map", selection: $mode) {
-                    ForEach(MapMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Show streets walked or fog")
-                Menu {
-                    Picker("Your lines", selection: $loader.options.filter) {
-                        ForEach(TimeFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    if loader.options.filter == .custom { Button("Choose dates") { choosingDates = true } }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(loader.options.filter.rawValue)
-                        Image(systemName: "chevron.down").font(.caption2)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(minHeight: 44)
-                    .background(Color.inset, in: .rect(cornerRadius: 3))
-                }
-                .foregroundStyle(Color.ink)
-                .accessibilityLabel("Your lines: \(loader.options.filter.rawValue)")
+            Picker("Map", selection: $mode) {
+                ForEach(MapMode.allCases, id: \.self) { m in Label(m.rawValue, systemImage: m.symbol).tag(m) }
             }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Show streets walked, fog or heat")
             if let t = loader.data?.today {
                 HStack(spacing: 6) {
                     Text(Format.distance(t.distance))
@@ -466,9 +451,10 @@ struct MapScreen: View {
                 .onTapGesture { openToday = true }
             }
         }
-        .padding(12)
-        .background(Color.card, in: .rect(cornerRadius: 3))
-        .padding(8)
+        .padding(14)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 
     private var dates: some View {

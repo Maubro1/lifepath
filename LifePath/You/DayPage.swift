@@ -25,7 +25,7 @@ struct DayPage: View {
                         if let picture { Image(uiImage: picture).resizable().scaledToFill() }
                     }
                     .frame(height: 220)
-                    .clipShape(.rect(cornerRadius: 3))
+                    .clipShape(.rect(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Map of this day")
