@@ -419,11 +419,11 @@ public final class Diary: Sendable {
             Way(id: -r.id, kind: r.mode == .tram ? .tram : r.mode == .boat ? .ferry : r.mode == .bus ? .road : .rail, name: nil, oneway: true,
                 nodes: r.path.indices.map { Int64($0) }, coords: r.path, countable: false)
         }
-        let ids = ids.filter { $0 > 0 }
+        let positive = ids.filter { $0 > 0 }
         return try routes + pool.read { db in
             var out: [Way] = []
-            for k in stride(from: 0, to: ids.count, by: 500) {
-                let chunk = Array(ids[k..<min(k + 500, ids.count)])
+            for k in stride(from: 0, to: positive.count, by: 500) {
+                let chunk = Array(positive[k..<min(k + 500, positive.count)])
                 let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
                 out += try Row.fetchAll(db, sql: "SELECT * FROM way WHERE id IN (\(marks))", arguments: StatementArguments(chunk)).map(Self.way)
             }

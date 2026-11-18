@@ -96,6 +96,7 @@ enum StreetService {
                     do { try diary.saveRoutes(await fetchRoutes(tile, session, diary), tile: tile); tiles += 1 } catch {
                         if Task.isCancelled { throw CancellationError() }
                         routesOK = false
+                        waiting = true   // the cursor stays, so this trip is snapped once routes download
                         break
                     }
                 }

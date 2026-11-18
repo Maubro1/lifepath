@@ -242,14 +242,14 @@ struct LinesContent: LayerContent {
         for (r, l) in lines where r.intersects(near) && l.coords.count > 1 {
             let width = (l.rough ? 2.0 : 3.0) / scale
             ctx.setLineDash(phase: 0, lengths: l.rough ? [4 / scale, 4 / scale] : [])
-            if edged {
-                ctx.setStrokeColor(cgColor(Palette.text, dark: dark)); ctx.setLineWidth(width + 2 / scale)
-                ctx.addPath(renderer.curve(l.coords)); ctx.strokePath()
-            }
-            ctx.setLineWidth(width)
             // Only vertices whose Visvalingam area beats this zoom's pixel² (nested sets: zooming never reshapes a line).
             let px = 1 / (Double(scale) * pointsPerMetre(l.coords[0].lat)), cut = px * px
             let shown = l.importance.count == l.coords.count ? l.coords.indices.filter { l.importance[$0] >= cut } : Array(l.coords.indices)
+            if edged {
+                ctx.setStrokeColor(cgColor(Palette.text, dark: dark)); ctx.setLineWidth(width + 2 / scale)
+                ctx.addPath(renderer.curve(shown.map { l.coords[$0] })); ctx.strokePath()
+            }
+            ctx.setLineWidth(width)
             // Runs of one colour as one curve.
             var a = 0
             for b in 1..<shown.count where b == shown.count - 1 || hex(l, shown[b]) != hex(l, shown[a]) {
@@ -272,7 +272,7 @@ struct HeatContent: LayerContent {
     var grid: GridIndex
     var max: Double   // passes through the busiest cell at the loading zoom
     var dark: Bool
-    static let pass: Float = 1 / 16   // grey added per trip; a count is value × 16
+    static let pass: Float = 1 / 4096   // grey added per trip (plusLighter clamps at 1): up to 4096 passes; count = value × 4096
 
     var style: String { "heat\(dark)\(Int(max))" }
     var items: [String: MKMapRect] { Dictionary(lines.map { ($0.key, $0.rect) }, uniquingKeysWith: { a, _ in a }) }

@@ -180,14 +180,17 @@ public enum OSM {
             // Ways in member order, each turned to continue from the end so far.
             var path: [(lat: Double, lon: Double)] = []
             func same(_ a: (lat: Double, lon: Double), _ b: (lat: Double, lon: Double)) -> Bool { a.lat == b.lat && a.lon == b.lon }
-            for w in ways {
-                let c = w.map { (lat: $0.lat, lon: $0.lon) }
-                guard let end = path.last else { path = c; continue }
-                if path.count == c.count, same(path[0], c[0]) || same(path[0], c[c.count - 1]), !same(end, c[0]), !same(end, c[c.count - 1]) {
+            for (k, w) in ways.enumerated() {
+                var c = w.map { (lat: $0.lat, lon: $0.lon) }
+                guard k > 0, let end = path.last else { path = c; continue }
+                if k == 1, !same(end, c[0]), !same(end, c[c.count - 1]), same(path[0], c[0]) || same(path[0], c[c.count - 1]) {
                     path.reverse()   // the first way pointed away from the second
                 }
+                // Turn each way to continue from the tail; a way that does not touch it is turned by its nearer end.
                 let tail = path[path.count - 1]
-                path += same(tail, c[0]) ? Array(c.dropFirst()) : same(tail, c[c.count - 1]) ? Array(c.reversed().dropFirst()) : c
+                func d(_ p: (lat: Double, lon: Double)) -> Double { Geo.distance(tail.lat, tail.lon, p.lat, p.lon) }
+                if same(tail, c[c.count - 1]) || (!same(tail, c[0]) && d(c[c.count - 1]) < d(c[0])) { c.reverse() }
+                path += same(tail, c[0]) ? Array(c.dropFirst()) : c
             }
             if let s = list.first, let a = path.first, let z = path.last,
                Geo.distance(s.lat, s.lon, z.lat, z.lon) < Geo.distance(s.lat, s.lon, a.lat, a.lon) { path.reverse() }

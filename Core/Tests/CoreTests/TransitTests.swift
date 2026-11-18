@@ -95,4 +95,19 @@ final class TransitTests: XCTestCase {
         XCTAssertEqual(s.fromM, 2000, accuracy: 5); XCTAssertEqual(s.toM, 8000, accuracy: 5)
         XCTAssertEqual(s.confidence, 1)
     }
+
+    func testParseRoutesJoinsUnevenWays() throws {
+        // Three ways of 3, 4 and 2 vertices; the first points away from the second, the third is stored backwards.
+        let geom = """
+        {"elements":[{"type":"relation","id":8,"tags":{"type":"route","route":"tram"},
+          "members":[
+            {"type":"node","ref":1,"role":"stop","lat":52.0,"lon":5.0},
+            {"type":"node","ref":2,"role":"stop","lat":52.0,"lon":5.6},
+            {"type":"way","ref":31,"role":"","geometry":[{"lat":52.0,"lon":5.2},{"lat":52.0,"lon":5.1},{"lat":52.0,"lon":5.0}]},
+            {"type":"way","ref":32,"role":"","geometry":[{"lat":52.0,"lon":5.2},{"lat":52.0,"lon":5.3},{"lat":52.0,"lon":5.4},{"lat":52.0,"lon":5.5}]},
+            {"type":"way","ref":33,"role":"","geometry":[{"lat":52.0,"lon":5.6},{"lat":52.0,"lon":5.5}]}]}]}
+        """
+        let r = try XCTUnwrap(OSM.parseRoutes(Data(geom.utf8)).routes.first)
+        XCTAssertEqual(r.path.map(\.lon), [5.0, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6])   // one run east, no back-and-forth
+    }
 }

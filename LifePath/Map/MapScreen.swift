@@ -281,7 +281,8 @@ struct MapOptions: Equatable {
                     }
                 }
                 for c in seen { passes[c, default: 0] += 1 }
-                out.heatLines.append(("h\(l.start.timeIntervalSince1970)", l.coords.map { (lat: $0.lat, lon: $0.lon) }))
+                let c = l.coords.map { (lat: $0.lat, lon: $0.lon) }
+                out.heatLines.append(("h\(l.start.timeIntervalSince1970)", Simplify.douglasPeucker(c, tolerance: q.metresPerPoint / 2).map { c[$0] }))
             }
             out.heatMax = passes.values.max() ?? 0
             out.heatPlaces = q.places.compactMap { p in p.pin.map { (lat: $0.lat, lon: $0.lon, hours: p.totalSeconds / 3600) } }
@@ -290,7 +291,11 @@ struct MapOptions: Equatable {
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
             let modes = cached.isEmpty ? [:] : try diary.modes(from: cached.map(\.start).min()!, to: q.to)
             for l in cached {
-                for (i, st) in Fog.strokes(line: l, modes: modes[l.start] ?? []).enumerated() { out.fog.append(("c\(l.start.timeIntervalSince1970)-\(i)", st)) }
+                for (i, st) in Fog.strokes(line: l, modes: modes[l.start] ?? []).enumerated() {
+                    // Thinned to half a screen point at this zoom: invisible under the soft fog edge, far lighter to draw.
+                    let keep = Simplify.douglasPeucker(st.coords, tolerance: q.metresPerPoint / 2)
+                    out.fog.append(("c\(l.start.timeIntervalSince1970)-\(i)", FogStroke(coords: keep.map { st.coords[$0] }, halfWidth: st.halfWidth)))
+                }
             }
             for st in Fog.circles(places: q.places) { out.fog.append(("p\(st.coords[0].lat),\(st.coords[0].lon)", st)) }
         }
