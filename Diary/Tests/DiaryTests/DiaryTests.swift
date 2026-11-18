@@ -757,4 +757,31 @@ final class DiaryTests: XCTestCase {
         XCTAssertEqual(ways.first?.kind, .rail)
         XCTAssertEqual(ways.first?.coords.count, 3)
     }
+
+    func testDeleteRecordsRemovesOnlyThatRange() throws {
+        let diary = try Diary(path: tempPath())
+        func p(_ t: Double) -> FilteredPoint {
+            FilteredPoint(t: Date(timeIntervalSince1970: t), lat: 52, lon: 5, rawLat: 52, rawLon: 5, hAcc: 5, speed: 1, kind: .moving)
+        }
+        try diary.append([p(100), p(200), p(86_500), p(86_600)])
+        func line(_ s: Double, _ e: Double) -> TripLine {
+            TripLine(start: Date(timeIntervalSince1970: s), end: Date(timeIntervalSince1970: e), minLat: 52, maxLat: 52, minLon: 5, maxLon: 5,
+                     distance: 10, coords: [(52, 5, 1), (52, 5.001, 1)])
+        }
+        try diary.saveTripLines([line(100, 200), line(86_500, 86_600)], replacingFrom: .distantPast)
+        try diary.saveMatches(tripStart: Date(timeIntervalSince1970: 100), [],
+                              modes: [ModeStretch(seq: 0, mode: .walk, confidence: 1, start: Date(timeIntervalSince1970: 100), end: Date(timeIntervalSince1970: 200))])
+        let home = Place(id: 1, name: "Secret", cells: [PlaceGrid.cell(lat: 52, lon: 5): 3600], updatedAt: Date(timeIntervalSince1970: 0),
+                         lastVisit: Date(timeIntervalSince1970: 300), totalSeconds: 3600, visits: 1, isCandidate: false)
+        try diary.savePlaces([home], removing: [])
+        try diary.saveVisits([Visit(start: Date(timeIntervalSince1970: 300), end: Date(timeIntervalSince1970: 4000), placeId: 1)])
+
+        let n = try diary.deleteRecords(from: Date(timeIntervalSince1970: 0), to: Date(timeIntervalSince1970: 86_400), days: ["1970-01-01"])
+        XCTAssertEqual(n, 2)
+        XCTAssertEqual(try diary.points(from: .distantPast, to: .distantFuture).map(\.t.timeIntervalSince1970), [86_500, 86_600])
+        XCTAssertEqual(try diary.tripLines(from: .distantPast, to: .distantFuture).map(\.start.timeIntervalSince1970), [86_500])
+        XCTAssertTrue(try diary.modes(tripStart: Date(timeIntervalSince1970: 100)).isEmpty)
+        XCTAssertTrue(try diary.places().isEmpty)                       // known only from the deleted day
+        XCTAssertEqual(try diary.meta("coverageDirty"), "1")
+    }
 }

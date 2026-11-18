@@ -10,6 +10,8 @@ struct DayPage: View {
     @State private var facts: (distance: Double, moving: TimeInterval, steps: Int?, new: Int)?
     @State private var picture: UIImage?
     @State private var renaming: Place?
+    @State private var confirmingDelete = false
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("countCycling") private var countCycling = false
     @Environment(\.colorScheme) private var scheme
 
@@ -57,6 +59,17 @@ struct DayPage: View {
         .background(Color.page)
         .navigationTitle(Format.dayTitle(day))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            Menu {
+                Button("Delete this day", systemImage: "trash", role: .destructive) { confirmingDelete = true }
+            } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel("More")
+        }
+        .confirmationDialog("Delete \(DeletePeriodSheet.label(day, day))?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { Task { _ = await DeleteData.days(day, day); dismiss() } }
+        } message: {
+            Text("Everything recorded on this day goes: its lines, places you stayed, steps. This cannot be undone.")
+        }
         .task(id: scheme) { await load() }
         .sheet(item: $renaming, onDismiss: { Task { await load() } }) { PlaceSheet(place: $0) }
     }

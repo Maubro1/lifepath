@@ -237,6 +237,39 @@ public final class Diary: Sendable {
         }
     }
 
+    /// Deletes everything recorded in `from..<to` (local days the caller chose): points, smoothed points, trip lines and
+    /// matching of trips overlapping it, visits, motion activity, day summaries and steps of those days. A place known only
+    /// from deleted visits goes too. Coverage is marked for recounting. One transaction; returns the points deleted.
+    @discardableResult
+    public func deleteRecords(from: Date, to: Date, days: [String]) throws -> Int {
+        let a = from.timeIntervalSince1970, b = to.timeIntervalSince1970
+        return try pool.write { db in
+            try db.execute(sql: "DELETE FROM point WHERE t >= ? AND t < ?", arguments: [a, b])
+            let removed = db.changesCount
+            try db.execute(sql: "DELETE FROM smoothedPoint WHERE t >= ? AND t < ?", arguments: [a, b])
+            // Trips touching the range go whole, with their matching: no line may still show a deleted moment.
+            let trips = try Double.fetchAll(db, sql: "SELECT start FROM tripLine WHERE start < ? AND end >= ?", arguments: [b, a])
+            for t in trips {
+                for table in ["tripLine"] { try db.execute(sql: "DELETE FROM \(table) WHERE start = ?", arguments: [t]) }
+                for table in ["matchedStretch", "modeStretch", "segmentHit"] { try db.execute(sql: "DELETE FROM \(table) WHERE tripStart = ?", arguments: [t]) }
+            }
+            for table in ["matchedStretch", "modeStretch", "segmentHit"] {
+                try db.execute(sql: "DELETE FROM \(table) WHERE tripStart >= ? AND tripStart < ?", arguments: [a, b])
+            }
+            try db.execute(sql: "DELETE FROM visit WHERE start < ? AND end >= ?", arguments: [b, a])
+            try db.execute(sql: "DELETE FROM activity WHERE t >= ? AND t < ?", arguments: [a, b])
+            for d in days {
+                try db.execute(sql: "DELETE FROM day WHERE day = ?", arguments: [d])
+                try db.execute(sql: "DELETE FROM daySteps WHERE day = ?", arguments: [d])
+            }
+            // A place with no visit left was learned only from deleted days.
+            try db.execute(sql: "DELETE FROM placeCell WHERE placeId NOT IN (SELECT DISTINCT placeId FROM visit WHERE placeId IS NOT NULL)")
+            try db.execute(sql: "DELETE FROM place WHERE id NOT IN (SELECT DISTINCT placeId FROM visit WHERE placeId IS NOT NULL)")
+            try db.execute(sql: "INSERT OR REPLACE INTO meta(key, value) VALUES ('coverageDirty', '1')")
+            return removed
+        }
+    }
+
     /// Replaces one cached trip's line (same start), only when that trip is cached; never touches other trips.
     @discardableResult
     public func replaceTripLine(_ l: TripLine) throws -> Bool {

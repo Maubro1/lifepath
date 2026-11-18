@@ -139,8 +139,11 @@ enum StreetService {
             unsure += modes.filter { $0.confidence < TravelModes.confident }.count
         }
         var walked = ""
-        if matched > 0 || tiles > 0 {
+        // Days were deleted: count streets again without them.
+        let dirty = try diary.meta("coverageDirty") == "1"
+        if matched > 0 || tiles > 0 || dirty {
             try Task.checkCancellation()
+            if dirty { try diary.setMeta("coverageDirty", "0") }
             // shortcut: coverage is recomputed over every downloaded street after each run that matched or fetched, upgrade to per-tile if the run time or memory shows it
             let ways = try diary.countableWays()
             let coverage = Coverage.streets(ways: ways, hits: try diary.segmentHits())

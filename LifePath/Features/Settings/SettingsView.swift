@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var movingBackup = false
     @State private var backupError: String?
     @State private var exportingTracks = false
+    @State private var deletingDays = false
     @AppStorage("lastBackup") private var lastBackup: Double = 0   // seconds since 1970; 0 = never
     @AppStorage("appearance") private var appearance: Appearance = .system
     @Environment(\.scenePhase) private var scenePhase
@@ -126,6 +127,12 @@ struct SettingsView: View {
                     RestoreButton(title: "Restore from a backup")
                 } footer: {
                     Text("Adds the points from a backup file (for example after reinstalling LifePath). Nothing in this diary is removed.")
+                }
+                Section {
+                    Button("Delete days…", role: .destructive) { deletingDays = true }
+                        .sheet(isPresented: $deletingDays) { DeletePeriodSheet() }
+                } footer: {
+                    Text("Removes everything recorded on the days you choose.")
                 }
                 Section {
                     Button("Export tracks (GPX, GeoJSON, KML)") { exportingTracks = true }
