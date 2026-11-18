@@ -3,7 +3,7 @@ import Diary
 import MapKit
 import SwiftUI
 
-enum LineColour: String, CaseIterable { case plain = "One colour", mode = "Mode", date = "Date", speed = "Speed" }
+enum LineColour: String, CaseIterable { case plain = "One colour", date = "By age" }
 
 /// What the map shows filling up: walked streets lit, or fog cleared where you have been.
 enum MapMode: String, CaseIterable { case streets = "Streets", fog = "Fog", heat = "Heat" }
@@ -56,7 +56,6 @@ struct MapOptions: Equatable {
     var customTo = Date()
     var recorded = false
     var mode = MapMode.streets
-    var byMode = false   // colouring by mode: only then are modes read
 
     func range(now: Date) -> (from: Date, to: Date) {
         let cal = Calendar.current, today = cal.startOfDay(for: now)
@@ -89,7 +88,7 @@ struct MapOptions: Equatable {
     private struct Query: Sendable {
         var minLat, maxLat, minLon, maxLon: Double
         var from, to: Date
-        var recorded, byMode, street, zoomedOut: Bool   // in the order the call passes them
+        var recorded, street, zoomedOut: Bool   // in the order the call passes them
         var mode: MapMode
         var bike: Bool
         var metresPerPoint: Double
@@ -129,7 +128,7 @@ struct MapOptions: Equatable {
         // shortcut: no antimeridian wrap; fine unless the owner maps across 180°
         let q = Query(minLat: max(-90, c.latitude - r.span.latitudeDelta * 0.6), maxLat: min(90, c.latitude + r.span.latitudeDelta * 0.6),
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
-                      from: range.from, to: range.to, recorded: options.recorded, byMode: options.byMode,
+                      from: range.from, to: range.to, recorded: options.recorded,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5,
                       mode: options.mode, bike: UserDefaults.standard.bool(forKey: "countCycling"), metresPerPoint: metresPerPoint, centerLat: c.latitude, centerLon: c.longitude,
                       places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
@@ -147,7 +146,7 @@ struct MapOptions: Equatable {
 
     private nonisolated static func load(_ diary: Diary, _ q: Query, generation: Int) throws -> MapData {
         var out = MapData(generation: generation)
-        let modesByTrip = q.byMode || q.mode == .fog ? try diary.modes(from: q.from, to: q.to) : [:]   // one read for every trip in range
+        let modesByTrip = q.mode == .fog ? try diary.modes(from: q.from, to: q.to) : [:]   // one read for every trip in range
         var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], modes: [TravelMode?], start: Date, segment: Int, rough: Bool)] = []
         var after = q.from.addingTimeInterval(-0.001)   // reads are `t > after`: keep a point exactly at `from`
         // Trips up to the cache's end come from the trip-line cache (snapped, 3 m detail) at every zoom, so a line is the same data
@@ -334,7 +333,6 @@ struct MapScreen: View {
     @State private var loader = MapLoader()
     @AppStorage("recordedLine") private var recordedLine = false
     @AppStorage("lineColour") private var colour = LineColour.plain
-    @AppStorage("hiddenModes") private var hiddenModes = ""   // comma-separated raw values, used only with colour by mode
     @AppStorage("mapMode") private var mode = MapMode.streets
     @AppStorage("satellite") private var satellite = false
     @State private var onScreen = false
@@ -349,12 +347,9 @@ struct MapScreen: View {
     @Environment(\.colorScheme) private var scheme
 
     private var visible: Bool { onScreen && scenePhase == .active }
-    private var hidden: Set<TravelMode> {
-        colour == .mode ? Set(hiddenModes.split(separator: ",").compactMap { TravelMode(rawValue: String($0)) }) : []
-    }
 
     var body: some View {
-        TrackMapView(data: loader.data, mode: mode, colour: colour, hidden: hidden, dark: scheme == .dark, satellite: satellite,
+        TrackMapView(data: loader.data, mode: mode, colour: colour, dark: scheme == .dark, satellite: satellite,
                      visible: visible, onRegion: { region, width in loader.regionChanged(region, width: width) },
                      onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } },
                      target: target, onLayers: { choosingLayers = true })
@@ -364,7 +359,6 @@ struct MapScreen: View {
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
-        .onChange(of: colour, initial: true) { _, c in loader.options.byMode = c == .mode }   // changes options, which reloads
         .onChange(of: mode, initial: true) { _, m in loader.options.mode = m }
         .onChange(of: loader.options) { loader.reload() }
         .onChange(of: recordedLine, initial: true) { _, r in loader.options.recorded = r }
@@ -375,7 +369,7 @@ struct MapScreen: View {
         .sheet(item: $openPlace, onDismiss: { loader.reload() }) { PlaceSheet(place: $0) }
         .sheet(item: $openCity) { ref in PlaceCard(cityId: ref.id) { rect in openCity = nil; target = rect } }
         .sheet(isPresented: $choosingLayers) {
-            LayersSheet(colour: $colour, hiddenModes: $hiddenModes, satellite: $satellite)
+            LayersSheet(colour: $colour, satellite: $satellite)
         }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }

@@ -2,11 +2,6 @@ import Core
 import MapKit
 import SwiftUI
 
-extension TravelMode {
-    var color: UIColor { UIColor(Palette.mode(self)) }
-    var label: String { rawValue.capitalized }
-}
-
 /// A learned place's pin; the marker size follows the time spent there.
 final class PlaceAnnotation: MKPointAnnotation {
     var placeId: Int64 = 0
@@ -17,7 +12,6 @@ struct TrackMapView: UIViewRepresentable {
     let data: MapData?
     let mode: MapMode
     let colour: LineColour
-    let hidden: Set<TravelMode>   // modes switched off in the legend
     let dark: Bool
     let satellite: Bool
     let visible: Bool
@@ -78,11 +72,10 @@ struct TrackMapView: UIViewRepresentable {
             standard.pointOfInterestFilter = .excludingAll   // as makeUIView
             map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : standard
         }
-        guard let data, data.generation != c.shownGeneration || colour != c.shownColour || dark != c.shownDark || hidden != c.shownHidden else { return }
+        guard let data, data.generation != c.shownGeneration || colour != c.shownColour || dark != c.shownDark else { return }
         c.shownGeneration = data.generation
         c.shownColour = colour
         c.shownDark = dark
-        c.shownHidden = hidden
         func keyed(_ items: [(key: String, coords: [(lat: Double, lon: Double)])]) -> [(key: String, rect: MKMapRect, coords: [(lat: Double, lon: Double)])] {
             items.map { ($0.key, mapRect($0.coords, pad: 2000), $0.coords) }
         }
@@ -91,7 +84,7 @@ struct TrackMapView: UIViewRepresentable {
             shading: data.shading.map { ($0.key, mapRect($0.rings.flatMap { $0 }, pad: 0), $0.rings, $0.holes, $0.share) }, dark: dark) : nil)
         c.fogRenderer.set(mode == .fog ? FogContent(data.fog, dark: dark) : nil)
         c.heatRenderer.set(mode == .heat ? HeatContent(data.heatLines, places: data.heatPlaces, max: data.heatMax, dark: dark) : nil)
-        c.linesRenderer.set(LinesContent(data.lines, colour: colour, hidden: hidden, edged: mode == .streets, dark: dark))
+        c.linesRenderer.set(LinesContent(data.lines, colour: colour, edged: mode == .streets, dark: dark))
         // Overlays are keyed: unchanged ones stay on the map, new ones are added before stale ones go, so nothing blinks.
         var wanted: [(key: String, level: MKOverlayLevel, make: () -> MKOverlay)] = []
         for (id, cells) in data.outlines {
@@ -137,7 +130,6 @@ struct TrackMapView: UIViewRepresentable {
         var shownColour = LineColour.plain
         var shownDark = false
         var flown: MKMapRect?
-        var shownHidden: Set<TravelMode> = []
         let streets = LayerOverlay(), fog = LayerOverlay(), lines = LayerOverlay(), heat = LayerOverlay()
         lazy var heatRenderer = LayerRenderer(overlay: heat)
         lazy var streetsRenderer = LayerRenderer(overlay: streets)

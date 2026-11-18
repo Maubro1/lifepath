@@ -218,15 +218,14 @@ struct StreetsContent: LayerContent {
 struct LinesContent: LayerContent {
     var lines: [(rect: MKMapRect, line: MapLine)]
     var colour: LineColour
-    var hidden: Set<TravelMode>   // with colour by mode: modes switched off in the legend
     var edged: Bool   // Streets mode: a dark edge keeps lines apart from the glowing streets
     var dark: Bool
 
-    var style: String { "lines\(colour)\(edged)\(dark)\(hidden.map(\.rawValue).sorted())" }
+    var style: String { "lines\(colour)\(edged)\(dark)" }
     var items: [String: MKMapRect] { Dictionary(lines.map { ($0.line.key, $0.rect) }, uniquingKeysWith: { a, _ in a }) }
 
-    init(_ lines: [MapLine], colour: LineColour, hidden: Set<TravelMode>, edged: Bool, dark: Bool) {
-        self.colour = colour; self.hidden = hidden; self.edged = edged; self.dark = dark
+    init(_ lines: [MapLine], colour: LineColour, edged: Bool, dark: Bool) {
+        self.colour = colour; self.edged = edged; self.dark = dark
         self.lines = lines.map { (mapRect($0.coords, pad: 400), $0) }
     }
 
@@ -234,9 +233,6 @@ struct LinesContent: LayerContent {
         switch colour {
         case .plain: return Palette.satsuma
         case .date: let r = Palette.dateRamp(1 - l.dateFraction); return Hex(light: r.light, dark: r.dark)
-        case .mode: return l.modes[i].map(Palette.mode) ?? Palette.unsure
-        case .speed:
-            switch SpeedBand(speed: l.speeds[i]) { case .walk: return Palette.mode(.walk); case .bike: return Palette.mode(.bike); case .drive: return Palette.mode(.car) }
         }
     }
 
@@ -246,7 +242,7 @@ struct LinesContent: LayerContent {
         for (r, l) in lines where r.intersects(near) && l.coords.count > 1 {
             let width = (l.rough ? 2.0 : 3.0) / scale
             ctx.setLineDash(phase: 0, lengths: l.rough ? [4 / scale, 4 / scale] : [])
-            if edged && hidden.isEmpty {
+            if edged {
                 ctx.setStrokeColor(cgColor(Palette.text, dark: dark)); ctx.setLineWidth(width + 2 / scale)
                 ctx.addPath(renderer.curve(l.coords)); ctx.strokePath()
             }
@@ -257,10 +253,8 @@ struct LinesContent: LayerContent {
             // Runs of one colour as one curve.
             var a = 0
             for b in 1..<shown.count where b == shown.count - 1 || hex(l, shown[b]) != hex(l, shown[a]) {
-                if colour != .mode || !(l.modes[shown[a]].map(hidden.contains) ?? false) {
-                    ctx.setStrokeColor(cgColor(hex(l, shown[a]), dark: dark))
-                    ctx.addPath(renderer.curve(shown[a...b].map { l.coords[$0] })); ctx.strokePath()
-                }
+                ctx.setStrokeColor(cgColor(hex(l, shown[a]), dark: dark))
+                ctx.addPath(renderer.curve(shown[a...b].map { l.coords[$0] })); ctx.strokePath()
                 a = b
             }
         }

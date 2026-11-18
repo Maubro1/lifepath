@@ -37,17 +37,4 @@ public enum DayStory {
         }
         return out.sorted { $0.start < $1.start }
     }
-
-    /// Distance per confident travel mode over these trips, by share of each trip's time (as `build`).
-    public static func distanceByMode(lines: [TripLine], modes: [ModeStretch]) -> [TravelMode: Double] {
-        var out: [TravelMode: Double] = [:]
-        for l in lines {
-            let span = l.end.timeIntervalSince(l.start)
-            guard span > 0 else { continue }
-            for m in modes where m.confidence >= TravelModes.confident && m.end > l.start && m.start < l.end {
-                out[m.mode, default: 0] += l.distance * min(m.end, l.end).timeIntervalSince(max(m.start, l.start)) / span
-            }
-        }
-        return out
-    }
 }

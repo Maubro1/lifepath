@@ -23,7 +23,7 @@ public enum Palette {
         case .walk: satsuma
         case .run: cherry
         case .bike: Hex(light: 0x5A842C, dark: 0x9DC46A)
-        case .car: Hex(light: 0x87573A, dark: 0xC99772)
+        case .car, .vehicle: Hex(light: 0x87573A, dark: 0xC99772)
         case .bus: mustard
         case .tram: Hex(light: 0x227A72, dark: 0x5DB8AC)
         case .train: Hex(light: 0x3A69AE, dark: 0x82A8E2)

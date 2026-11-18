@@ -1,13 +1,10 @@
 import Core
 import SwiftUI
 
-/// The map's less frequent options: line colouring with its legend (whose chips also filter), map style and heat.
+/// The map's less frequent options: how your lines are coloured, and the map style.
 struct LayersSheet: View {
     @Binding var colour: LineColour
-    @Binding var hiddenModes: String
     @Binding var satellite: Bool
-
-    private var hidden: Set<String> { Set(hiddenModes.split(separator: ",").map(String.init)) }
 
     var body: some View {
         NavigationStack {
@@ -17,9 +14,7 @@ struct LayersSheet: View {
                         ForEach(LineColour.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     legend
-                } header: { Text("Your lines") } footer: {
-                    if colour == .mode { Text("Tap a travel mode to hide or show its lines.") }
-                }
+                } header: { Text("Your lines") }
                 Section("Map") {
                     Picker("Map style", selection: $satellite) {
                         Text("Standard").tag(false)
@@ -35,23 +30,7 @@ struct LayersSheet: View {
     }
 
     @ViewBuilder private var legend: some View {
-        switch colour {
-        case .plain: EmptyView()
-        case .date: HStack { swatch(Palette.mustard, "Newest"); swatch(Palette.satsuma, "Middle"); swatch(Palette.cherry, "Oldest") }
-        case .speed: HStack { swatch(Palette.mode(.walk), "Walking pace"); swatch(Palette.mode(.bike), "Cycling"); swatch(Palette.mode(.car), "Driving") }
-        case .mode:
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 8)], spacing: 8) {
-                ForEach(TravelMode.allCases, id: \.self) { m in
-                    let off = hidden.contains(m.rawValue)
-                    Button { toggle(m) } label: { swatch(Palette.mode(m), m.label).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading) }
-                        .buttonStyle(.plain)
-                        .opacity(off ? 0.45 : 1)
-                        .accessibilityValue(off ? "Hidden" : "Shown")
-                        .accessibilityHint("Hides or shows these lines")
-                }
-                swatch(Palette.unsure, "Unsure")
-            }
-        }
+        if colour == .date { HStack { swatch(Palette.mustard, "Newest"); swatch(Palette.satsuma, "Middle"); swatch(Palette.cherry, "Oldest") } }
     }
 
     private func swatch(_ h: Hex, _ label: String) -> some View {
@@ -62,11 +41,5 @@ struct LayersSheet: View {
         .padding(.horizontal, 8)
         .frame(minHeight: 32)
         .background(Color.inset, in: .rect(cornerRadius: 3))
-    }
-
-    private func toggle(_ m: TravelMode) {
-        var h = hidden
-        if h.contains(m.rawValue) { h.remove(m.rawValue) } else { h.insert(m.rawValue) }
-        hiddenModes = h.sorted().joined(separator: ",")
     }
 }

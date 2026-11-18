@@ -78,8 +78,10 @@ struct DayPage: View {
             .accessibilityHint(placeId == nil ? "" : "Rename this place")
         case let .trip(mode, start, end, distance):
             HStack(spacing: 10) {
-                Rectangle().fill(Color(UIColor(mode.map(Palette.mode) ?? Palette.unsure))).frame(width: 10, height: 10)
-                Text(mode?.label ?? "Travel").foregroundStyle(Color.ink)
+                // Modes stay internal: a walk or a trip, nothing more specific.
+                let walk = mode == .walk || mode == .run
+                Image(systemName: walk ? "figure.walk" : "arrow.triangle.swap").foregroundStyle(walk ? Color.satsuma : Color.muted).frame(width: 18)
+                Text(walk ? "Walk" : "Trip").foregroundStyle(Color.ink)
                 Spacer()
                 Text("\(Format.duration(end.timeIntervalSince(start))) · \(Format.distance(distance))")
                     .font(.subheadline.monospaced()).foregroundStyle(Color.muted)

@@ -155,4 +155,45 @@ final class TravelModesTests: XCTestCase {
         XCTAssertEqual(s.first?.start, pts[0].t)
         XCTAssertEqual(s.first?.end, pts[1].t)
     }
+
+    // MARK: settle: whole pieces between walks
+
+    func stretch(_ m: TravelMode, _ a: Double, _ b: Double, _ c: Double = 0.9) -> ModeStretch {
+        ModeStretch(seq: 0, mode: m, confidence: c, start: t0 + a, end: t0 + b)
+    }
+
+    func points(_ speeds: [(from: Double, to: Double, v: Double)]) -> [FilteredPoint] {
+        speeds.flatMap { r in stride(from: r.from, to: r.to, by: 1).map {
+            FilteredPoint(t: t0 + $0, lat: 52.37, lon: 4.9, rawLat: 52.37, rawLon: 4.9, hAcc: 5, speed: r.v, kind: .moving) } }
+    }
+
+    func testP95NotMax() {
+        // A walk with one 40 m/s spike that the windows took for a car stays a walk.
+        var pts = points([(0, 300, 1.4)]); pts[150].speed = 40
+        let s = TravelModes.settle([stretch(.walk, 0, 120), stretch(.car, 120, 180, 0.7), stretch(.walk, 180, 299)], points: pts)
+        XCTAssertEqual(s.map(\.mode), [.walk])
+    }
+
+    func testUnclearMotorisedIsVehicle() {
+        let s = TravelModes.settle([stretch(.car, 0, 299, 0.4)], points: points([(0, 300, 12)]))
+        XCTAssertEqual(s.map(\.mode), [.vehicle])
+    }
+
+    func testTrainKeptWithRail() {
+        let s = TravelModes.settle([stretch(.walk, 0, 100), stretch(.train, 100, 999)], points: points([(0, 100, 1.4), (100, 1000, 30)]))
+        XCTAssertEqual(s.map(\.mode), [.walk, .train])
+        XCTAssertEqual(s[1].start, t0 + 100)
+    }
+
+    func testCarBusChangeNeedsWalk() {
+        // Car then bus with no walk between is one ride: the longer confident mode wins.
+        let s = TravelModes.settle([stretch(.car, 0, 600), stretch(.bus, 600, 799, 0.7)], points: points([(0, 800, 12)]))
+        XCTAssertEqual(s.map(\.mode), [.car])
+        XCTAssertEqual(s[0].end, t0 + 799)
+    }
+
+    func testBikeKeptAtBikeSpeeds() {
+        let s = TravelModes.settle([stretch(.bike, 0, 599)], points: points([(0, 600, 5)]))
+        XCTAssertEqual(s.map(\.mode), [.bike])
+    }
 }

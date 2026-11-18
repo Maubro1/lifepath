@@ -102,8 +102,8 @@ enum StreetService {
             let roughOnly = !trip.points.contains { $0.kind != .rough && $0.kind != .still }
             let kinds: Set<WayKind> = roughOnly ? [.rail, .tram, .ferry] : [.foot, .cycle, .road, .rail, .tram, .ferry]
             let graph = RoadGraph(ways: byId.values.filter { kinds.contains($0.kind) }.sorted { $0.id < $1.id })
-            let modes = try TravelModes.classify(trip.points, graph: graph, stops: stopById.values.sorted { $0.id < $1.id },
-                                                 activities: diary.activities(from: trip.start, to: trip.end))
+            let modes = try TravelModes.settle(TravelModes.classify(trip.points, graph: graph, stops: stopById.values.sorted { $0.id < $1.id },
+                                                 activities: diary.activities(from: trip.start, to: trip.end)), points: trip.points)
             let matches = MapMatcher.match(trip.points, graph: graph, modes: modes)
             try diary.saveMatches(tripStart: trip.start, matches, modes: modes, hits: Coverage.hits(matches, modes: modes, graph: graph))
             // The cached line now follows the matched streets and rails (the map draws only the cache for finished trips).
