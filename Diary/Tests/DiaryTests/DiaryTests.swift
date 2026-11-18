@@ -698,7 +698,7 @@ final class DiaryTests: XCTestCase {
         _ = try Diary(path: path)
         let tables = try DatabaseQueue(path: path).read { try String.fetchSet($0, sql: "SELECT name FROM sqlite_master WHERE type = 'table'") }
         // Borders and progress are caches: downloaded and recomputed again after a restore, never merged.
-        let rebuilt = ["area", "areaTile", "areaProgress", "streetCovered"]
+        let rebuilt = ["area", "areaTile", "areaProgress", "streetCovered", "route", "routeTile"]
         XCTAssertEqual(tables.subtracting(Diary.mergedTables + rebuilt + ["event", "meta", "grdb_migrations", "sqlite_sequence"]), [])
     }
 
@@ -740,5 +740,21 @@ final class DiaryTests: XCTestCase {
         XCTAssertFalse(try diary.replaceTripLine(line(5000, 53)))   // not cached: nothing written
         let all = try diary.tripLines(from: .distantPast, to: .distantFuture)
         XCTAssertEqual(all.map(\.minLat), [53, 52])
+    }
+
+    func testRoutesRoundTripAndResolveAsWays() throws {
+        let diary = try Diary(path: tempPath())
+        let r = Route(id: 7, mode: .train, stops: [Route.Stop(id: 11, lat: 52, lon: 5), Route.Stop(id: 13, lat: 52, lon: 5.2)],
+                      path: [(52, 5), (52, 5.1), (52, 5.2)])
+        let tile = Tile(lat: 52, lon: 5.05)
+        XCTAssertFalse(try diary.hasRoutes(tile))
+        try diary.saveRoutes([r], tile: tile)
+        XCTAssertTrue(try diary.hasRoutes(tile))
+        XCTAssertEqual(try diary.routes(minLat: 51.9, maxLat: 52.1, minLon: 5.05, maxLon: 5.06), [r])
+        XCTAssertEqual(try diary.routes(ids: [7, 8]), [r])
+        let ways = try diary.ways(ids: [-7])
+        XCTAssertEqual(ways.map(\.id), [-7])
+        XCTAssertEqual(ways.first?.kind, .rail)
+        XCTAssertEqual(ways.first?.coords.count, 3)
     }
 }

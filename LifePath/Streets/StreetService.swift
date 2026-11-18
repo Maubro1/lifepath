@@ -41,7 +41,7 @@ enum StreetService {
             : diary.meta("streetsUntil").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? .distantPast
         var backoff = try diary.meta("streetsBackoff").flatMap(TimeInterval.init) ?? 0
         var retryAt = try diary.meta("streetsRetryAt").flatMap(TimeInterval.init) ?? 0
-        var tiles = 0, matched = 0, modeCount = 0, unsure = 0, waiting = false, borders = true
+        var tiles = 0, matched = 0, modeCount = 0, unsure = 0, waiting = false, borders = true, routesOK = true
         let session = download ? makeSession(cellular: cellular) : nil
         defer { session?.finishTasksAndInvalidate() }
         var fetching = session != nil
@@ -90,6 +90,16 @@ enum StreetService {
                     }
                 }
             }
+            // Public-transport routes, the same way: index per tile, each route's shape once.
+            if fetching, !waiting, routesOK, let session {
+                for tile in try needed.filter({ try diary.hasTile($0, version: OSM.version) && !diary.hasRoutes($0) }) {
+                    do { try diary.saveRoutes(await fetchRoutes(tile, session, diary), tile: tile); tiles += 1 } catch {
+                        if Task.isCancelled { throw CancellationError() }
+                        routesOK = false
+                        break
+                    }
+                }
+            }
             // Ways and stops overlapping the trip's tiles, which already reach the candidate radius past every point.
             var byId: [Int64: Way] = [:], stopById: [Int64: Stop] = [:]
             for tile in needed {
@@ -102,9 +112,21 @@ enum StreetService {
             let roughOnly = !trip.points.contains { $0.kind != .rough && $0.kind != .still }
             let kinds: Set<WayKind> = roughOnly ? [.rail, .tram, .ferry] : [.foot, .cycle, .road, .rail, .tram, .ferry]
             let graph = RoadGraph(ways: byId.values.filter { kinds.contains($0.kind) }.sorted { $0.id < $1.id })
-            let modes = try TravelModes.settle(TravelModes.classify(trip.points, graph: graph, stops: stopById.values.sorted { $0.id < $1.id },
+            var modes = try TravelModes.settle(TravelModes.classify(trip.points, graph: graph, stops: stopById.values.sorted { $0.id < $1.id },
                                                  activities: diary.activities(from: trip.start, to: trip.end)), points: trip.points)
-            let matches = MapMatcher.match(trip.points, graph: graph, modes: modes)
+            var matches = MapMatcher.match(trip.points, graph: graph, modes: modes)
+            // Rides that start and end at stops of one route, in order, and follow its track: drawn as that route's track.
+            let box = (lat: trip.points.map(\.lat), lon: trip.points.map(\.lon))
+            let routes = try diary.routes(minLat: box.lat.min()! - 0.01, maxLat: box.lat.max()! + 0.01, minLon: box.lon.min()! - 0.01, maxLon: box.lon.max()! + 0.01)
+            for k in modes.indices where !routes.isEmpty && ![.walk, .run, .bike].contains(modes[k].mode) {
+                let piece = trip.points.filter { $0.t >= modes[k].start && $0.t <= modes[k].end && $0.kind != .still }
+                guard let a = piece.first?.t, let z = piece.last?.t, let m = Transit.match(piece, routes: routes) else { continue }
+                modes[k].mode = m.route.mode
+                modes[k].confidence = max(modes[k].confidence, 0.9)
+                matches.removeAll { $0.start <= z && $0.end >= a }
+                matches.append(Transit.stretch(m.route, from: m.from, to: m.to, start: a, end: z))
+            }
+            for w in try diary.ways(ids: matches.map(\.wayId).filter { $0 < 0 }) { byId[w.id] = w }
             try diary.saveMatches(tripStart: trip.start, matches, modes: modes, hits: Coverage.hits(matches, modes: modes, graph: graph))
             // The cached line now follows the matched streets and rails (the map draws only the cache for finished trips).
             let smooth = Dictionary(try diary.smoothed(from: trip.start, to: trip.end).map { ($0.t, (lat: $0.lat, lon: $0.lon)) },
@@ -161,6 +183,17 @@ enum StreetService {
         let needed = index.missing.filter { !stored.contains($0) }
         guard !needed.isEmpty else { return index.areas }
         return try index.areas + OSM.parseAreas(await post(OSM.areaGeometryQuery(ids: needed), session)).areas
+    }
+
+    /// A tile's routes: the light index first, then the shape of each route not stored yet, in one request.
+    private static func fetchRoutes(_ tile: Tile, _ session: URLSession, _ diary: Diary) async throws -> [Route] {
+        let b = tile.bounds
+        let index = try OSM.parseRoutes(await post(OSM.routeIndexQuery(minLat: b.minLat, minLon: b.minLon, maxLat: b.maxLat, maxLon: b.maxLon), session))
+        let stored = Set(try diary.routes(ids: index.missing).map(\.id))
+        let needed = index.missing.filter { !stored.contains($0) }
+        guard !needed.isEmpty else { return index.routes }
+        // shortcut: one request for all of a tile's new routes; a city with hundreds of bus lines may need batching if Overpass times out
+        return try index.routes + OSM.parseRoutes(await post(OSM.routeGeometryQuery(ids: needed), session)).routes
     }
 
     private static func post(_ query: String, _ session: URLSession) async throws -> Data {
