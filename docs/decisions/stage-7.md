@@ -14,8 +14,8 @@ Spec: `docs/superpowers/specs/2026-11-18-stage-7-design.md`. Plan: `docs/superpo
 - Past the 400,000-vertex load budget the loader still thins by Douglas–Peucker; one person's data rarely gets there.
 
 ## Fog and heat
-- Fog opacity 82%, applied inside the draw call; grid index for fog only (streets and lines keep their rect test).
-- Heat is a map mode. Its scale is the busiest cell in the loaded region at the loading zoom, so brightness can shift slightly between regions.
+- Fog is warm paper mist (light F1ECE2, dark 4A443C) at 80% opacity, applied inside the draw call; the owner picked it from three looks. Grid index for fog only (streets and lines keep their rect test).
+- Heat is a map mode and cumulative: full colour needs at least 40 passes (more when the busiest cell in view has more), so one walk is a faint mustard trace. The owner rejected a scale relative to the busiest cell alone: in a young diary one walk saturated it. Lines are 8 points wide before a triple blur; the blur's spread is divided out so a count stays a true pass count.
 
 ## Modes
 - `vehicle` is a new internal mode for rides with no confident kind. Modes never appear in the interface; lines are one colour or by age; the You tab's period picker went with the mode bar it served.
@@ -27,3 +27,5 @@ Spec: `docs/superpowers/specs/2026-11-18-stage-7-design.md`. Plan: `docs/superpo
 
 ## Look
 - The bottom panel is a floating glass panel, not a sheet: a sheet would cover the tab bar.
+- One card radius, 22 points continuous, as the glass panel and the system lists; thumbnails inside padded cards keep 12. Status colours come from the palette (olive, cherry), never system green and red.
+- Days can be deleted from a day page or from Settings (a period); places left without visits go too, and street coverage is rebuilt.
