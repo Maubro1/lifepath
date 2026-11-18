@@ -6,7 +6,6 @@ struct LayersSheet: View {
     @Binding var colour: LineColour
     @Binding var hiddenModes: String
     @Binding var satellite: Bool
-    @Binding var heat: Bool
 
     private var hidden: Set<String> { Set(hiddenModes.split(separator: ",").map(String.init)) }
 
@@ -27,7 +26,6 @@ struct LayersSheet: View {
                         Text("Satellite").tag(true)
                     }
                     .pickerStyle(.segmented)
-                    Toggle("Heat: where you spend time", isOn: $heat)
                 }
             }
             .navigationTitle("Layers")

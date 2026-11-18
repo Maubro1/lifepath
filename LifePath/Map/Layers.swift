@@ -1,6 +1,7 @@
 import Core
 import MapKit
 import UIKit
+import Accelerate
 
 /// One overlay covering the world for the whole life of the map; its renderer draws whatever content it currently holds.
 /// Content is swapped, never the overlay, and only the rects that changed are redrawn: MapKit keeps the old tiles meanwhile, so nothing blinks.
@@ -264,5 +265,86 @@ struct LinesContent: LayerContent {
             }
         }
         ctx.setLineDash(phase: 0, lengths: [])
+    }
+}
+
+// MARK: - heat
+
+/// Where you go most: every trip line added into a soft density image per tile (a quarter of its pixels, blurred once),
+/// coloured through the warm ramp. Places glow by time spent. Scaled by the busiest spot loaded at this zoom.
+struct HeatContent: LayerContent {
+    var lines: [(key: String, rect: MKMapRect, points: [MKMapPoint])]
+    var places: [(point: MKMapPoint, hours: Double)]
+    var grid: GridIndex
+    var max: Double   // passes through the busiest cell at the loading zoom
+    var dark: Bool
+    static let pass: Float = 1 / 16   // grey added per trip; a count is value × 16
+
+    var style: String { "heat\(dark)\(Int(max))" }
+    var items: [String: MKMapRect] { Dictionary(lines.map { ($0.key, $0.rect) }, uniquingKeysWith: { a, _ in a }) }
+
+    init(_ lines: [(key: String, coords: [(lat: Double, lon: Double)])], places: [(lat: Double, lon: Double, hours: Double)], max: Double, dark: Bool) {
+        self.lines = lines.map { ($0.key, mapRect($0.coords, pad: 800), mapPoints($0.coords)) }
+        self.places = places.map { (MKMapPoint(CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)), $0.hours) }
+        grid = GridIndex(self.lines.map(\.rect))
+        self.max = max; self.dark = dark
+    }
+
+    func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
+        let px = Double(scale) / 4, m = 6   // buffer pixels per map point; margin pixels so blur and strokes cross tile seams
+        let w = Int((rect.width * px).rounded(.up)) + 2 * m, h = Int((rect.height * px).rounded(.up)) + 2 * m
+        guard w > 2 * m, h > 2 * m, max > 0,
+              let density = CGContext(data: nil, width: w, height: h, bitsPerComponent: 32, bytesPerRow: w * 4,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.floatComponents.rawValue)
+        else { return }
+        // Buffer coordinates: y grows downwards like map points.
+        density.translateBy(x: 0, y: CGFloat(h)); density.scaleBy(x: 1, y: -1)
+        func b(_ p: MKMapPoint) -> CGPoint { CGPoint(x: (p.x - rect.minX) * px + Double(m), y: (p.y - rect.minY) * px + Double(m)) }
+        density.setBlendMode(.plusLighter); density.setLineCap(.round); density.setLineJoin(.round)
+        density.setStrokeColor(gray: 1, alpha: CGFloat(Self.pass)); density.setLineWidth(1.5)
+        let near = rect.insetBy(dx: -Double(m) / px, dy: -Double(m) / px)
+        for i in grid.items(in: near) where lines[i].rect.intersects(near) && lines[i].points.count > 1 {
+            let path = CGMutablePath()
+            path.addLines(between: lines[i].points.map(b))
+            density.addPath(path); density.strokePath()   // one stroke per trip: a trip counts once where it overlaps itself
+        }
+        for p in places where near.contains(p.point) {
+            let c = b(p.point), r = 3.0
+            density.setFillColor(gray: 1, alpha: CGFloat(Swift.min(1, Double(Self.pass) * (1 + log1p(p.hours)))))
+            density.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        }
+        guard let data = density.data else { return }
+        // Blur once: two 3×3 tent passes soften the lines into gradients.
+        var src = vImage_Buffer(data: data, height: vImagePixelCount(h), width: vImagePixelCount(w), rowBytes: w * 4)
+        var tmp = [Float](repeating: 0, count: w * h)
+        tmp.withUnsafeMutableBytes { t in
+            var dst = vImage_Buffer(data: t.baseAddress, height: src.height, width: src.width, rowBytes: w * 4)
+            vImageTentConvolve_PlanarF(&src, &dst, nil, 0, 0, 3, 3, 0, vImage_Flags(kvImageEdgeExtend))
+            vImageTentConvolve_PlanarF(&dst, &src, nil, 0, 0, 3, 3, 0, vImage_Flags(kvImageEdgeExtend))
+        }
+        // Colour through the ramp into an RGBA image, margins cropped.
+        let values = data.bindMemory(to: Float.self, capacity: w * h)
+        let cw = w - 2 * m, ch = h - 2 * m
+        var rgba = [UInt8](repeating: 0, count: cw * ch * 4)
+        for y in 0..<ch {
+            for x in 0..<cw {
+                let count = Double(values[(y + m) * w + x + m] / Self.pass)
+                guard count > 0.05 else { continue }
+                let c = HeatRamp.colour(HeatRamp.level(count: count, max: max)), k = (y * cw + x) * 4
+                rgba[k] = UInt8(c.r * c.a * 255); rgba[k + 1] = UInt8(c.g * c.a * 255); rgba[k + 2] = UInt8(c.b * c.a * 255); rgba[k + 3] = UInt8(c.a * 255)
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(rgba) as CFData),
+              let image = CGImage(width: cw, height: ch, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: cw * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        else { return }
+        // The map's context runs y downwards; an image draws y upwards, so flip around the tile.
+        let r = renderer.rect(for: rect)
+        ctx.saveGState()
+        ctx.translateBy(x: 0, y: r.minY + r.maxY); ctx.scaleBy(x: 1, y: -1)
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: r)
+        ctx.restoreGState()
     }
 }

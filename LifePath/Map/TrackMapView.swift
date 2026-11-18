@@ -35,6 +35,7 @@ struct TrackMapView: UIViewRepresentable {
         // The three layers live as long as the map; only their content changes.
         let c = context.coordinator
         map.addOverlay(c.streets, level: .aboveRoads)
+        map.addOverlay(c.heat, level: .aboveRoads)
         map.addOverlay(c.fog, level: .aboveLabels)
         map.addOverlay(c.lines, level: .aboveLabels)
         map.showsCompass = false   // the column below owns the compass, so it never overlaps the locate button
@@ -89,13 +90,10 @@ struct TrackMapView: UIViewRepresentable {
             walked: keyed(data.covered), unwalked: keyed(data.unwalked),
             shading: data.shading.map { ($0.key, mapRect($0.rings.flatMap { $0 }, pad: 0), $0.rings, $0.holes, $0.share) }, dark: dark) : nil)
         c.fogRenderer.set(mode == .fog ? FogContent(data.fog, dark: dark) : nil)
+        c.heatRenderer.set(mode == .heat ? HeatContent(data.heatLines, places: data.heatPlaces, max: data.heatMax, dark: dark) : nil)
         c.linesRenderer.set(LinesContent(data.lines, colour: colour, hidden: hidden, edged: mode == .streets, dark: dark))
         // Overlays are keyed: unchanged ones stay on the map, new ones are added before stale ones go, so nothing blinks.
         var wanted: [(key: String, level: MKOverlayLevel, make: () -> MKOverlay)] = []
-        if !data.heat.isEmpty {   // under the labels, so lines always draw on top
-            let heat = data.heat
-            wanted.append(("h\(heat.hashValue)", .aboveRoads, { HeatOverlay(heat) }))
-        }
         for (id, cells) in data.outlines {
             wanted.append(("o\(id)-\(cells.hashValue)-\(dark)", .aboveRoads, {
                 MKMultiPolygon(cells.map { c in   // one square per 5 m cell; one shape, so the fill has no seams
@@ -140,7 +138,8 @@ struct TrackMapView: UIViewRepresentable {
         var shownDark = false
         var flown: MKMapRect?
         var shownHidden: Set<TravelMode> = []
-        let streets = LayerOverlay(), fog = LayerOverlay(), lines = LayerOverlay()
+        let streets = LayerOverlay(), fog = LayerOverlay(), lines = LayerOverlay(), heat = LayerOverlay()
+        lazy var heatRenderer = LayerRenderer(overlay: heat)
         lazy var streetsRenderer = LayerRenderer(overlay: streets)
         lazy var fogRenderer = LayerRenderer(overlay: fog)
         lazy var linesRenderer = LayerRenderer(overlay: lines)
@@ -189,7 +188,7 @@ struct TrackMapView: UIViewRepresentable {
                 r.fillColor = UIColor(Palette.text).withAlphaComponent(0.12)
                 return r
             }
-            if let heat = overlay as? HeatOverlay { return HeatRenderer(heat) }
+            if overlay === heat { return heatRenderer }
             if let circle = overlay as? MKCircle {
                 let r = MKCircleRenderer(circle: circle)
                 r.fillColor = UIColor(Palette.muted)

@@ -6,7 +6,7 @@ import SwiftUI
 enum LineColour: String, CaseIterable { case plain = "One colour", mode = "Mode", date = "Date", speed = "Speed" }
 
 /// What the map shows filling up: walked streets lit, or fog cleared where you have been.
-enum MapMode: String, CaseIterable { case streets = "Streets", fog = "Fog" }
+enum MapMode: String, CaseIterable { case streets = "Streets", fog = "Fog", heat = "Heat" }
 
 struct MapLine: Sendable {
     var key: String           // trip start, segment, rough flag, tolerance and a content hash: equal keys draw the same line
@@ -22,7 +22,9 @@ struct MapLine: Sendable {
 struct MapData: Sendable {
     var generation: Int
     var lines: [MapLine] = []
-    var heat: [HeatCell: TimeInterval] = [:]
+    var heatLines: [(key: String, coords: [(lat: Double, lon: Double)])] = []   // every cached trip in the region, in Heat mode
+    var heatPlaces: [(lat: Double, lon: Double, hours: Double)] = []
+    var heatMax = 0.0                                                           // passes through the busiest cell at this zoom
     var still: [(lat: Double, lon: Double)] = []
     var places: [Place] = []                    // pins visible at the end of the range, in the visible region
     var outlines: [Int64: Set<PlaceCell>] = [:] // their regions, at street zoom only
@@ -52,7 +54,6 @@ struct MapOptions: Equatable {
     var filter = TimeFilter.today
     var customFrom = Date()
     var customTo = Date()
-    var heat = false
     var recorded = false
     var mode = MapMode.streets
     var byMode = false   // colouring by mode: only then are modes read
@@ -88,7 +89,7 @@ struct MapOptions: Equatable {
     private struct Query: Sendable {
         var minLat, maxLat, minLon, maxLon: Double
         var from, to: Date
-        var heat, recorded, byMode, street, zoomedOut: Bool   // in the order the call passes them
+        var recorded, byMode, street, zoomedOut: Bool   // in the order the call passes them
         var mode: MapMode
         var bike: Bool
         var metresPerPoint: Double
@@ -128,7 +129,7 @@ struct MapOptions: Equatable {
         // shortcut: no antimeridian wrap; fine unless the owner maps across 180°
         let q = Query(minLat: max(-90, c.latitude - r.span.latitudeDelta * 0.6), maxLat: min(90, c.latitude + r.span.latitudeDelta * 0.6),
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
-                      from: range.from, to: range.to, heat: options.heat, recorded: options.recorded, byMode: options.byMode,
+                      from: range.from, to: range.to, recorded: options.recorded, byMode: options.byMode,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5,
                       mode: options.mode, bike: UserDefaults.standard.bool(forKey: "countCycling"), metresPerPoint: metresPerPoint, centerLat: c.latitude, centerLon: c.longitude,
                       places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
@@ -163,7 +164,6 @@ struct MapOptions: Equatable {
             after = max(after, min(until, q.to), cached.map(\.end).max() ?? after)
         }
         let tripsAfter = after
-        if q.heat { after = q.from.addingTimeInterval(-0.001) }   // dwell over the whole range
         var ways: [Int64: Way] = [:]   // the streets confident stretches use, each read once
         func add(_ split: [Trip]) throws {
             for trip in split {
@@ -217,7 +217,6 @@ struct MapOptions: Equatable {
         while true {
             try Task.checkCancellation()
             let chunk = try diary.points(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, after: after, to: q.to, limit: budget)
-            if q.heat { out.heat.merge(Heat.grid(chunk, previous: previous), uniquingKeysWith: +); previous = chunk.last ?? previous }
             try add(Trips.split(chunk: chunk.filter { $0.t > tripsAfter }, carry: &carry))
             guard chunk.count == budget, let last = chunk.last else { break }
             after = last.t
@@ -265,6 +264,25 @@ struct MapOptions: Equatable {
                     out.shading.append((key: "\(a.id)-\(p.covered)", rings: a.rings, holes: a.holes, share: p.total > 0 ? Double(p.covered) / Double(p.total) : 0))
                 }
             }
+        } else if q.mode == .heat {
+            // Heat: every cached trip in the region, all time; the busiest cell (4 screen points) sets the scale at this zoom.
+            let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
+            let cell = 4 * q.metresPerPoint, k = cos((q.minLat + q.maxLat) / 2 * .pi / 180)
+            var passes: [Int64: Double] = [:]
+            for l in cached {
+                var seen = Set<Int64>()
+                for (a, b) in zip(l.coords, l.coords.dropFirst()) {
+                    let n = max(1, Int(Geo.distance(a.lat, a.lon, b.lat, b.lon) / cell * 2))
+                    for i in 0...n {
+                        let f = Double(i) / Double(n), lat = a.lat + (b.lat - a.lat) * f, lon = a.lon + (b.lon - a.lon) * f
+                        seen.insert(Int64((lat * 111_320 / cell).rounded(.down)) << 32 | Int64((lon * 111_320 * k / cell).rounded(.down)) & 0xFFFF_FFFF)
+                    }
+                }
+                for c in seen { passes[c, default: 0] += 1 }
+                out.heatLines.append(("h\(l.start.timeIntervalSince1970)", l.coords.map { (lat: $0.lat, lon: $0.lon) }))
+            }
+            out.heatMax = passes.values.max() ?? 0
+            out.heatPlaces = q.places.compactMap { p in p.pin.map { (lat: $0.lat, lon: $0.lon, hours: p.totalSeconds / 3600) } }
         } else {
             // Fog: every cached trip line in the region, all time, plus this period's lines so a trip clears at once.
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
@@ -357,7 +375,7 @@ struct MapScreen: View {
         .sheet(item: $openPlace, onDismiss: { loader.reload() }) { PlaceSheet(place: $0) }
         .sheet(item: $openCity) { ref in PlaceCard(cityId: ref.id) { rect in openCity = nil; target = rect } }
         .sheet(isPresented: $choosingLayers) {
-            LayersSheet(colour: $colour, hiddenModes: $hiddenModes, satellite: $satellite, heat: $loader.options.heat)
+            LayersSheet(colour: $colour, hiddenModes: $hiddenModes, satellite: $satellite)
         }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
