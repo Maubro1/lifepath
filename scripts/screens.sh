@@ -19,7 +19,7 @@ xcrun simctl status_bar "$UDID" override --time 9:41 --batteryState charged --ba
 mkdir -p screens
 for appearance in light dark; do
   xcrun simctl ui "$UDID" appearance "$appearance"
-  for screen in ${SCREENS:-streets fog you day settings}; do
+  for screen in ${SCREENS:-streets fog heat you day settings}; do
     xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen "$screen" -appearance "$appearance"
     sleep 15   # map tiles load over the network
     xcrun simctl io "$UDID" screenshot "screens/$screen-$appearance.png"
