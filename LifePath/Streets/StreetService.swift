@@ -106,6 +106,10 @@ enum StreetService {
                                                  activities: diary.activities(from: trip.start, to: trip.end))
             let matches = MapMatcher.match(trip.points, graph: graph, modes: modes)
             try diary.saveMatches(tripStart: trip.start, matches, modes: modes, hits: Coverage.hits(matches, modes: modes, graph: graph))
+            // The cached line now follows the matched streets and rails (the map draws only the cache for finished trips).
+            let smooth = Dictionary(try diary.smoothed(from: trip.start, to: trip.end).map { ($0.t, (lat: $0.lat, lon: $0.lon)) },
+                                    uniquingKeysWith: { a, _ in a })
+            try diary.replaceTripLine(TripLines.snapped(trip, smoothed: smooth, matches: matches, ways: byId))
             if !waiting { try diary.setMeta("streetsUntil", String(trip.start.timeIntervalSince1970)) }   // a trip matched on stale or missing tiles is redone
             matched += 1
             modeCount += modes.count

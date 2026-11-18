@@ -38,4 +38,32 @@ final class SimplifyTests: XCTestCase {
         // A budget below two vertices per line still keeps every line, each at its endpoints.
         XCTAssertEqual(Simplify.fit(lines, tolerance: 0, budget: 1), [[0, 100], [0, 100], [0, 100]])
     }
+
+    func testVisvalingamEndsInfinite() {
+        let line = (0...20).map { i in Geo.offset(lat: 50, lon: 4, north: Double(i) * 10, east: i % 2 == 0 ? 5 : -5) }
+        let a = Simplify.visvalingam(line)
+        XCTAssertEqual(a.count, line.count)
+        XCTAssertEqual(a.first, .infinity); XCTAssertEqual(a.last, .infinity)
+        XCTAssertTrue(a.dropFirst().dropLast().allSatisfy { $0.isFinite && $0 >= 0 })
+        XCTAssertEqual(Simplify.visvalingam([(50, 4), (50.001, 4)]), [.infinity, .infinity])
+    }
+
+    func testVisvalingamMonotoneNesting() {
+        // Any two thresholds keep nested vertex sets: zooming out only removes vertices.
+        var rng = SeededRandom(seed: 7)
+        let line = (0..<200).map { i in Geo.offset(lat: 50, lon: 4, north: Double(i) * 8 + rng.gaussian() * 3, east: rng.gaussian() * 12) }
+        let a = Simplify.visvalingam(line)
+        for (lo, hi) in [(1.0, 10.0), (10.0, 100.0), (100.0, 1000.0), (0.5, 5000.0)] {
+            let small = Set(a.indices.filter { a[$0] >= hi }), large = Set(a.indices.filter { a[$0] >= lo })
+            XCTAssertTrue(small.isSubset(of: large))
+        }
+    }
+
+    func testVisvalingamDropsCollinearFirst() {
+        // A straight run with one corner: the straight interior vertices go first, the corner last.
+        let line = [(0.0, 0.0), (0, 50), (0, 100), (100, 100), (100, 150)].map { Geo.offset(lat: 50, lon: 4, north: $0.0, east: $0.1) }
+        let a = Simplify.visvalingam(line)
+        XCTAssertLessThan(a[1], 1)                 // collinear
+        XCTAssertGreaterThan(a[2], 1000)            // the corner
+    }
 }

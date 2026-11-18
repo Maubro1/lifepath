@@ -61,6 +61,59 @@ extension MKOverlayRenderer {
     }
 }
 
+extension MKOverlayRenderer {
+    /// A smooth curve through every point (uniform Catmull–Rom as cubic Béziers), so kept vertices stay on the line.
+    // shortcut: uniform, not centripetal, Catmull–Rom; upgrade if tight corners show overshoot
+    func curve(_ coords: [(lat: Double, lon: Double)]) -> CGPath {
+        let q = coords.map { point(for: MKMapPoint(CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon))) }
+        let p = CGMutablePath()
+        guard let first = q.first else { return p }
+        p.move(to: first)
+        guard q.count > 2 else { if q.count == 2 { p.addLine(to: q[1]) }; return p }
+        for i in 0..<(q.count - 1) {
+            let p0 = q[max(i - 1, 0)], p1 = q[i], p2 = q[i + 1], p3 = q[min(i + 2, q.count - 1)]
+            p.addCurve(to: p2, control1: CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6),
+                       control2: CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6))
+        }
+        return p
+    }
+}
+
+/// Items by grid cell (1/4096 of the world's width, about 10 km at 52°), so a tile visits only the items near it.
+struct GridIndex: Sendable {
+    static let cell = MKMapRect.world.width / 4096
+    private var cells: [Int: [Int]] = [:], big: [Int] = []
+
+    init(_ rects: [MKMapRect]) {
+        for (i, r) in rects.enumerated() {
+            let x0 = Int(r.minX / Self.cell), x1 = Int(r.maxX / Self.cell), y0 = Int(r.minY / Self.cell), y1 = Int(r.maxY / Self.cell)
+            if (x1 - x0 + 1) * (y1 - y0 + 1) > 64 { big.append(i); continue }   // a huge item is checked by every tile
+            for x in x0...x1 { for y in y0...y1 { cells[x * 8192 + y, default: []].append(i) } }
+        }
+    }
+
+    func items(in r: MKMapRect) -> [Int] {
+        var out = Set(big)
+        for x in Int(r.minX / Self.cell)...Int(r.maxX / Self.cell) {
+            for y in Int(r.minY / Self.cell)...Int(r.maxY / Self.cell) { out.formUnion(cells[x * 8192 + y] ?? []) }
+        }
+        return out.sorted()   // stable drawing order
+    }
+}
+
+/// Map points of coordinates, converted once when content is built rather than on every tile draw.
+func mapPoints(_ coords: [(lat: Double, lon: Double)]) -> [MKMapPoint] {
+    coords.map { MKMapPoint(CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)) }
+}
+
+extension MKOverlayRenderer {
+    func path(_ pts: [MKMapPoint]) -> CGPath {
+        let p = CGMutablePath()
+        for (i, m) in pts.enumerated() { if i == 0 { p.move(to: point(for: m)) } else { p.addLine(to: point(for: m)) } }
+        return p
+    }
+}
+
 /// Map points per metre at a latitude (Web Mercator).
 func pointsPerMetre(_ lat: Double) -> Double { MKMapPointsPerMeterAtLatitude(lat) }
 
@@ -69,8 +122,11 @@ func pointsPerMetre(_ lat: Double) -> Double { MKMapPointsPerMeterAtLatitude(lat
 /// The paper over the map, cleared along trips and at places.
 struct FogContent: LayerContent {
     var strokes: [(key: String, rect: MKMapRect, stroke: FogStroke)]
+    var points: [[MKMapPoint]]
+    var grid: GridIndex
     var dark: Bool
     static let feather = 4.0   // m
+    static let opacity = 0.82   // see-through paper; set here, never through the renderer's alpha (stalls tiles on iOS 18)
 
     var style: String { "fog\(dark)" }
     var items: [String: MKMapRect] { Dictionary(strokes.map { ($0.key, $0.rect) }, uniquingKeysWith: { a, _ in a }) }
@@ -81,10 +137,12 @@ struct FogContent: LayerContent {
             let lat = s.stroke.coords.first?.lat ?? 0
             return (s.key, mapRect(s.stroke.coords, pad: (s.stroke.halfWidth + Self.feather) * pointsPerMetre(lat) + 400), s.stroke)
         }
+        points = self.strokes.map { mapPoints($0.stroke.coords) }
+        grid = GridIndex(self.strokes.map(\.rect))
     }
 
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
-        ctx.setFillColor(cgColor(Palette.page, dark: dark))
+        ctx.setFillColor(cgColor(Palette.page, dark: dark, alpha: Self.opacity))
         ctx.fill(renderer.rect(for: rect))
         ctx.setLineCap(.round); ctx.setLineJoin(.round)
         let near = rect.insetBy(dx: -8 / scale, dy: -8 / scale)   // strokes wider than an item's padding when zoomed out
@@ -93,14 +151,14 @@ struct FogContent: LayerContent {
         for (blend, extra, alpha) in [(CGBlendMode.destinationOut, Self.feather, 0.5), (.clear, 0, 1)] {
             ctx.setBlendMode(blend)
             ctx.setStrokeColor(UIColor(white: 0, alpha: alpha).cgColor); ctx.setFillColor(UIColor(white: 0, alpha: alpha).cgColor)
-            for s in strokes where s.rect.intersects(near) {
-                let lat = s.stroke.coords[0].lat
-                let w = max(2 * (s.stroke.halfWidth + extra) * pointsPerMetre(lat), minimum)
-                if s.stroke.coords.count == 1 {
-                    let c = renderer.point(for: MKMapPoint(CLLocationCoordinate2D(latitude: lat, longitude: s.stroke.coords[0].lon)))
+            for i in grid.items(in: near) where strokes[i].rect.intersects(near) {
+                let s = strokes[i]
+                let w = max(2 * (s.stroke.halfWidth + extra) * pointsPerMetre(s.stroke.coords[0].lat), minimum)
+                if points[i].count == 1 {
+                    let c = renderer.point(for: points[i][0])
                     ctx.fillEllipse(in: CGRect(x: c.x - w / 2, y: c.y - w / 2, width: w, height: w))
                 } else {
-                    ctx.setLineWidth(w); ctx.addPath(renderer.path(s.stroke.coords)); ctx.strokePath()
+                    ctx.setLineWidth(w); ctx.addPath(renderer.path(points[i])); ctx.strokePath()
                 }
             }
         }
@@ -189,15 +247,18 @@ struct LinesContent: LayerContent {
             ctx.setLineDash(phase: 0, lengths: l.rough ? [4 / scale, 4 / scale] : [])
             if edged && hidden.isEmpty {
                 ctx.setStrokeColor(cgColor(Palette.text, dark: dark)); ctx.setLineWidth(width + 2 / scale)
-                ctx.addPath(renderer.path(l.coords)); ctx.strokePath()
+                ctx.addPath(renderer.curve(l.coords)); ctx.strokePath()
             }
             ctx.setLineWidth(width)
-            // Runs of one colour as one path.
+            // Only vertices whose Visvalingam area beats this zoom's pixel² (nested sets: zooming never reshapes a line).
+            let px = 1 / (Double(scale) * pointsPerMetre(l.coords[0].lat)), cut = px * px
+            let shown = l.importance.count == l.coords.count ? l.coords.indices.filter { l.importance[$0] >= cut } : Array(l.coords.indices)
+            // Runs of one colour as one curve.
             var a = 0
-            for b in 1..<l.coords.count where b == l.coords.count - 1 || hex(l, b) != hex(l, a) {
-                if colour != .mode || !(l.modes[a].map(hidden.contains) ?? false) {
-                    ctx.setStrokeColor(cgColor(hex(l, a), dark: dark))
-                    ctx.addPath(renderer.path(Array(l.coords[a...b]))); ctx.strokePath()
+            for b in 1..<shown.count where b == shown.count - 1 || hex(l, shown[b]) != hex(l, shown[a]) {
+                if colour != .mode || !(l.modes[shown[a]].map(hidden.contains) ?? false) {
+                    ctx.setStrokeColor(cgColor(hex(l, shown[a]), dark: dark))
+                    ctx.addPath(renderer.curve(shown[a...b].map { l.coords[$0] })); ctx.strokePath()
                 }
                 a = b
             }

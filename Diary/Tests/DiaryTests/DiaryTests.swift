@@ -728,4 +728,17 @@ final class DiaryTests: XCTestCase {
         try diary.saveProgress([], covered: [:], bike: false)
         XCTAssertTrue(try diary.areaProgress(bike: false).isEmpty)
     }
+
+    func testReplaceTripLineTouchesOnlyThatTrip() throws {
+        let diary = try Diary(path: tempPath())
+        func line(_ start: Double, _ lat: Double) -> TripLine {
+            TripLine(start: Date(timeIntervalSince1970: start), end: Date(timeIntervalSince1970: start + 60), minLat: lat, maxLat: lat,
+                     minLon: 5, maxLon: 5, distance: 100, coords: [(lat, 5, 1), (lat, 5.001, 1)])
+        }
+        try diary.saveTripLines([line(0, 52), line(1000, 52)], replacingFrom: .distantPast)
+        XCTAssertTrue(try diary.replaceTripLine(line(0, 53)))
+        XCTAssertFalse(try diary.replaceTripLine(line(5000, 53)))   // not cached: nothing written
+        let all = try diary.tripLines(from: .distantPast, to: .distantFuture)
+        XCTAssertEqual(all.map(\.minLat), [53, 52])
+    }
 }

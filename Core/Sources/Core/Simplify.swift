@@ -40,4 +40,51 @@ public enum Simplify {
             tol = max(1, tol * 2)
         }
     }
+
+    /// Visvalingam–Whyatt effective area per vertex, in m², computed once: a vertex is drawn when its area exceeds the
+    /// screen's (pixel size)². Areas never decrease in removal order, so a coarser view keeps a subset of a finer one and a
+    /// line never jumps between shapes while zooming. Ends are `.infinity` (always kept).
+    public static func visvalingam(_ coords: [(lat: Double, lon: Double)]) -> [Double] {
+        let n = coords.count
+        var area = [Double](repeating: .infinity, count: n)
+        guard n > 2 else { return area }
+        let r = 6_371_008.8, rad = Double.pi / 180, k = cos(coords[0].lat * rad)
+        let xy = coords.map { (x: ($0.lon - coords[0].lon) * rad * r * k, y: ($0.lat - coords[0].lat) * rad * r) }
+        var prev = Array(-1..<(n - 1)), next = Array(1...n)
+        func tri(_ i: Int) -> Double {
+            let a = xy[prev[i]], b = xy[i], c = xy[next[i]]
+            return abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2
+        }
+        // Min-heap of (area, vertex, version); a stale entry (older version) is skipped when popped.
+        var heap: [(a: Double, i: Int, v: Int)] = [], version = [Int](repeating: 0, count: n)
+        func push(_ e: (a: Double, i: Int, v: Int)) {
+            heap.append(e); var c = heap.count - 1
+            while c > 0 { let p = (c - 1) / 2; if heap[p].a <= heap[c].a { break }; heap.swapAt(p, c); c = p }
+        }
+        func pop() -> (a: Double, i: Int, v: Int) {
+            let top = heap[0], last = heap.removeLast()
+            if !heap.isEmpty {
+                heap[0] = last; var p = 0
+                while true {
+                    let l = 2 * p + 1, rr = l + 1; var m = p
+                    if l < heap.count && heap[l].a < heap[m].a { m = l }
+                    if rr < heap.count && heap[rr].a < heap[m].a { m = rr }
+                    if m == p { break }; heap.swapAt(p, m); p = m
+                }
+            }
+            return top
+        }
+        for i in 1..<(n - 1) { push((tri(i), i, 0)) }
+        var floor = 0.0
+        while !heap.isEmpty {
+            let e = pop()
+            guard e.v == version[e.i] else { continue }
+            floor = max(floor, e.a)   // monotone: never below a vertex removed earlier
+            area[e.i] = floor
+            let p = prev[e.i], q = next[e.i]
+            next[p] = q; prev[q] = p
+            for j in [p, q] where j > 0 && j < n - 1 { version[j] += 1; push((tri(j), j, version[j])) }
+        }
+        return area
+    }
 }

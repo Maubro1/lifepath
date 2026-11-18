@@ -230,6 +230,18 @@ public final class Diary: Sendable {
         }
     }
 
+    /// Replaces one cached trip's line (same start), only when that trip is cached; never touches other trips.
+    @discardableResult
+    public func replaceTripLine(_ l: TripLine) throws -> Bool {
+        try pool.write { db in
+            guard try Row.fetchOne(db, sql: "SELECT 1 FROM tripLine WHERE start = ?", arguments: [l.start.timeIntervalSince1970]) != nil else { return false }
+            try db.execute(sql: "UPDATE tripLine SET end = ?, minLat = ?, maxLat = ?, minLon = ?, maxLon = ?, distance = ?, coords = ? WHERE start = ?",
+                           arguments: [l.end.timeIntervalSince1970, l.minLat, l.maxLat, l.minLon, l.maxLon, l.distance, Self.encode(l.coords),
+                                       l.start.timeIntervalSince1970])
+            return true
+        }
+    }
+
     public func tripLines(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date) throws -> [TripLine] {
         try pool.read { db in
             try Row.fetchAll(db, sql: """

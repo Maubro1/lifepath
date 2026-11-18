@@ -40,4 +40,21 @@ final class TripLineTests: XCTestCase {
         var u = trip([(50, 4), (50.01, 4)]); for i in u.points.indices { u.points[i].speed = -1 }
         XCTAssertEqual(TripLines.make(u).coords[0].speed, -1)
     }
+
+    func testSnappedFollowsWay() {
+        // Points wobble 6 m north of a straight way; a confident stretch over all of them draws the way instead.
+        let pts = (0...10).map { i -> (Double, Double) in let p = Geo.offset(lat: 50, lon: 4, north: 6, east: Double(i) * 20); return (p.lat, p.lon) }
+        let t = trip(pts)
+        let way = Way(id: 1, kind: .road, name: nil, oneway: false, nodes: [1, 2],
+                      coords: [Geo.offset(lat: 50, lon: 4, north: 0, east: 0), Geo.offset(lat: 50, lon: 4, north: 0, east: 200)])
+        let m = MatchedStretch(seq: 0, wayId: 1, fromM: 0, toM: 200, confidence: 0.9, start: t.start, end: t.end)
+        let line = TripLines.snapped(t, smoothed: [:], matches: [m], ways: [1: way])
+        XCTAssertTrue(line.coords.allSatisfy { Geo.distance($0.lat, $0.lon, 50, $0.lon) < 1 }, "\(line.coords)")
+    }
+
+    func testSnappedKeepsUnmatched() {
+        let pts = (0...10).map { i -> (Double, Double) in let p = Geo.offset(lat: 50, lon: 4, north: 6, east: Double(i) * 20); return (p.lat, p.lon) }
+        let t = trip(pts)
+        XCTAssertEqual(TripLines.snapped(t, smoothed: [:], matches: [], ways: [:]), TripLines.make(t))
+    }
 }

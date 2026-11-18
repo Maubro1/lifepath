@@ -16,6 +16,7 @@ struct MapLine: Sendable {
     var modes: [TravelMode?]  // per coord; nil: unsure or unknown
     var locations: [Double]   // per coord, 0...1 along the line, for the speed gradient
     var dateFraction: Double  // trip start within the time range
+    var importance: [Double] = []   // Visvalingam area per coord (m²): drawn when above the screen's pixel², so shapes never jump
 }
 
 struct MapData: Sendable {
@@ -85,7 +86,7 @@ struct MapOptions: Equatable {
     @ObservationIgnored private var liveTask: Task<Void, Never>?
 
     private struct Query: Sendable {
-        var minLat, maxLat, minLon, maxLon, tolerance: Double
+        var minLat, maxLat, minLon, maxLon: Double
         var from, to: Date
         var heat, recorded, byMode, street, zoomedOut: Bool   // in the order the call passes them
         var mode: MapMode
@@ -127,7 +128,6 @@ struct MapOptions: Equatable {
         // shortcut: no antimeridian wrap; fine unless the owner maps across 180°
         let q = Query(minLat: max(-90, c.latitude - r.span.latitudeDelta * 0.6), maxLat: min(90, c.latitude + r.span.latitudeDelta * 0.6),
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
-                      tolerance: Simplify.step(2 * metresPerPoint),
                       from: range.from, to: range.to, heat: options.heat, recorded: options.recorded, byMode: options.byMode,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5,
                       mode: options.mode, bike: UserDefaults.standard.bool(forKey: "countCycling"), metresPerPoint: metresPerPoint, centerLat: c.latitude, centerLon: c.longitude,
@@ -149,8 +149,9 @@ struct MapOptions: Equatable {
         let modesByTrip = q.byMode || q.mode == .fog ? try diary.modes(from: q.from, to: q.to) : [:]   // one read for every trip in range
         var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], modes: [TravelMode?], start: Date, segment: Int, rough: Bool)] = []
         var after = q.from.addingTimeInterval(-0.001)   // reads are `t > after`: keep a point exactly at `from`
-        // Zoomed out, trips up to the cache's end come from the trip-line cache (smoothed lines only); points resume where those trips end, never mid-trip.
-        if q.zoomedOut, !q.recorded, let until = try diary.tripLinesUntil() {
+        // Trips up to the cache's end come from the trip-line cache (snapped, 3 m detail) at every zoom, so a line is the same data
+        // whatever the zoom; points resume where those trips end, never mid-trip.
+        if !q.recorded, let until = try diary.tripLinesUntil() {
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: min(until, q.to))
             // shortcut: cached lines carry no rough flag and draw solid; upgrade when stage 3 stores rail-matched lines
             // Cached lines are simplified, so a point has no index in the trip: the whole line takes the trip's longest confident mode.
@@ -204,7 +205,7 @@ struct MapOptions: Equatable {
                     let run = rough[first] ? max(0, first - 1)..<min(rough.count, e + 1) : first..<e
                     if run.count > 1 || rough.count == 1 {
                         let c = Array(coords[run]), sp = Array(speeds[run]), md = Array(modes[run])
-                        let keep = Simplify.douglasPeucker(c, tolerance: q.tolerance)   // keep only the drawn shape: memory follows the output
+                        let keep = Simplify.douglasPeucker(c, tolerance: TripLines.tolerance)   // fixed detail, never by zoom
                         trips.append((coords: keep.map { c[$0] }, speeds: keep.map { sp[$0] }, modes: keep.map { md[$0] }, start: trip.start, segment: segment, rough: rough[first]))
                     }
                     first = e; segment += 1
@@ -250,13 +251,9 @@ struct MapOptions: Equatable {
             if q.metresPerPoint <= 40 {
                 let covered = try diary.coveredWays(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, bike: q.bike)
                 let ids = Set(covered.map(\.id))
-                for w in covered {
-                    let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)   // zoomed out: less detail, never fewer streets
-                    out.covered.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
-                }
+                for w in covered { out.covered.append((key: "\(w.id)", coords: w.coords)) }   // OSM ways are sparse: drawn as stored
                 for w in try diary.ways(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon) where w.countable && !ids.contains(w.id) {
-                    let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)
-                    out.unwalked.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
+                    out.unwalked.append((key: "\(w.id)", coords: w.coords))
                 }
             }
             if q.metresPerPoint >= 20 {
@@ -280,7 +277,8 @@ struct MapOptions: Equatable {
         let lo = q.from == .distantPast ? (trips.map(\.start).min() ?? q.to) : q.from
         let span = max(1, q.to.timeIntervalSince(lo))
         try Task.checkCancellation()
-        for (trip, keep) in zip(trips, Simplify.fit(trips.map(\.coords), tolerance: q.tolerance, budget: budget)) {
+        // shortcut: past the vertex budget lines are thinned by Douglas–Peucker, which can change shapes; upgrade to a global Visvalingam cut if huge ranges show it
+        for (trip, keep) in zip(trips, Simplify.fit(trips.map(\.coords), tolerance: 0, budget: budget)) {
             let coords = trip.coords
             var along = [0.0]
             for (a, b) in zip(keep, keep.dropFirst()) {
@@ -291,11 +289,11 @@ struct MapOptions: Equatable {
             var h = Hasher()   // content and colour: a grown or re-smoothed line gets a new key
             for i in keep { h.combine(coords[i].lat); h.combine(coords[i].lon); h.combine(trip.speeds[i]); h.combine(trip.modes[i]) }
             h.combine(Int(fraction * 64))   // shortcut: date colour in 64 steps, so a live reload keeps old lines; finer only if steps show
-            out.lines.append(MapLine(key: "\(trip.start.timeIntervalSince1970)-\(trip.segment)\(trip.rough ? "r" : "")-\(q.tolerance)-\(h.finalize())",
+            out.lines.append(MapLine(key: "\(trip.start.timeIntervalSince1970)-\(trip.segment)\(trip.rough ? "r" : "")-\(h.finalize())",
                                      rough: trip.rough,
                                      coords: keep.map { coords[$0] }, speeds: keep.map { trip.speeds[$0] }, modes: keep.map { trip.modes[$0] },
                                      locations: along.enumerated().map { total > 0 ? $1 / total : Double($0) / Double(max(1, keep.count - 1)) },
-                                     dateFraction: fraction))
+                                     dateFraction: fraction, importance: Simplify.visvalingam(keep.map { coords[$0] })))
         }
         if q.mode == .fog {
             for l in out.lines where l.coords.count > 1 {
