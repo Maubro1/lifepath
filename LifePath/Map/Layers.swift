@@ -308,14 +308,15 @@ struct HeatContent: LayerContent {
             density.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
         }
         guard let data = density.data else { return }
-        // Blur once: two 3×3 tent passes soften the lines into gradients.
+        // Blur once: a 5×5 Gaussian (binomial 1-4-6-4-1) softens the lines into gradients.
         var src = vImage_Buffer(data: data, height: vImagePixelCount(h), width: vImagePixelCount(w), rowBytes: w * 4)
-        var tmp = [Float](repeating: 0, count: w * h)
-        tmp.withUnsafeMutableBytes { t in
+        let row: [Float] = [1, 4, 6, 4, 1], kernel = row.flatMap { a in row.map { a * $0 / 256 } }
+        var blurred = [Float](repeating: 0, count: w * h)
+        blurred.withUnsafeMutableBytes { t in
             var dst = vImage_Buffer(data: t.baseAddress, height: src.height, width: src.width, rowBytes: w * 4)
-            vImageTentConvolve_PlanarF(&src, &dst, nil, 0, 0, 3, 3, 0, vImage_Flags(kvImageEdgeExtend))
-            vImageTentConvolve_PlanarF(&dst, &src, nil, 0, 0, 3, 3, 0, vImage_Flags(kvImageEdgeExtend))
+            _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, 5, 5, 0, vImage_Flags(kvImageEdgeExtend))
         }
+        blurred.withUnsafeBytes { data.copyMemory(from: $0.baseAddress!, byteCount: w * h * 4) }
         // Colour through the ramp into an RGBA image, margins cropped.
         let values = data.bindMemory(to: Float.self, capacity: w * h)
         let cw = w - 2 * m, ch = h - 2 * m
