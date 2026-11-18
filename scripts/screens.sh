@@ -28,12 +28,12 @@ done
 # Look variants side by side: heat 1-4, fog 1-3, in both appearances.
 for appearance in light dark; do
   xcrun simctl ui "$UDID" appearance "$appearance"
-  for v in ${HEAT_VARIANTS:-2 3 4}; do
+  for v in ${HEAT_VARIANTS:-2}; do
     xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen heat -variant "$v" -appearance "$appearance"
     sleep 15
     xcrun simctl io "$UDID" screenshot "screens/heat-v$v-$appearance.png"
   done
-  for v in ${FOG_VARIANTS:-2 3}; do
+  for v in ${FOG_VARIANTS:-}; do
     xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen fog -variant "$v" -appearance "$appearance"
     sleep 15
     xcrun simctl io "$UDID" screenshot "screens/fog-v$v-$appearance.png"

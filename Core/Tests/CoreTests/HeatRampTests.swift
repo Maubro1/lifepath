@@ -27,4 +27,14 @@ final class HeatRampTests: XCTestCase {
         XCTAssertEqual(HeatRamp.level(count: 80, max: 50), 1)        // clamped
         XCTAssertEqual(HeatRamp.level(count: 3, max: 0), 0)
     }
+
+    func testOneWalkStaysFaint() {
+        // A young diary: the busiest spot has one pass, yet that pass must not saturate.
+        let one = HeatRamp.level(count: 1, max: 1)
+        XCTAssertLessThan(one, 0.25)
+        XCTAssertLessThan(HeatRamp.colour(one).a, 0.4)
+        XCTAssertLessThan(one, HeatRamp.level(count: 5, max: 5))
+        XCTAssertLessThan(HeatRamp.level(count: 5, max: 5), HeatRamp.level(count: 40, max: 40))
+        XCTAssertEqual(HeatRamp.level(count: 40, max: 40), 1, accuracy: 1e-9)
+    }
 }

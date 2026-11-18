@@ -37,7 +37,7 @@ struct Card<Content: View>: View {
     var body: some View {
         content
             .padding(12)
-            .background(Color.card, in: .rect(cornerRadius: 12, style: .continuous))
+            .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
     }
 }
 

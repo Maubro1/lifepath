@@ -5,7 +5,7 @@ import Foundation
 public enum HeatRamp {
     /// Stops of the ramp: (position, colour 0xRRGGBB, alpha).
     static let stops: [(v: Double, rgb: UInt32, a: Double)] = [
-        (0, 0xE7B547, 0), (0.15, 0xE7B547, 0.55), (0.45, 0xF08C4E, 0.8), (0.75, 0xE0503F, 0.92), (1, 0xFFE9C8, 1),
+        (0, 0xE7B547, 0), (0.15, 0xE7B547, 0.3), (0.4, 0xF08C4E, 0.65), (0.7, 0xE0503F, 0.88), (1, 0xFFE9C8, 1),
     ]
 
     /// Colour at `v` in 0...1, linear between stops.
@@ -18,10 +18,10 @@ public enum HeatRamp {
         return (mix(16), mix(8), mix(0), a.a + (b.a - a.a) * t)
     }
 
-    /// How hot `count` passes are against the diary's busiest spot at this zoom: logarithmic, so one walk already shows
-    /// and a daily route still stands out.
-    public static func level(count: Double, max: Double) -> Double {
+    /// How hot `count` passes are: cumulative and logarithmic. Full heat needs at least `full` passes, so a single walk is a
+    /// faint mustard trace even in a young diary; with more history the busiest spot at this zoom sets the top.
+    public static func level(count: Double, max: Double, full: Double = 40) -> Double {
         guard max > 0, count > 0 else { return 0 }
-        return min(1, log1p(count) / log1p(max))
+        return min(1, log1p(count) / log1p(Swift.max(max, full)))
     }
 }

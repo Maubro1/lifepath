@@ -27,7 +27,7 @@ struct DayPage: View {
                         if let picture { Image(uiImage: picture).resizable().scaledToFill() }
                     }
                     .frame(height: 220)
-                    .clipShape(.rect(cornerRadius: 12, style: .continuous))
+                    .clipShape(.rect(cornerRadius: 22, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Map of this day")
@@ -40,7 +40,7 @@ struct DayPage: View {
                         fact("+\(f.new)", "new streets", accent: f.new > 0)
                     }
                     .padding(16)
-                    .background(Color.card, in: .rect(cornerRadius: 12, style: .continuous))
+                    .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
                 }
                 Text("The day").font(.display(22, relativeTo: .title2)).foregroundStyle(Color.ink).padding(.top, 8)
                 if story.isEmpty {
@@ -51,7 +51,7 @@ struct DayPage: View {
                         ForEach(Array(story.enumerated()), id: \.offset) { i, item in row(item, first: i == 0, last: i == story.count - 1) }
                     }
                     .padding(.horizontal, 16).padding(.vertical, 8)
-                    .background(Color.card, in: .rect(cornerRadius: 12, style: .continuous))
+                    .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
                 }
             }
             .padding(16)

@@ -70,6 +70,16 @@ enum DemoData {
                     t += 5
                 }
             }
+            // An evening walk down one side street; the four streets repeat, so some are walked once and some twice.
+            let east = Double([0, 3, 5, 7][d % 4]) * 150, eve = day.addingTimeInterval(19 * 3600)
+            let side = (0..<170).map { k in
+                let p = at(Double(k) * 7, east + sin(Double(k) * 0.7) * 2)
+                return FilteredPoint(t: eve + Double(k) * 5, lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon, hAcc: 6, speed: 1.4, kind: .moving)
+            }
+            points += side
+            try diary.saveMatches(tripStart: eve, [], modes: [ModeStretch(seq: 0, mode: .walk, confidence: 0.9, start: eve, end: side.last!.t)])
+            lines.append(TripLine(start: eve, end: side.last!.t, minLat: side.first!.lat, maxLat: side.last!.lat, minLon: side.first!.lon,
+                                  maxLon: side.first!.lon, distance: 1190, coords: side.map { ($0.lat, $0.lon, 1.4) }))
             if d % 2 == 0 {   // a train ride along the rail in the afternoon
                 let ride = day.addingTimeInterval(15 * 3600)
                 trip += (0..<60).map { k in

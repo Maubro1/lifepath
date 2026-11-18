@@ -127,12 +127,7 @@ struct FogContent: LayerContent {
     var grid: GridIndex
     var dark: Bool
     static let feather = 4.0   // m
-    /// Fog colour and opacity: set here, never through the renderer's alpha (stalls tiles on iOS 18). Variants for screenshots only.
-    static let look: (light: UInt32, dark: UInt32, opacity: Double) = switch DemoData.variant {
-    case 2: (0xFAFAF9, 0x2C2C2E, 0.9)    // denser
-    case 3: (0xF1ECE2, 0x4A443C, 0.8)    // warm paper mist
-    default: (Palette.fog.light, Palette.fog.dark, 0.82)
-    }
+    static let opacity = 0.8   // see-through paper; set here, never through the renderer's alpha (stalls tiles on iOS 18)
 
     var style: String { "fog\(dark)" }
     var items: [String: MKMapRect] { Dictionary(strokes.map { ($0.key, $0.rect) }, uniquingKeysWith: { a, _ in a }) }
@@ -148,7 +143,7 @@ struct FogContent: LayerContent {
     }
 
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
-        ctx.setFillColor(cgColor(Hex(light: Self.look.light, dark: Self.look.dark), dark: dark, alpha: Self.look.opacity))
+        ctx.setFillColor(cgColor(Palette.fog, dark: dark, alpha: Self.opacity))
         ctx.fill(renderer.rect(for: rect))
         ctx.setLineCap(.round); ctx.setLineJoin(.round)
         let near = rect.insetBy(dx: -8 / scale, dy: -8 / scale)   // strokes wider than an item's padding when zoomed out
@@ -277,13 +272,20 @@ struct HeatContent: LayerContent {
     var grid: GridIndex
     var max: Double   // passes through the busiest cell at the loading zoom
     var dark: Bool
-    /// Line width (buffer px), blur kernel row, blur passes, count gain, and a faint wide halo per trip. Variants for screenshots only.
-    static let look: (width: CGFloat, row: [Float], blurs: Int, gain: Double, halo: Bool) = switch DemoData.variant {
-    case 2: (1.5, [1, 4, 6, 4, 1], 1, 1.5, false)                       // narrow, crisp
-    case 3: (3, [1, 8, 28, 56, 70, 56, 28, 8, 1], 2, 3, false)          // wide, soft
-    case 4: (1.5, [1, 4, 6, 4, 1], 1, 1.6, true)                        // bright core in a wide glow
-    default: (2, [1, 8, 28, 56, 70, 56, 28, 8, 1], 1, 2, false)
-    }
+    static let width: CGFloat = 3                                 // line width in buffer px (half the screen points)
+    static let row: [Float] = [1, 8, 28, 56, 70, 56, 28, 8, 1]   // binomial blur row, run three times: wide and soft
+    static let blurs = 3
+    /// Passes for full heat; variant 2 (screenshots only) heats up sooner, for comparison.
+    static let full: Double = DemoData.variant == 2 ? 15 : 40
+    /// Restores one trip to a count of 1 on its centre line after the blur spreads it out, so counts stay true passes.
+    static let gain: Double = {
+        let n = 61, r = row.count / 2, k = row.map(Double.init), s = k.reduce(0, +)
+        var p = (0..<n).map { abs(Double($0 - n / 2)) <= Double(width) / 2 ? 1.0 : 0 }
+        for _ in 0..<blurs {
+            p = (0..<n).map { i in (0..<k.count).reduce(0.0) { a, j in let x = i + j - r; return x >= 0 && x < n ? a + p[x] * k[j] / s : a } }
+        }
+        return 1 / p[n / 2]
+    }()
     static let pass: Float = 1 / 4096   // grey added per trip (plusLighter clamps at 1): up to 4096 passes; count = value × 4096
 
     var style: String { "heat\(dark)\(Int(max))" }
@@ -316,11 +318,7 @@ struct HeatContent: LayerContent {
         for i in grid.items(in: near) where lines[i].rect.intersects(near) && lines[i].points.count > 1 {
             let path = CGMutablePath()
             path.addLines(between: lines[i].points.map(b))
-            if Self.look.halo {   // a faint wide stroke under the line: a glow that still counts each trip once per width
-                density.setStrokeColor(gray: 1, alpha: CGFloat(Self.pass * 0.35)); density.setLineWidth(6)
-                density.addPath(path); density.strokePath()
-            }
-            density.setStrokeColor(gray: 1, alpha: CGFloat(Self.pass)); density.setLineWidth(Self.look.width)
+            density.setStrokeColor(gray: 1, alpha: CGFloat(Self.pass)); density.setLineWidth(Self.width)
             density.addPath(path); density.strokePath()   // one stroke per trip: a trip counts once where it overlaps itself
         }
         for p in places where near.contains(p.point) {
@@ -329,16 +327,16 @@ struct HeatContent: LayerContent {
             density.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
         }
         guard let data = density.data else { return }
-        // Blur once: a 9×9 Gaussian (binomial) softens the lines into gradients.
+        // Blur three times with a 9×9 Gaussian (binomial): the lines soften into wide gradients.
         var src = vImage_Buffer(data: data, height: vImagePixelCount(h), width: vImagePixelCount(w), rowBytes: w * 4)
-        let row = Self.look.row, sum = row.reduce(0, +), n = UInt32(row.count)
+        let row = Self.row, sum = row.reduce(0, +), n = UInt32(row.count)
         let kernel = row.flatMap { a in row.map { a * $0 / (sum * sum) } }
         var blurred = [Float](repeating: 0, count: w * h)
         var big = [Float](repeating: 0, count: ow * oh)
         blurred.withUnsafeMutableBytes { t in
             var dst = vImage_Buffer(data: t.baseAddress, height: src.height, width: src.width, rowBytes: w * 4)
             _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
-            for _ in 1..<Swift.max(1, Self.look.blurs) {   // further passes widen the glow; back and forth between the two buffers
+            for _ in 0..<(Self.blurs - 1) / 2 {   // two more passes, back and forth between the two buffers
                 _ = vImageConvolve_PlanarF(&dst, &src, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
                 _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
             }
@@ -350,12 +348,12 @@ struct HeatContent: LayerContent {
                 _ = vImageScale_PlanarF(&crop, &out, nil, vImage_Flags(kvImageHighQualityResampling))
             }
         }
-        // Colour through the ramp. The blur spreads a line's weight over its width, so a count is restored ×2.
+        // Colour through the ramp, the count restored from the blur's spread.
         var rgba = [UInt8](repeating: 0, count: ow * oh * 4)
         for i in 0..<(ow * oh) {
-            let count = Double(big[i] / Self.pass) * Self.look.gain
+            let count = Double(big[i] / Self.pass) * Self.gain
             guard count > 0.05 else { continue }
-            let c = HeatRamp.colour(HeatRamp.level(count: count, max: max)), k = i * 4
+            let c = HeatRamp.colour(HeatRamp.level(count: count, max: max, full: Self.full)), k = i * 4
             rgba[k] = UInt8(c.r * c.a * 255); rgba[k + 1] = UInt8(c.g * c.a * 255); rgba[k + 2] = UInt8(c.b * c.a * 255); rgba[k + 3] = UInt8(c.a * 255)
         }
         guard let provider = CGDataProvider(data: Data(rgba) as CFData),

@@ -79,7 +79,7 @@ struct YouScreen: View {
             fact(d.life.days.formatted(), "days recorded")
         }
         .padding(16)
-        .background(Color.card, in: .rect(cornerRadius: 12, style: .continuous))
+        .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
     }
 
     private func fact(_ value: String, _ caption: String) -> some View {
@@ -112,7 +112,7 @@ struct YouScreen: View {
                     bar(c.share)
                 }
                 .padding(12)
-                .background(Color.card, in: .rect(cornerRadius: 12, style: .continuous))
+                .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
                 .accessibilityElement(children: .combine)
             }
         }
@@ -143,7 +143,7 @@ struct YouScreen: View {
             .accessibilityLabel("Walked in \(d.weeks.filter { $0 > 0 }.count) of the last 52 weeks")
         }
         .padding(16)
-        .background(Color.card, in: .rect(cornerRadius: 12, style: .continuous))
+        .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
     }
 
     private func days(_ d: YouData) -> some View {
@@ -209,7 +209,7 @@ private struct DayRow: View {
             Spacer(minLength: 0)
         }
         .padding(10)
-        .background(Color.card, in: .rect(cornerRadius: 12, style: .continuous))
+        .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens this day")
         .task(id: dark) {

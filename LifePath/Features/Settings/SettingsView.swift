@@ -48,7 +48,7 @@ struct SettingsView: View {
             List { Group {
                 Section("Status") {
                     Label(s.headline, systemImage: s.level == .problem ? "exclamationmark.triangle" : s.level == .resting ? "moon" : "checkmark.circle")
-                        .foregroundStyle(s.level == .problem ? .red : s.level == .resting ? .secondary : .green)
+                        .foregroundStyle(s.level == .problem ? Color(UIColor(Palette.cherry)) : s.level == .resting ? Color.muted : Color(UIColor(Palette.mode(.bike))))   // as the You pill
                     if let hint = s.hint { Text(hint) }
                     LabeledContent("Last point", value: time(recorder.lastPoint))
                     LabeledContent("Last location check", value: time(recorder.lastCheckIn))
