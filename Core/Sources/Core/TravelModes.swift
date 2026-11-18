@@ -1,6 +1,7 @@
 import Foundation
 
-public enum TravelMode: String, Sendable, Codable, CaseIterable { case walk, run, bike, car, bus, tram, train, boat }
+/// `vehicle`: a motorised ride whose kind is not clear; never guessed (set only by `TravelModes.settle`).
+public enum TravelMode: String, Sendable, Codable, CaseIterable { case walk, run, bike, car, bus, tram, train, boat, vehicle }
 
 /// One run of a trip's points in one travel mode: timestamps `start...end` of its first and last point (not indices: the map reads a trip's points only in part).
 public struct ModeStretch: Sendable, Equatable, Codable {
@@ -16,7 +17,7 @@ public struct ModeStretch: Sendable, Equatable, Codable {
 /// Travel mode per stretch: a small Hidden Markov Model over 30 s windows of a trip, decoded with Viterbi in log space.
 /// Features: CoreMotion activity, speed, halts at mapped stops, nearness to each network, share of rough fixes.
 public enum TravelModes {
-    public static let version = 2
+    public static let version = 3
     public static let confident = 0.6
 
     /// What one 30 s window shows.
@@ -49,7 +50,7 @@ public enum TravelModes {
         }
         let roughV = MapMatcher.roughRunSpeed(points)
         let windows = groups.map { window($0, points, roughV, act, graph, stops) }
-        let modes = TravelMode.allCases
+        let modes = TravelMode.allCases.filter { $0 != .vehicle }   // `vehicle` comes only from settle
         let e = windows.map { w in modes.map { emission(w, $0) } }
 
         // Viterbi: best log score of a path ending in each mode, with back pointers.
@@ -130,7 +131,7 @@ public enum TravelModes {
             case .walk: (1.4, 0.4)
             case .run: (3.2, 0.8)
             case .bike: (5, 1.5)
-            case .car, .bus: (12, 9)
+            case .car, .bus, .vehicle: (12, 9)
             case .tram: (8, 4)
             case .train: (25, 12)
             case .boat: (6, 3)
@@ -147,7 +148,7 @@ public enum TravelModes {
         if !w.kinds.isEmpty { switch m {
         case .walk, .run: break   // walkers go anywhere
         case .bike: e += near([.cycle, .foot, .road]) - 1
-        case .car, .bus: e += 3 * (near([.road]) - 1)
+        case .car, .bus, .vehicle: e += 3 * (near([.road]) - 1)
         case .tram: e += 3 * (near([.tram, .rail]) - 1)
         case .train: e += 3 * (near([.rail]) - 1)
         case .boat: e += 4.5 * (max(near([.ferry]), w.open) - 1)   // heavier: boats are rare
@@ -164,7 +165,7 @@ public enum TravelModes {
             case .train: e += within(.rail, 300) ? 0 : -2
             case .boat: e += within(.ferry, 100) ? 0 : -0.5
             case .car: e += within(.bus, 30) ? -1 : 0
-            case .walk, .run, .bike: break
+            case .walk, .run, .bike, .vehicle: break
             }
         } else if m == .bus {
             e -= 0.1   // a bus needs evidence: car wins ties
@@ -178,5 +179,43 @@ public enum TravelModes {
         let foot: Set<TravelMode> = [.walk, .run]
         if foot.contains(a) && foot.contains(b) { return -2 }
         return foot.contains(a) || foot.contains(b) ? -4 : -8
+    }
+
+    /// Whole rides between walks, after the 30 s windows: consecutive non-foot stretches form one piece (a change of vehicle
+    /// passes through walking). A piece whose 95th-percentile speed is walking pace is a walk (one GPS spike sets a maximum,
+    /// not a P95); at cycling speeds with a bike window it is a bike; otherwise it keeps its longest confident mode, which the
+    /// windows chose with rail, tram, ferry and bus-stop evidence, or becomes `vehicle` when no mode is confident.
+    public static func settle(_ stretches: [ModeStretch], points: [FilteredPoint]) -> [ModeStretch] {
+        let foot: Set<TravelMode> = [.walk, .run]
+        var pieces: [[ModeStretch]] = []
+        for s in stretches.sorted(by: { $0.start < $1.start }) {
+            if let last = pieces.last?.last, !foot.contains(last.mode), !foot.contains(s.mode) { pieces[pieces.count - 1].append(s) }
+            else { pieces.append([s]) }
+        }
+        var out: [ModeStretch] = []
+        for piece in pieces {
+            let first = piece[0], start = first.start, end = piece[piece.count - 1].end
+            var mode = first.mode, confidence = first.confidence
+            if !foot.contains(first.mode) {
+                let speeds = points.filter { $0.t >= start && $0.t <= end && $0.speed >= 0 }.map(\.speed).sorted()
+                let p95 = speeds.isEmpty ? nil : speeds[min(speeds.count - 1, Int(Double(speeds.count) * 0.95))]
+                var time: [TravelMode: Double] = [:]
+                for s in piece where s.confidence >= confident { time[s.mode, default: 0] += s.end.timeIntervalSince(s.start) }
+                let best = time.max { $0.value < $1.value || ($0.value == $1.value && $0.key.rawValue > $1.key.rawValue) }?.key
+                if let p95, p95 < 8 / 3.6 { mode = .walk }
+                else if let p95, p95 < 35 / 3.6, piece.contains(where: { $0.mode == .bike }) { mode = .bike }
+                else { mode = best ?? .vehicle }
+                let backing = piece.filter { $0.mode == best }
+                confidence = (backing.isEmpty ? piece : backing).map(\.confidence).max() ?? 0
+            }
+            // Neighbouring pieces of the same mode (a walk either side of a spike) join into one.
+            if let last = out.last, last.mode == mode {
+                out[out.count - 1].end = end
+                out[out.count - 1].confidence = max(last.confidence, confidence)
+            } else {
+                out.append(ModeStretch(seq: out.count, mode: mode, confidence: confidence, start: start, end: end))
+            }
+        }
+        return out
     }
 }

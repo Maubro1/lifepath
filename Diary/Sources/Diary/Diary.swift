@@ -127,6 +127,13 @@ public final class Diary: Sendable {
                 CREATE TABLE streetCovered(key TEXT, bike INTEGER, at REAL, PRIMARY KEY(key, bike));
                 """)
         }
+        migrator.registerMigration("v12") { db in
+            // Additive cache of public-transport routes (downloaded again when missing, never merged from a backup).
+            try db.execute(sql: """
+                CREATE TABLE route(id INTEGER PRIMARY KEY, mode TEXT, minLat REAL, maxLat REAL, minLon REAL, maxLon REAL, stops BLOB, path BLOB);
+                CREATE TABLE routeTile(x INTEGER, y INTEGER, PRIMARY KEY(x, y));
+                """)
+        }
         return migrator
     }
 
@@ -227,6 +234,51 @@ public final class Diary: Sendable {
                     arguments: [l.start.timeIntervalSince1970, l.end.timeIntervalSince1970, l.minLat, l.maxLat, l.minLon, l.maxLon,
                                 l.distance, Self.encode(l.coords)])
             }
+        }
+    }
+
+    /// Deletes everything recorded in `from..<to` (local days the caller chose): points, smoothed points, trip lines and
+    /// matching of trips overlapping it, visits, motion activity, day summaries and steps of those days. A place known only
+    /// from deleted visits goes too. Coverage is marked for recounting. One transaction; returns the points deleted.
+    @discardableResult
+    public func deleteRecords(from: Date, to: Date, days: [String]) throws -> Int {
+        let a = from.timeIntervalSince1970, b = to.timeIntervalSince1970
+        return try pool.write { db in
+            try db.execute(sql: "DELETE FROM point WHERE t >= ? AND t < ?", arguments: [a, b])
+            let removed = db.changesCount
+            try db.execute(sql: "DELETE FROM smoothedPoint WHERE t >= ? AND t < ?", arguments: [a, b])
+            // Trips touching the range go whole, with their matching: no line may still show a deleted moment.
+            let trips = try Double.fetchAll(db, sql: "SELECT start FROM tripLine WHERE start < ? AND end >= ?", arguments: [b, a])
+            for t in trips {
+                for table in ["tripLine"] { try db.execute(sql: "DELETE FROM \(table) WHERE start = ?", arguments: [t]) }
+                for table in ["matchedStretch", "modeStretch", "segmentHit"] { try db.execute(sql: "DELETE FROM \(table) WHERE tripStart = ?", arguments: [t]) }
+            }
+            for table in ["matchedStretch", "modeStretch", "segmentHit"] {
+                try db.execute(sql: "DELETE FROM \(table) WHERE tripStart >= ? AND tripStart < ?", arguments: [a, b])
+            }
+            try db.execute(sql: "DELETE FROM visit WHERE start < ? AND end >= ?", arguments: [b, a])
+            try db.execute(sql: "DELETE FROM activity WHERE t >= ? AND t < ?", arguments: [a, b])
+            for d in days {
+                try db.execute(sql: "DELETE FROM day WHERE day = ?", arguments: [d])
+                try db.execute(sql: "DELETE FROM daySteps WHERE day = ?", arguments: [d])
+            }
+            // A place with no visit left was learned only from deleted days.
+            try db.execute(sql: "DELETE FROM placeCell WHERE placeId NOT IN (SELECT DISTINCT placeId FROM visit WHERE placeId IS NOT NULL)")
+            try db.execute(sql: "DELETE FROM place WHERE id NOT IN (SELECT DISTINCT placeId FROM visit WHERE placeId IS NOT NULL)")
+            try db.execute(sql: "INSERT OR REPLACE INTO meta(key, value) VALUES ('coverageDirty', '1')")
+            return removed
+        }
+    }
+
+    /// Replaces one cached trip's line (same start), only when that trip is cached; never touches other trips.
+    @discardableResult
+    public func replaceTripLine(_ l: TripLine) throws -> Bool {
+        try pool.write { db in
+            guard try Row.fetchOne(db, sql: "SELECT 1 FROM tripLine WHERE start = ?", arguments: [l.start.timeIntervalSince1970]) != nil else { return false }
+            try db.execute(sql: "UPDATE tripLine SET end = ?, minLat = ?, maxLat = ?, minLon = ?, maxLon = ?, distance = ?, coords = ? WHERE start = ?",
+                           arguments: [l.end.timeIntervalSince1970, l.minLat, l.maxLat, l.minLon, l.maxLon, l.distance, Self.encode(l.coords),
+                                       l.start.timeIntervalSince1970])
+            return true
         }
     }
 
@@ -393,11 +445,18 @@ public final class Diary: Sendable {
     }
 
     /// Ways by id, in id order; ids are bound 500 at a time, under SQLite's argument limit.
+    /// Ways by id. A negative id is a public-transport route (-relation id), returned as its track, so a ride snapped to its
+    /// line is drawn wherever matched stretches are.
     public func ways(ids: [Int64]) throws -> [Way] {
-        try pool.read { db in
+        let routes = try self.routes(ids: ids.filter { $0 < 0 }.map { -$0 }).map { r in
+            Way(id: -r.id, kind: r.mode == .tram ? .tram : r.mode == .boat ? .ferry : r.mode == .bus ? .road : .rail, name: nil, oneway: true,
+                nodes: r.path.indices.map { Int64($0) }, coords: r.path, countable: false)
+        }
+        let positive = ids.filter { $0 > 0 }
+        return try routes + pool.read { db in
             var out: [Way] = []
-            for k in stride(from: 0, to: ids.count, by: 500) {
-                let chunk = Array(ids[k..<min(k + 500, ids.count)])
+            for k in stride(from: 0, to: positive.count, by: 500) {
+                let chunk = Array(positive[k..<min(k + 500, positive.count)])
                 let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
                 out += try Row.fetchAll(db, sql: "SELECT * FROM way WHERE id IN (\(marks))", arguments: StatementArguments(chunk)).map(Self.way)
             }
@@ -602,6 +661,45 @@ public final class Diary: Sendable {
                 Area(id: r["id"], level: r["level"], name: r["name"], rings: Self.unpackRings(r["rings"]), holes: Self.unpackRings(r["holes"]))
             }
         }
+    }
+
+    /// Routes found for a tile; the tile is then marked so its routes are not asked for again.
+    public func saveRoutes(_ routes: [Route], tile: Tile) throws {
+        try pool.write { db in
+            for r in routes {
+                let lats = r.path.map(\.lat), lons = r.path.map(\.lon)
+                var row: StatementArguments = [r.id, r.mode.rawValue, lats.min(), lats.max(), lons.min(), lons.max()]
+                row += [Self.pack(r.stops.flatMap { [UInt64(bitPattern: $0.id), $0.lat.bitPattern, $0.lon.bitPattern] }), Self.packRings([r.path])]
+                try db.execute(sql: "INSERT OR REPLACE INTO route(id, mode, minLat, maxLat, minLon, maxLon, stops, path) VALUES (?,?,?,?,?,?,?,?)", arguments: row)
+            }
+            try db.execute(sql: "INSERT OR REPLACE INTO routeTile(x, y) VALUES (?, ?)", arguments: [tile.x, tile.y])
+        }
+    }
+
+    public func hasRoutes(_ tile: Tile) throws -> Bool {
+        try pool.read { db in try Row.fetchOne(db, sql: "SELECT 1 FROM routeTile WHERE x = ? AND y = ?", arguments: [tile.x, tile.y]) != nil }
+    }
+
+    public func routes(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) throws -> [Route] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM route WHERE maxLat >= ? AND minLat <= ? AND maxLon >= ? AND minLon <= ? ORDER BY id",
+                             arguments: [minLat, maxLat, minLon, maxLon]).compactMap(Self.route)
+        }
+    }
+
+    public func routes(ids: [Int64]) throws -> [Route] {
+        guard !ids.isEmpty else { return [] }
+        return try pool.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM route WHERE id IN (\(ids.map { _ in "?" }.joined(separator: ",")))",
+                             arguments: StatementArguments(ids)).compactMap(Self.route)
+        }
+    }
+
+    private static func route(_ r: Row) -> Route? {
+        guard let mode = TravelMode(rawValue: r["mode"]) else { return nil }
+        let w = unpack(r["stops"])
+        let stops = stride(from: 0, to: w.count - 2, by: 3).map { Route.Stop(id: Int64(bitPattern: w[$0]), lat: Double(bitPattern: w[$0 + 1]), lon: Double(bitPattern: w[$0 + 2])) }
+        return Route(id: r["id"], mode: mode, stops: stops, path: unpackRings(r["path"]).first ?? [])
     }
 
     /// Rings as words: per ring its point count, then lat and lon bit patterns.

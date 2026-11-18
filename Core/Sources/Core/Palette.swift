@@ -17,13 +17,15 @@ public enum Palette {
     public static let cherry = Hex(light: 0xB2362C, dark: 0xE86A5B)
     public static let mustard = Hex(light: 0xB07D12, dark: 0xE7B547)
     public static let unsure = Hex(light: 0x8E8E93, dark: 0x8E8E93)
+    /// Fog: the paper in light mode; a grey mist in dark mode, so unexplored areas read differently from the dark map.
+    public static let fog = Hex(light: 0xF1ECE2, dark: 0x4A443C)   // warm paper mist
 
     public static func mode(_ m: TravelMode) -> Hex {
         switch m {
         case .walk: satsuma
         case .run: cherry
         case .bike: Hex(light: 0x5A842C, dark: 0x9DC46A)
-        case .car: Hex(light: 0x87573A, dark: 0xC99772)
+        case .car, .vehicle: Hex(light: 0x87573A, dark: 0xC99772)
         case .bus: mustard
         case .tram: Hex(light: 0x227A72, dark: 0x5DB8AC)
         case .train: Hex(light: 0x3A69AE, dark: 0x82A8E2)

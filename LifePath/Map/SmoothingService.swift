@@ -15,7 +15,9 @@ enum SmoothingService {
     static func run(_ diary: Diary) async throws -> (trips: Int, points: Int, lines: Int) {
         // A new smoother version re-smooths all history once: both cursors start over, the version is stored at the end.
         // shortcut: a cancelled re-smooth starts over next time; upgrade to a resumable cursor if the log shows it never finishing
-        let resmooth = try diary.meta(versionKey) != String(TripSmoother.version)
+        // The trip-line version is part of it: a new line format rebuilds the cache once.
+        let version = "\(TripSmoother.version).\(TripLines.version)"
+        let resmooth = try diary.meta(versionKey) != version
         // Load a margin before the overlap so the re-smoothed seam has context; save only the overlap onward.
         let until = try resmooth ? nil : diary.smoothedUntil()
         let smoothFrom = until?.addingTimeInterval(-2 * margin) ?? .distantPast
@@ -39,11 +41,11 @@ enum SmoothingService {
                 try diary.saveSmoothed(line)
                 points += line.count
                 guard trip.end >= linesFrom else { continue }   // earlier trips are already cached
-                // Smoothed where smoothed, recorded elsewhere (as the map draws it).
+                // Smoothed where smoothed, snapped where matched (as the map draws it).
                 let byT = Dictionary(smooth.map { ($0.t, (lat: $0.lat, lon: $0.lon)) }, uniquingKeysWith: { a, _ in a })
-                var shown = trip
-                for i in shown.points.indices { if let s = byT[shown.points[i].t] { shown.points[i].lat = s.lat; shown.points[i].lon = s.lon } }
-                try diary.saveTripLines([TripLines.make(shown)], replacingFrom: trip.start)
+                let matches = try diary.matches(tripStart: trip.start)
+                let ways = Dictionary(try diary.ways(ids: Array(Set(matches.map(\.wayId)))).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                try diary.saveTripLines([TripLines.snapped(trip, smoothed: byT, matches: matches, ways: ways)], replacingFrom: trip.start)
                 lines += 1
             }
         }
@@ -57,7 +59,7 @@ enum SmoothingService {
             after = chunk[chunk.count - 1].t
         }
         try await process(Trips.split(carry))
-        if resmooth { try diary.setMeta(versionKey, String(TripSmoother.version)) }
+        if resmooth { try diary.setMeta(versionKey, version) }
         return (trips, points, lines)
     }
 

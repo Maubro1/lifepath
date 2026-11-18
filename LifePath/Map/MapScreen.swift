@@ -3,10 +3,13 @@ import Diary
 import MapKit
 import SwiftUI
 
-enum LineColour: String, CaseIterable { case plain = "One colour", mode = "Mode", date = "Date", speed = "Speed" }
+enum LineColour: String, CaseIterable { case plain = "One colour", date = "By age" }
 
 /// What the map shows filling up: walked streets lit, or fog cleared where you have been.
-enum MapMode: String, CaseIterable { case streets = "Streets", fog = "Fog" }
+enum MapMode: String, CaseIterable {
+    case streets = "Streets", fog = "Fog", heat = "Heat"
+    var symbol: String { switch self { case .streets: "road.lanes"; case .fog: "cloud.fog"; case .heat: "flame" } }
+}
 
 struct MapLine: Sendable {
     var key: String           // trip start, segment, rough flag, tolerance and a content hash: equal keys draw the same line
@@ -16,12 +19,15 @@ struct MapLine: Sendable {
     var modes: [TravelMode?]  // per coord; nil: unsure or unknown
     var locations: [Double]   // per coord, 0...1 along the line, for the speed gradient
     var dateFraction: Double  // trip start within the time range
+    var importance: [Double] = []   // Visvalingam area per coord (m²): drawn when above the screen's pixel², so shapes never jump
 }
 
 struct MapData: Sendable {
     var generation: Int
     var lines: [MapLine] = []
-    var heat: [HeatCell: TimeInterval] = [:]
+    var heatLines: [(key: String, coords: [(lat: Double, lon: Double)])] = []   // every cached trip in the region, in Heat mode
+    var heatPlaces: [(lat: Double, lon: Double, hours: Double)] = []
+    var heatMax = 0.0                                                           // passes through the busiest cell at this zoom
     var still: [(lat: Double, lon: Double)] = []
     var places: [Place] = []                    // pins visible at the end of the range, in the visible region
     var outlines: [Int64: Set<PlaceCell>] = [:] // their regions, at street zoom only
@@ -51,10 +57,8 @@ struct MapOptions: Equatable {
     var filter = TimeFilter.today
     var customFrom = Date()
     var customTo = Date()
-    var heat = false
     var recorded = false
     var mode = MapMode.streets
-    var byMode = false   // colouring by mode: only then are modes read
 
     func range(now: Date) -> (from: Date, to: Date) {
         let cal = Calendar.current, today = cal.startOfDay(for: now)
@@ -85,9 +89,9 @@ struct MapOptions: Equatable {
     @ObservationIgnored private var liveTask: Task<Void, Never>?
 
     private struct Query: Sendable {
-        var minLat, maxLat, minLon, maxLon, tolerance: Double
+        var minLat, maxLat, minLon, maxLon: Double
         var from, to: Date
-        var heat, recorded, byMode, street, zoomedOut: Bool   // in the order the call passes them
+        var recorded, street, zoomedOut: Bool   // in the order the call passes them
         var mode: MapMode
         var bike: Bool
         var metresPerPoint: Double
@@ -127,8 +131,7 @@ struct MapOptions: Equatable {
         // shortcut: no antimeridian wrap; fine unless the owner maps across 180°
         let q = Query(minLat: max(-90, c.latitude - r.span.latitudeDelta * 0.6), maxLat: min(90, c.latitude + r.span.latitudeDelta * 0.6),
                       minLon: c.longitude - r.span.longitudeDelta * 0.6, maxLon: c.longitude + r.span.longitudeDelta * 0.6,
-                      tolerance: Simplify.step(2 * metresPerPoint),
-                      from: range.from, to: range.to, heat: options.heat, recorded: options.recorded, byMode: options.byMode,
+                      from: range.from, to: range.to, recorded: options.recorded,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5,
                       mode: options.mode, bike: UserDefaults.standard.bool(forKey: "countCycling"), metresPerPoint: metresPerPoint, centerLat: c.latitude, centerLon: c.longitude,
                       places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
@@ -146,11 +149,12 @@ struct MapOptions: Equatable {
 
     private nonisolated static func load(_ diary: Diary, _ q: Query, generation: Int) throws -> MapData {
         var out = MapData(generation: generation)
-        let modesByTrip = q.byMode || q.mode == .fog ? try diary.modes(from: q.from, to: q.to) : [:]   // one read for every trip in range
+        let modesByTrip = q.mode == .fog ? try diary.modes(from: q.from, to: q.to) : [:]   // one read for every trip in range
         var trips: [(coords: [(lat: Double, lon: Double)], speeds: [Double], modes: [TravelMode?], start: Date, segment: Int, rough: Bool)] = []
         var after = q.from.addingTimeInterval(-0.001)   // reads are `t > after`: keep a point exactly at `from`
-        // Zoomed out, trips up to the cache's end come from the trip-line cache (smoothed lines only); points resume where those trips end, never mid-trip.
-        if q.zoomedOut, !q.recorded, let until = try diary.tripLinesUntil() {
+        // Trips up to the cache's end come from the trip-line cache (snapped, 3 m detail) at every zoom, so a line is the same data
+        // whatever the zoom; points resume where those trips end, never mid-trip.
+        if !q.recorded, let until = try diary.tripLinesUntil() {
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: min(until, q.to))
             // shortcut: cached lines carry no rough flag and draw solid; upgrade when stage 3 stores rail-matched lines
             // Cached lines are simplified, so a point has no index in the trip: the whole line takes the trip's longest confident mode.
@@ -162,7 +166,6 @@ struct MapOptions: Equatable {
             after = max(after, min(until, q.to), cached.map(\.end).max() ?? after)
         }
         let tripsAfter = after
-        if q.heat { after = q.from.addingTimeInterval(-0.001) }   // dwell over the whole range
         var ways: [Int64: Way] = [:]   // the streets confident stretches use, each read once
         func add(_ split: [Trip]) throws {
             for trip in split {
@@ -204,7 +207,7 @@ struct MapOptions: Equatable {
                     let run = rough[first] ? max(0, first - 1)..<min(rough.count, e + 1) : first..<e
                     if run.count > 1 || rough.count == 1 {
                         let c = Array(coords[run]), sp = Array(speeds[run]), md = Array(modes[run])
-                        let keep = Simplify.douglasPeucker(c, tolerance: q.tolerance)   // keep only the drawn shape: memory follows the output
+                        let keep = Simplify.douglasPeucker(c, tolerance: TripLines.tolerance)   // fixed detail, never by zoom
                         trips.append((coords: keep.map { c[$0] }, speeds: keep.map { sp[$0] }, modes: keep.map { md[$0] }, start: trip.start, segment: segment, rough: rough[first]))
                     }
                     first = e; segment += 1
@@ -216,7 +219,6 @@ struct MapOptions: Equatable {
         while true {
             try Task.checkCancellation()
             let chunk = try diary.points(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, after: after, to: q.to, limit: budget)
-            if q.heat { out.heat.merge(Heat.grid(chunk, previous: previous), uniquingKeysWith: +); previous = chunk.last ?? previous }
             try add(Trips.split(chunk: chunk.filter { $0.t > tripsAfter }, carry: &carry))
             guard chunk.count == budget, let last = chunk.last else { break }
             after = last.t
@@ -250,13 +252,9 @@ struct MapOptions: Equatable {
             if q.metresPerPoint <= 40 {
                 let covered = try diary.coveredWays(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, bike: q.bike)
                 let ids = Set(covered.map(\.id))
-                for w in covered {
-                    let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)   // zoomed out: less detail, never fewer streets
-                    out.covered.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
-                }
+                for w in covered { out.covered.append((key: "\(w.id)", coords: w.coords)) }   // OSM ways are sparse: drawn as stored
                 for w in try diary.ways(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon) where w.countable && !ids.contains(w.id) {
-                    let keep = Simplify.douglasPeucker(w.coords, tolerance: q.tolerance)
-                    out.unwalked.append((key: "\(w.id)-\(q.tolerance)", coords: keep.map { w.coords[$0] }))
+                    out.unwalked.append((key: "\(w.id)", coords: w.coords))
                 }
             }
             if q.metresPerPoint >= 20 {
@@ -268,19 +266,44 @@ struct MapOptions: Equatable {
                     out.shading.append((key: "\(a.id)-\(p.covered)", rings: a.rings, holes: a.holes, share: p.total > 0 ? Double(p.covered) / Double(p.total) : 0))
                 }
             }
+        } else if q.mode == .heat {
+            // Heat: every cached trip in the region, all time; the busiest cell (4 screen points) sets the scale at this zoom.
+            let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
+            let cell = 4 * q.metresPerPoint, k = cos((q.minLat + q.maxLat) / 2 * .pi / 180)
+            var passes: [Int64: Double] = [:]
+            for l in cached {
+                var seen = Set<Int64>()
+                for (a, b) in zip(l.coords, l.coords.dropFirst()) {
+                    let n = max(1, Int(Geo.distance(a.lat, a.lon, b.lat, b.lon) / cell * 2))
+                    for i in 0...n {
+                        let f = Double(i) / Double(n), lat = a.lat + (b.lat - a.lat) * f, lon = a.lon + (b.lon - a.lon) * f
+                        seen.insert(Int64((lat * 111_320 / cell).rounded(.down)) << 32 | Int64((lon * 111_320 * k / cell).rounded(.down)) & 0xFFFF_FFFF)
+                    }
+                }
+                for c in seen { passes[c, default: 0] += 1 }
+                let c = l.coords.map { (lat: $0.lat, lon: $0.lon) }
+                out.heatLines.append(("h\(l.start.timeIntervalSince1970)", Simplify.douglasPeucker(c, tolerance: q.metresPerPoint / 2).map { c[$0] }))
+            }
+            out.heatMax = passes.values.max() ?? 0
+            out.heatPlaces = q.places.compactMap { p in p.pin.map { (lat: $0.lat, lon: $0.lon, hours: p.totalSeconds / 3600) } }
         } else {
             // Fog: every cached trip line in the region, all time, plus this period's lines so a trip clears at once.
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
             let modes = cached.isEmpty ? [:] : try diary.modes(from: cached.map(\.start).min()!, to: q.to)
             for l in cached {
-                for (i, st) in Fog.strokes(line: l, modes: modes[l.start] ?? []).enumerated() { out.fog.append(("c\(l.start.timeIntervalSince1970)-\(i)", st)) }
+                for (i, st) in Fog.strokes(line: l, modes: modes[l.start] ?? []).enumerated() {
+                    // Thinned to half a screen point at this zoom: invisible under the soft fog edge, far lighter to draw.
+                    let keep = Simplify.douglasPeucker(st.coords, tolerance: q.metresPerPoint / 2)
+                    out.fog.append(("c\(l.start.timeIntervalSince1970)-\(i)", FogStroke(coords: keep.map { st.coords[$0] }, halfWidth: st.halfWidth)))
+                }
             }
             for st in Fog.circles(places: q.places) { out.fog.append(("p\(st.coords[0].lat),\(st.coords[0].lon)", st)) }
         }
         let lo = q.from == .distantPast ? (trips.map(\.start).min() ?? q.to) : q.from
         let span = max(1, q.to.timeIntervalSince(lo))
         try Task.checkCancellation()
-        for (trip, keep) in zip(trips, Simplify.fit(trips.map(\.coords), tolerance: q.tolerance, budget: budget)) {
+        // shortcut: past the vertex budget lines are thinned by Douglas–Peucker, which can change shapes; upgrade to a global Visvalingam cut if huge ranges show it
+        for (trip, keep) in zip(trips, Simplify.fit(trips.map(\.coords), tolerance: 0, budget: budget)) {
             let coords = trip.coords
             var along = [0.0]
             for (a, b) in zip(keep, keep.dropFirst()) {
@@ -291,11 +314,11 @@ struct MapOptions: Equatable {
             var h = Hasher()   // content and colour: a grown or re-smoothed line gets a new key
             for i in keep { h.combine(coords[i].lat); h.combine(coords[i].lon); h.combine(trip.speeds[i]); h.combine(trip.modes[i]) }
             h.combine(Int(fraction * 64))   // shortcut: date colour in 64 steps, so a live reload keeps old lines; finer only if steps show
-            out.lines.append(MapLine(key: "\(trip.start.timeIntervalSince1970)-\(trip.segment)\(trip.rough ? "r" : "")-\(q.tolerance)-\(h.finalize())",
+            out.lines.append(MapLine(key: "\(trip.start.timeIntervalSince1970)-\(trip.segment)\(trip.rough ? "r" : "")-\(h.finalize())",
                                      rough: trip.rough,
                                      coords: keep.map { coords[$0] }, speeds: keep.map { trip.speeds[$0] }, modes: keep.map { trip.modes[$0] },
                                      locations: along.enumerated().map { total > 0 ? $1 / total : Double($0) / Double(max(1, keep.count - 1)) },
-                                     dateFraction: fraction))
+                                     dateFraction: fraction, importance: Simplify.visvalingam(keep.map { coords[$0] })))
         }
         if q.mode == .fog {
             for l in out.lines where l.coords.count > 1 {
@@ -318,7 +341,6 @@ struct MapScreen: View {
     @State private var loader = MapLoader()
     @AppStorage("recordedLine") private var recordedLine = false
     @AppStorage("lineColour") private var colour = LineColour.plain
-    @AppStorage("hiddenModes") private var hiddenModes = ""   // comma-separated raw values, used only with colour by mode
     @AppStorage("mapMode") private var mode = MapMode.streets
     @AppStorage("satellite") private var satellite = false
     @State private var onScreen = false
@@ -333,22 +355,20 @@ struct MapScreen: View {
     @Environment(\.colorScheme) private var scheme
 
     private var visible: Bool { onScreen && scenePhase == .active }
-    private var hidden: Set<TravelMode> {
-        colour == .mode ? Set(hiddenModes.split(separator: ",").compactMap { TravelMode(rawValue: String($0)) }) : []
-    }
 
     var body: some View {
-        TrackMapView(data: loader.data, mode: mode, colour: colour, hidden: hidden, dark: scheme == .dark, satellite: satellite,
+        ZStack {   // the map alone runs full screen; the controls on this stack keep to the safe area
+        TrackMapView(data: loader.data, mode: mode, colour: colour, dark: scheme == .dark, satellite: satellite,
                      visible: visible, onRegion: { region, width in loader.regionChanged(region, width: width) },
                      onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } },
                      target: target, onLayers: { choosingLayers = true })
-        .ignoresSafeArea(edges: .top)
+        .ignoresSafeArea()   // behind the status bar and the tab bar
+        }
         .overlay(alignment: .topLeading) { chip }
         .overlay(alignment: .bottom) { bottom }
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
-        .onChange(of: colour, initial: true) { _, c in loader.options.byMode = c == .mode }   // changes options, which reloads
         .onChange(of: mode, initial: true) { _, m in loader.options.mode = m }
         .onChange(of: loader.options) { loader.reload() }
         .onChange(of: recordedLine, initial: true) { _, r in loader.options.recorded = r }
@@ -359,7 +379,7 @@ struct MapScreen: View {
         .sheet(item: $openPlace, onDismiss: { loader.reload() }) { PlaceSheet(place: $0) }
         .sheet(item: $openCity) { ref in PlaceCard(cityId: ref.id) { rect in openCity = nil; target = rect } }
         .sheet(isPresented: $choosingLayers) {
-            LayersSheet(colour: $colour, hiddenModes: $hiddenModes, satellite: $satellite, heat: $loader.options.heat)
+            LayersSheet(colour: $colour, satellite: $satellite, period: $loader.options.filter, chooseDates: { choosingLayers = false; choosingDates = true })
         }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
@@ -391,9 +411,9 @@ struct MapScreen: View {
                         .foregroundStyle(Color.satsuma)
                         .contentTransition(.numericText(value: h.share))
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 14)
                 .frame(minHeight: 44)
-                .background(Color.card, in: .rect(cornerRadius: 3))
+                .glassEffect(.regular, in: .capsule)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.ink)
@@ -408,45 +428,19 @@ struct MapScreen: View {
     /// Bottom: Streets or Fog, the period of your lines, and today in one line.
     private var bottom: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Picker("Map", selection: $mode) {
-                    ForEach(MapMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Show streets walked or fog")
-                Menu {
-                    Picker("Your lines", selection: $loader.options.filter) {
-                        ForEach(TimeFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    if loader.options.filter == .custom { Button("Choose dates") { choosingDates = true } }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(loader.options.filter.rawValue)
-                        Image(systemName: "chevron.down").font(.caption2)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(minHeight: 44)
-                    .background(Color.inset, in: .rect(cornerRadius: 3))
-                }
-                .foregroundStyle(Color.ink)
-                .accessibilityLabel("Your lines: \(loader.options.filter.rawValue)")
+            Picker("Map", selection: $mode) {
+                ForEach(MapMode.allCases, id: \.self) { m in Label(m.rawValue, systemImage: m.symbol).tag(m) }
             }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Show streets walked, fog or heat")
             if let t = loader.data?.today {
-                HStack(spacing: 6) {
-                    Text(Format.distance(t.distance))
-                    if let steps = t.steps {
-                        Text("·")
-                        Text("\(steps.formatted()) steps")
-                    }
-                    if t.newStreets > 0 {
-                        Text("·")
-                        Text("+\(t.newStreets) new \(t.newStreets == 1 ? "street" : "streets")")
-                            .foregroundStyle(Color.satsuma)
-                            .fontWeight(.semibold)
-                    }
+                HStack(alignment: .firstTextBaseline, spacing: 22) {
+                    stat(Format.distance(t.distance), "today")
+                    if let steps = t.steps { stat(steps.formatted(), "steps") }
+                    if t.newStreets > 0 { stat("+\(t.newStreets)", t.newStreets == 1 ? "new street" : "new streets", accent: true) }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Color.muted)
                 }
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(Color.ink)
                 .accessibilityElement(children: .combine)
                 .frame(minHeight: 44, alignment: .leading)
                 .accessibilityLabel("Today")
@@ -456,9 +450,19 @@ struct MapScreen: View {
                 .onTapGesture { openToday = true }
             }
         }
-        .padding(12)
-        .background(Color.card, in: .rect(cornerRadius: 3))
-        .padding(8)
+        .padding(14)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    /// A number over its caption, as in the You tab's facts.
+    private func stat(_ value: String, _ caption: String, accent: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value).font(.display(20, relativeTo: .title3)).foregroundStyle(accent ? Color.satsuma : Color.ink)
+                .monospacedDigit().lineLimit(1)
+            Text(caption).font(.caption).foregroundStyle(Color.muted).lineLimit(1)
+        }
     }
 
     private var dates: some View {

@@ -33,9 +33,4 @@ public enum MapColors {
         for s in stretches where s.confidence >= TravelModes.confident { total[s.mode, default: 0] += s.end.timeIntervalSince(s.start) }
         return total.max { $0.value < $1.value || ($0.value == $1.value && $0.key.rawValue > $1.key.rawValue) }?.key
     }
-
-    public static func heatAlpha(_ seconds: Double, max maxSeconds: Double) -> Double {
-        guard maxSeconds > 0 else { return 0.85 }
-        return min(0.85, 0.15 + 0.7 * log(1 + seconds) / log(1 + maxSeconds))
-    }
 }

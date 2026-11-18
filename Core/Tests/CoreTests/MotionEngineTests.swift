@@ -74,7 +74,7 @@ final class MotionEngineTests: XCTestCase {
         XCTAssertEqual(f.radius, 20)
         XCTAssert(r.commands.contains(.stopRecording))
         XCTAssert(r.commands.contains(.armGeofence(Fence(lat: f.lat, lon: f.lon, radius: 200))))
-        XCTAssert(r.commands.contains(.scheduleSpotCheck(after: 30)))
+        XCTAssert(r.commands.contains(.scheduleSpotCheck(after: 15)))   // a fresh stop away from a known place
         XCTAssertFalse(r.commands.contains(.setKeepAlive(false)))
         XCTAssertEqual(stillPoints(r.commands), [FilteredPoint(t: at(s), lat: f.lat, lon: f.lon, rawLat: f.lat, rawLon: f.lon,
                                                                 hAcc: 20, speed: 0, kind: .still)])
@@ -304,10 +304,11 @@ final class MotionEngineTests: XCTestCase {
     }
 
     func testRaisedThresholdIgnoresWalkingCorroboration() throws {
+        // After the first 15 min of the stop, when the step backoff applies.
         var (e, s, _) = try stillEngine()
         var rng = SeededRandom(seed: 25)
-        _ = wander(&e, at: s + 30, steps: 15, rng: &rng)                      // threshold 50
-        let t = s + 300
+        _ = wander(&e, at: s + 930, steps: 15, rng: &rng)                      // threshold 50
+        let t = s + 1200
         XCTAssertEqual(send(&e, .activity(.walking, confident: true), t), [])
         XCTAssertEqual(send(&e, .steps(10), t + 20), [])
         XCTAssertEqual(e.state, .still)
@@ -376,7 +377,7 @@ final class MotionEngineTests: XCTestCase {
     func testWanderStepThresholdRises() throws {
         var (e, s, _) = try stillEngine()
         var rng = SeededRandom(seed: 22)
-        var t = s + 30
+        var t = s + 930   // after the first 15 min of the stop
         _ = wander(&e, at: t, steps: 15, rng: &rng); t += 100
         XCTAssertEqual(send(&e, .steps(49), t), []); t += 10
         _ = wander(&e, at: t, steps: 50, rng: &rng); t += 100
@@ -384,6 +385,16 @@ final class MotionEngineTests: XCTestCase {
         _ = wander(&e, at: t, steps: 150, rng: &rng); t += 100
         XCTAssertEqual(send(&e, .steps(149), t), []); t += 10
         _ = wander(&e, at: t, steps: 150, rng: &rng)
+    }
+
+    func testShortStopWakesOn15Steps() throws {
+        // A wander-return in the first 15 min of a stop keeps the threshold at 15: the next walk away wakes at once.
+        var (e, s, _) = try stillEngine()
+        var rng = SeededRandom(seed: 24)
+        _ = wander(&e, at: s + 30, steps: 15, rng: &rng)
+        XCTAssertEqual(e.state, .still)
+        send(&e, .steps(15), s + 200)
+        XCTAssertEqual(e.state, .moving)
     }
 
     func testLeavingFenceResetsThreshold() throws {
@@ -481,7 +492,7 @@ final class MotionEngineTests: XCTestCase {
         var rng = SeededRandom(seed: 41)
         var steps = 0, gpsOn = 0.0, out: [Command] = []
         for i in 1...300 {
-            let t = s + Double(i), before = e.state
+            let t = s + 900 + Double(i), before = e.state   // after the first 15 min of the stop
             steps += 1
             if i % 5 == 0 { out += send(&e, .steps(steps), t); out += send(&e, .walked(Double(steps) * 0.7), t) }
             if e.state != .still {
@@ -522,13 +533,14 @@ final class MotionEngineTests: XCTestCase {
     }
 
     func testBackoffResetsAfter30MinRest() throws {
+        // After the first 15 min of the stop, when the step backoff applies.
         var (e, s, _) = try stillEngine()
         var rng = SeededRandom(seed: 43)
-        _ = wander(&e, at: s + 30, steps: 15, rng: &rng)
-        _ = wander(&e, at: s + 130, steps: 50, rng: &rng)                     // threshold 150, Still again by s + 250
-        XCTAssertEqual(send(&e, .steps(15), s + 400), [])
-        for t in stride(from: s + 430, through: s + 2050, by: 300) { send(&e, .tick, t) }
-        send(&e, .steps(30), s + 2060)
+        _ = wander(&e, at: s + 930, steps: 15, rng: &rng)
+        _ = wander(&e, at: s + 1030, steps: 50, rng: &rng)                     // threshold 150, Still again by s + 1150
+        XCTAssertEqual(send(&e, .steps(15), s + 1300), [])
+        for t in stride(from: s + 1330, through: s + 2950, by: 300) { send(&e, .tick, t) }
+        send(&e, .steps(30), s + 2960)
         XCTAssertEqual(e.state, .moving)
     }
 
@@ -538,22 +550,25 @@ final class MotionEngineTests: XCTestCase {
         var (e, s, entry) = try stillEngine()
         var delays = scheduled(entry)
         var t = s
-        for _ in 0..<5 {
-            t += delays.last ?? 30
+        while t < s + 1800 {
+            t += delays.last ?? 15
             XCTAssertEqual(send(&e, .spotCheckDue, t), [.startSpotCheck])
             t += 20
             let out = send(&e, .spotCheckEnded, t)
             XCTAssert(out.contains(.stopSpotCheck))
             delays += scheduled(out)
         }
-        XCTAssertEqual(delays, [30, 60, 120, 240, 300, 300])
+        // Every 15 s for the first 15 min of the stop, then the old doubling from 30.
+        let fresh = delays.prefix { $0 == 15 }
+        XCTAssertGreaterThanOrEqual(fresh.count, 20)
+        XCTAssertEqual(Array(delays.dropFirst(fresh.count).prefix(4)), [30, 60, 120, 240])
 
         send(&e, .geofenceExit, t + 1)                                       // leave, stop somewhere else
         var rng = SeededRandom(seed: 15)
         let stand = (2...140).map { standing(t + Double($0), north: 500, east: 168, rng: &rng) }
         let r = feed(&e, stand)
         XCTAssertNotNil(r.stillAt)
-        XCTAssertEqual(scheduled(r.commands), [30])
+        XCTAssertEqual(scheduled(r.commands), [15])
     }
 
     func testStillPointEveryFiveMinutes() throws {

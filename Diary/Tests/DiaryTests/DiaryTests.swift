@@ -698,7 +698,7 @@ final class DiaryTests: XCTestCase {
         _ = try Diary(path: path)
         let tables = try DatabaseQueue(path: path).read { try String.fetchSet($0, sql: "SELECT name FROM sqlite_master WHERE type = 'table'") }
         // Borders and progress are caches: downloaded and recomputed again after a restore, never merged.
-        let rebuilt = ["area", "areaTile", "areaProgress", "streetCovered"]
+        let rebuilt = ["area", "areaTile", "areaProgress", "streetCovered", "route", "routeTile"]
         XCTAssertEqual(tables.subtracting(Diary.mergedTables + rebuilt + ["event", "meta", "grdb_migrations", "sqlite_sequence"]), [])
     }
 
@@ -727,5 +727,61 @@ final class DiaryTests: XCTestCase {
         XCTAssertEqual(try diary.newStreets(from: t, to: t + 2 * 86_400, bike: false), 2)
         try diary.saveProgress([], covered: [:], bike: false)
         XCTAssertTrue(try diary.areaProgress(bike: false).isEmpty)
+    }
+
+    func testReplaceTripLineTouchesOnlyThatTrip() throws {
+        let diary = try Diary(path: tempPath())
+        func line(_ start: Double, _ lat: Double) -> TripLine {
+            TripLine(start: Date(timeIntervalSince1970: start), end: Date(timeIntervalSince1970: start + 60), minLat: lat, maxLat: lat,
+                     minLon: 5, maxLon: 5, distance: 100, coords: [(lat, 5, 1), (lat, 5.001, 1)])
+        }
+        try diary.saveTripLines([line(0, 52), line(1000, 52)], replacingFrom: .distantPast)
+        XCTAssertTrue(try diary.replaceTripLine(line(0, 53)))
+        XCTAssertFalse(try diary.replaceTripLine(line(5000, 53)))   // not cached: nothing written
+        let all = try diary.tripLines(from: .distantPast, to: .distantFuture)
+        XCTAssertEqual(all.map(\.minLat), [53, 52])
+    }
+
+    func testRoutesRoundTripAndResolveAsWays() throws {
+        let diary = try Diary(path: tempPath())
+        let r = Route(id: 7, mode: .train, stops: [Route.Stop(id: 11, lat: 52, lon: 5), Route.Stop(id: 13, lat: 52, lon: 5.2)],
+                      path: [(52, 5), (52, 5.1), (52, 5.2)])
+        let tile = Tile(lat: 52, lon: 5.05)
+        XCTAssertFalse(try diary.hasRoutes(tile))
+        try diary.saveRoutes([r], tile: tile)
+        XCTAssertTrue(try diary.hasRoutes(tile))
+        XCTAssertEqual(try diary.routes(minLat: 51.9, maxLat: 52.1, minLon: 5.05, maxLon: 5.06), [r])
+        XCTAssertEqual(try diary.routes(ids: [7, 8]), [r])
+        let ways = try diary.ways(ids: [-7])
+        XCTAssertEqual(ways.map(\.id), [-7])
+        XCTAssertEqual(ways.first?.kind, .rail)
+        XCTAssertEqual(ways.first?.coords.count, 3)
+    }
+
+    func testDeleteRecordsRemovesOnlyThatRange() throws {
+        let diary = try Diary(path: tempPath())
+        func p(_ t: Double) -> FilteredPoint {
+            FilteredPoint(t: Date(timeIntervalSince1970: t), lat: 52, lon: 5, rawLat: 52, rawLon: 5, hAcc: 5, speed: 1, kind: .moving)
+        }
+        try diary.append([p(100), p(200), p(86_500), p(86_600)])
+        func line(_ s: Double, _ e: Double) -> TripLine {
+            TripLine(start: Date(timeIntervalSince1970: s), end: Date(timeIntervalSince1970: e), minLat: 52, maxLat: 52, minLon: 5, maxLon: 5,
+                     distance: 10, coords: [(52, 5, 1), (52, 5.001, 1)])
+        }
+        try diary.saveTripLines([line(100, 200), line(86_500, 86_600)], replacingFrom: .distantPast)
+        try diary.saveMatches(tripStart: Date(timeIntervalSince1970: 100), [],
+                              modes: [ModeStretch(seq: 0, mode: .walk, confidence: 1, start: Date(timeIntervalSince1970: 100), end: Date(timeIntervalSince1970: 200))])
+        let home = Place(id: 1, name: "Secret", cells: [PlaceGrid.cell(lat: 52, lon: 5): 3600], updatedAt: Date(timeIntervalSince1970: 0),
+                         lastVisit: Date(timeIntervalSince1970: 300), totalSeconds: 3600, visits: 1, isCandidate: false)
+        try diary.savePlaces([home], removing: [])
+        try diary.saveVisits([Visit(start: Date(timeIntervalSince1970: 300), end: Date(timeIntervalSince1970: 4000), placeId: 1)])
+
+        let n = try diary.deleteRecords(from: Date(timeIntervalSince1970: 0), to: Date(timeIntervalSince1970: 86_400), days: ["1970-01-01"])
+        XCTAssertEqual(n, 2)
+        XCTAssertEqual(try diary.points(from: .distantPast, to: .distantFuture).map(\.t.timeIntervalSince1970), [86_500, 86_600])
+        XCTAssertEqual(try diary.tripLines(from: .distantPast, to: .distantFuture).map(\.start.timeIntervalSince1970), [86_500])
+        XCTAssertTrue(try diary.modes(tripStart: Date(timeIntervalSince1970: 100)).isEmpty)
+        XCTAssertTrue(try diary.places().isEmpty)                       // known only from the deleted day
+        XCTAssertEqual(try diary.meta("coverageDirty"), "1")
     }
 }

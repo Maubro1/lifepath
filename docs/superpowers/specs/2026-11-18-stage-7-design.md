@@ -1,71 +1,68 @@
 # Stage 7: honest transit, steady map, real heat
 
-Owner requests of 18 November 2026 after using v0.8.0, with the research behind each answer.
+Owner requests of 18 November 2026 after using v0.8.0. Evidence: `reports/LifePath stage 7 techniques.md` (six researched sections, notes in `research_notes/LifePath stage 7 techniques/`).
 
 ## 1. Travel modes become internal
 
-**Request.** The current technique cannot reliably tell modes apart; the owner does not need modes in lines or stats.
+Modes leave the interface: no colour by mode, no mode bar in You, no mode squares in the day story (trips read "Trip · 14 min · 6,1 km", walks "Walk"). They stay as an internal signal for fog width, the network a trip is snapped to, and the streets-walked rules.
 
-**Design.** Modes stay as an internal signal (fog width, which network a trip is snapped to, streets-walked rules) and leave the interface: no "colour by mode", no mode bar in You, no mode squares in the day story (trips read "Trip · 14 min · 6,1 km", walks "Walk"). A vehicle stretch is classified once as a whole, after the 30 s windows, from:
-- **Top speed**: the 95th percentile of its speeds, not the mean. Research uses the 95th percentile because a single maximum is a glitch and a mean is dragged down by traffic lights and stations ([Dabiri 2018](https://vtechworks.lib.vt.edu/bitstream/10919/86845/1/Dabiri_S_T_2018.pdf), [TKDE 2020](https://dmkd.cs.vt.edu/papers/TKDE20.pdf)).
-- **Signal**: the share of rough fixes and the median accuracy. Cars, buses and trains are metal boxes; a train is the strongest Faraday cage, a car the weakest.
-- **Route evidence** (section 3), which overrides speed when it is clear.
+**How a trip is classified** (report §1):
+1. **Cut at walking.** Points below 1.8 m/s and 0.6 m/s² are possible walk points; the start and end of each walk run are the candidate mode changes (Geolife). Car, bus and bike are followed by walking 95–98% of the time, so a vehicle-to-vehicle change without walking in between is penalised.
+2. **Gate by P95 speed**, the owner's top-speed idea in its robust form: the 95th percentile, never the maximum (a maximum is one GPS spike; Geolife measured raw top speed as among the weakest features). Below ~8 km/h walk; ~8–35 km/h with CoreMotion cycling and a low stop rate bike; above ~35 km/h motorised. Starting values, tuned on the owner's own days.
+3. **Motorised pieces are decided by the map**, which adds about 17 points of accuracy over GPS alone (Stenneth): a fit to a rail, metro or tram route between two stations is that mode (section 3); dwells at mapped bus stops plus a bus-route fit is bus; anything else on roads is car. Stop rate, heading-change rate and speed-change rate (Geolife's strongest features) and CoreMotion's activity feed the score.
+4. **Signal loss is a soft hint with a check** (the owner's Faraday-cage idea; physically sound, metallised train glazing costs 20–30 dB, but iOS hides signal strength and no study measured it on phones): a fix gap counts toward train or metro only when both ends are near mapped stations and the speed across the gap fits rail. A gap without stations is a tunnel or a building.
+5. **When nothing clearly wins, the piece is "motorised"**, never a guess (LocoKit's practice).
 
 ## 2. Look, checked by eye
 
-**Rounded corners**: 12 pt cards, 22 pt floating panels, continuous corners (`.rect(cornerRadius:style: .continuous)`), map controls in the system's glass material. Palette and Bricolage stay.
+Rounded, continuous corners: 12 pt cards, 22 pt floating panels concentric with the screen. Map controls are one group of system glass buttons; the bottom panel is a system sheet with a partial detent so the map shows through (iOS 26 Liquid Glass guidance: glass is one thin layer, never stacked, no custom sheet backgrounds). Palette and Bricolage stay. Every glass element is checked with Reduce Transparency and Increase Contrast.
 
-**A visual check that runs without a Mac.** The app gets a demo mode (`-demo` launch argument): a generated diary of a week in Utrecht (walks, a train, a bus, places) and recording off. CI builds for the iOS Simulator, launches each screen in light and dark (`-screen map|fog|heat|you|day|settings`, `-appearance light|dark`), captures `xcrun simctl io booted screenshot`, and pushes the PNGs to a `screens` branch. I fetch that branch and look at every screen before a release. These are real iOS renders, not a mock-up.
+**Visual check.** The app has a demo mode (`-demo`, a generated week in a grid town near Utrecht, nothing recorded). CI builds for the iOS Simulator for commits marked `[screens]`, opens each screen in light and dark (`-screen streets|fog|heat|you|day|settings`), takes `xcrun simctl io` screenshots and pushes them to the `screens` branch. Every UI change is looked at there before release.
 
-**UX walk-through.** Every screen is checked against what someone actually does: glance at today, see progress, explore the map, look back at a day, change a setting. Anything not needed for those goes.
+**UX walk-through.** Each screen is checked against what someone does: glance at the day, see progress, explore the map, look back at a day, change a setting, back up. Anything not serving those goes.
 
-## 3. Trains, trams, metros and buses snap to their route
+## 3. Trains, metros, trams and buses snap to their route
 
-**Request.** A trip that keeps following one railway and starts and ends at stations is a train; snap it to the railway. Same for tram, metro and bus. Worldwide.
+OpenStreetMap route relations (`route=train|subway|light_rail|tram|bus|ferry`) hold, for lines worldwide, their stops in order and their track (report §2).
 
-**Design.** OpenStreetMap public-transport route relations (`route=train|subway|light_rail|tram|bus`) carry, for every line in the world, its stops in order and its track. A vehicle stretch whose start and end each lie near a stop (rail 150 m, tram and metro 80 m, bus 40 m) that are members of the **same route relation, in travel order**, and whose fixes mostly lie near that route's track, is that route. It is drawn as the route's track between those two stops, replacing the recorded line. Without a route match the line keeps its street or rail matching. This uses the PT schema's ordered stop lists ([OSM PT schema notes](https://wiki.openstreetmap.org/wiki/Bus_routes_in_Montr%C3%A9al)) and the stop-sequence matching idea from GTFS work ([AGILE 2016](https://agile-gi.eu/images/conferences/2016/documents/shortpapers/164_Paper_in_PDF.pdf)).
+**Matching.** For a motorised piece: find stations or stops near its first and last fixes (rail 150 m, metro and tram 80 m, bus 40 m); keep route relations that list the boarding stop **before** the alighting stop (this also settles direction); check that the fixes lie near the relation's track between them; where several lines share the track, prefer the one whose intermediate stops the trip passed; if still tied, use the plain railway geometry. The piece is then drawn as the relation's track between the two stops. Across a total signal gap (metro), the path is the track between the stations on either side, timed by distance. With no relation match, rail-like pieces fall back to the existing matching on railway ways. The idea follows pfaedle (most matched paths within 20 m), reimplemented, since its code is GPL.
 
-**Data, worldwide and light.** Per street tile a light index request (`rel[route~...](bbox); out body;`: relation ids, tags and member ids, no shapes), then each relation's track once by id, exactly as borders. Overpass covers the whole planet; nothing is Dutch-specific. Only tile rectangles and relation ids leave the phone.
+**Data, worldwide.** Per street tile, a light index request (relation ids, tags and member ids, no shapes); each chosen relation's geometry once by id; both cached permanently. Only tile rectangles and relation ids leave the phone. Overpass fair use (about 10,000 requests a day) is respected by the same backoff as streets.
 
-Metro: `route=subway` with `railway=station` plus `station=subway`. Tram: `route=tram`. Bus: `route=bus` (bus stops already stored).
+## 4. Short waits never leave gaps
 
-## 4. Standing still is not stopping
+LifePath never uses iOS's automatic pause and keeps its location session alive. Two thresholds (report §3, after Arc's LocoKit2):
+- **Power stop** after 2 minutes inside a 20–100 m circle: precise GPS goes off, but for the first 15 minutes it checks back every 15 seconds (instead of waiting for 15–150 steps), and wakes on the first 15 steps without the step backoff. A traffic light never reaches the stop; a platform wait costs at most seconds of track.
+- **Diary stop** (a visit in the timeline) needs 10 minutes, so platforms, bus stops and crossings never become places.
 
-**Request.** A few minutes standing somewhere must not pause tracking or leave gaps.
-
-**In v0.8.0** tracking went still after 2 minutes inside a 20–100 m fence (6 after a vehicle). **Design.** 5 minutes on foot and 10 after a vehicle (traffic lights, platforms, queues), the common 50 m / 300 s stay-point setting from the literature ([stay-point guide](https://spatiotemporalmovement-com.pages.dev/movement-pattern-extraction-trajectory-analysis/stay-point-detection-algorithms/), [stopdetection](https://search.r-project.org/CRAN/packages/stopdetection/index.html)). While settling, GPS keeps running at the settled accuracy, so a resumed walk has no gap. A known place (home, work) still settles at 2 minutes, because there the stop is expected.
+On departure the first stretch, from the stop to the first moving fix, starts at the moment CoreMotion's history says walking began, and is drawn as inferred.
 
 ## 5. Fog you can see through, lines that hold still
 
-**Fog** is paper at 82% opacity, so streets and water show faintly through it. Cleared bands keep their soft edge.
+**Fog** is paper at 82% opacity, applied inside the drawing (`context.setAlpha`), never through the renderer's `alpha`, which stalled tiles for 38 s on iOS 18. Cleared bands keep a soft edge and a 2 pt minimum width.
 
-**Panning lag** comes from each tile converting every coordinate of every stroke and testing every item. Items now keep their map points from load time and sit in a grid index (1/4096 of the world per cell); a tile draws only its cells' items.
+**No lag.** Items keep their map points from load time and sit in a grid index; a tile draws only its cells' items. One custom renderer per layer, as Apple recommends; no tile overlays (reported flicker on iOS 15–18).
 
-**Lines that keep changing** come from simplifying per zoom level (a new tolerance each zoom gives a new shape) and from switching between point data and the line cache by zoom. Lines are now simplified **once**: Visvalingam–Whyatt gives each vertex the area at which it would be dropped; a tile draws a vertex only if its area is above one screen pixel² at that zoom. The vertex set only shrinks as you zoom out, so lines never jump between shapes ([progressive simplification, Buchin et al.](https://conference.imp.fu-berlin.de/eurocg18/download/paper_13.pdf), [Bostock](https://gist.github.com/mbostock/6245977)). The line cache keeps far more detail (3 m instead of 15 m), and the map uses one source at every zoom.
+**Lines that never change shape.** Visvalingam–Whyatt gives each vertex, once, the area at which it would be dropped (monotone: at least the area of the vertex removed before it). A tile keeps vertices whose area exceeds one screen pixel² at its zoom; the kept set only shrinks as you zoom out, so a line never jumps between shapes. Importances are computed once per trip when its line is cached; trip ends are always kept. The cache keeps 3 m of detail instead of 15 m; the map uses that one source at every zoom. Lines are drawn as centripetal Catmull-Rom curves through the kept vertices.
 
 ## 6. Heat that follows your lines
 
-**Request.** No blocks; follow the shape of the lines with natural gradients.
+Strava's method on one person's data (report §4): trip lines are stroked additively into a low-resolution density buffer per tile (a quarter of the tile per side, with a margin into the neighbours), blurred once, mapped through `log(1 + n)` scaled by the true maximum density of the whole diary at that zoom (computed once per data change, so tiles never show seams), and coloured through a 256-entry ramp: transparent → mustard → satsuma → cherry → a light core on the most-walked routes. Places add a soft glow by time spent.
 
-**Design.** The Strava method: lines are rasterised as paths into a density image per tile, softened, then coloured through a ramp ([Strava engineering](https://medium.com/strava-engineering/the-global-heatmap-now-6x-hotter-23fc01d301de), [FlowingData](https://flowingdata.com/2017/11/21/global-cycling-and-running-heatmap)). Each trip adds a soft line (a wide faint stroke under a narrow brighter one) to a grey density buffer; places add a glow by time spent there. Density maps through `1 − e^(−k·n)` so a tile needs no global maximum, then through the warm ramp: transparent → mustard → satsuma → cherry → near-white core for the most-walked routes. Tiles are drawn once per zoom and kept.
+## 7. The map screen
 
-## 7. The map screen, rethought
+Full-bleed map in Apple's muted style, so LifePath's layers carry the colour.
+- **Top left**: the place chip, "Science Park · 64%", with the rule stated in its card ("212 of 331 streets walked, a street counts at 90% of its length").
+- **Top right**: one glass group with layers, locate and compass.
+- **Bottom**: a system sheet with a small detent: **Streets · Fog · Heat** as a segmented control with icons, and today's line ("3,2 km · 4.120 steps · +2 new streets"); pulled up, it shows today's page.
+- **Layers** holds the rare choices: which of your lines show (Today default … All, Off), one colour or by age, standard or satellite.
 
-What someone wants on the map: where they are, today's line, how far along they are, and a way to switch what the map shows. Everything else can wait one tap.
-
-- **Top left**: the place chip (rounded capsule, glass), unchanged in role.
-- **Top right**: one glass column with layers, locate and compass.
-- **Bottom**: one floating glass panel, 22 pt corners, two rows:
-  - **Streets · Fog · Heat**: three ways to see your life on the map (what you walked, where you have been, where you go most), as a segmented control with icons.
-  - **Today**: "3,2 km · 4.120 steps · +2 new streets", tap for today's page.
-- **Layers sheet** keeps the rare choices: which of your lines show (Today default … All, Off), lines in one colour or by age, standard or satellite.
-
-Heat moves from a toggle to a map mode; the period chip moves into Layers.
+No streaks or badges (they backfire in the studies). Backup stays visible in You with its reminder, since data loss on a new phone is the top complaint about Fog of World.
 
 ## Testing
 
-Core: the stretch classifier (top speed, signal, route evidence), route matching between ordered stops, the settle times, Visvalingam importances and the heat ramp. Visual: the simulator screenshots, light and dark, every screen, inspected before release.
+Core: walk segmentation, the P95 gates and the motorised fallback, route matching between ordered stops (direction, shared track, signal gap), the power-stop and diary-stop thresholds, Visvalingam importances (nested vertex sets), the heat ramp. Visual: the simulator screenshots in light and dark for every screen, inspected before release. On the phone: the owner's health reports, especially platform waits and train rides.
 
 ## Out of scope
 
-Route suggestions, widgets, sharing, iPad.
+Route suggestions, widgets, sharing, iPad, timetable data (GTFS).

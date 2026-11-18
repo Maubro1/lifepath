@@ -40,6 +40,7 @@ public enum MapMatcher {
             let kinds: Set<WayKind> = switch mode {
             case .walk?, .run?, .bike?: [.foot, .cycle, .road]
             case .car?, .bus?: [.road]
+            case .vehicle?: rough ? [.rail, .tram, .ferry] : [.road, .rail, .tram, .ferry]
             case .tram?: [.tram, .rail]
             case .train?: [.rail]
             case .boat?: [.ferry]

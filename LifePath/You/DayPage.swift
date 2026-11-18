@@ -10,12 +10,14 @@ struct DayPage: View {
     @State private var facts: (distance: Double, moving: TimeInterval, steps: Int?, new: Int)?
     @State private var picture: UIImage?
     @State private var renaming: Place?
+    @State private var confirmingDelete = false
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("countCycling") private var countCycling = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        List {
-            Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
                 Button {
                     AppNav.shared.showDay = day
                     AppNav.shared.tab = 0
@@ -25,7 +27,7 @@ struct DayPage: View {
                         if let picture { Image(uiImage: picture).resizable().scaledToFill() }
                     }
                     .frame(height: 220)
-                    .clipShape(.rect(cornerRadius: 3))
+                    .clipShape(.rect(cornerRadius: 22, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Map of this day")
@@ -37,16 +39,37 @@ struct DayPage: View {
                         if let s = f.steps { fact(s.formatted(), "steps") }
                         fact("+\(f.new)", "new streets", accent: f.new > 0)
                     }
+                    .padding(16)
+                    .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
+                }
+                Text("The day").font(.display(22, relativeTo: .title2)).foregroundStyle(Color.ink).padding(.top, 8)
+                if story.isEmpty {
+                    Text("Nothing recorded").font(.subheadline).foregroundStyle(Color.muted)
+                } else {
+                    // The places of the day on a line; the line between two places is the trip (shown on the map above).
+                    VStack(spacing: 0) {
+                        ForEach(Array(story.enumerated()), id: \.offset) { i, item in row(item, first: i == 0, last: i == story.count - 1) }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
                 }
             }
-            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
-            Section("The day") {
-                if story.isEmpty { Text("Nothing recorded").foregroundStyle(Color.muted) }
-                ForEach(Array(story.enumerated()), id: \.offset) { _, item in row(item) }
-            }
+            .padding(16)
         }
+        .background(Color.page)
         .navigationTitle(Format.dayTitle(day))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            Menu {
+                Button("Delete this day", systemImage: "trash", role: .destructive) { confirmingDelete = true }
+            } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel("More")
+        }
+        .confirmationDialog("Delete \(DeletePeriodSheet.label(day, day))?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { Task { _ = await DeleteData.days(day, day); dismiss() } }
+        } message: {
+            Text("Everything recorded on this day goes: its lines, places you stayed, steps. This cannot be undone.")
+        }
         .task(id: scheme) { await load() }
         .sheet(item: $renaming, onDismiss: { Task { await load() } }) { PlaceSheet(place: $0) }
     }
@@ -61,30 +84,40 @@ struct DayPage: View {
         .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder private func row(_ item: StoryItem) -> some View {
+    /// One stop on the timeline: icon on the line, a title, and its times or distance below.
+    private func entry(icon: String, tint: Color, title: String, first: Bool, last: Bool, @ViewBuilder detail: () -> some View) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(spacing: 0) {
+                Rectangle().fill(first ? Color.clear : Color.inset).frame(width: 2, height: 10)
+                Image(systemName: icon).font(.subheadline.weight(.semibold)).foregroundStyle(tint)
+                    .frame(width: 30, height: 30).background(Color.inset, in: .circle)
+                Rectangle().fill(last ? Color.clear : Color.inset).frame(width: 2).frame(maxHeight: .infinity)
+            }
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline).foregroundStyle(Color.ink)
+                detail().font(.subheadline.monospacedDigit()).foregroundStyle(Color.muted)
+            }
+            .padding(.top, 14).padding(.bottom, 12)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private func row(_ item: StoryItem, first: Bool, last: Bool) -> some View {
         switch item {
         case let .stay(name, placeId, start, end):
             Button {
                 renaming = placeId.flatMap { id in PlaceService.shared.places.first { $0.id == id } }
             } label: {
-                HStack {
-                    Text(name).font(.headline).foregroundStyle(Color.ink)
-                    Spacer()
-                    Text(span(start, end)).font(.subheadline.monospaced()).foregroundStyle(Color.muted)
-                }
+                entry(icon: "mappin", tint: Color.satsuma, title: name, first: first, last: last) { Text(span(start, end)) }
+                    .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .disabled(placeId == nil)
             .accessibilityHint(placeId == nil ? "" : "Rename this place")
-        case let .trip(mode, start, end, distance):
-            HStack(spacing: 10) {
-                Rectangle().fill(Color(UIColor(mode.map(Palette.mode) ?? Palette.unsure))).frame(width: 10, height: 10)
-                Text(mode?.label ?? "Travel").foregroundStyle(Color.ink)
-                Spacer()
-                Text("\(Format.duration(end.timeIntervalSince(start))) · \(Format.distance(distance))")
-                    .font(.subheadline.monospaced()).foregroundStyle(Color.muted)
-            }
-            .accessibilityElement(children: .combine)
+        case .trip:
+            EmptyView()   // trips are not listed as text: the map shows them
         }
     }
 
@@ -114,7 +147,7 @@ struct DayPage: View {
         }.value
         guard let read else { return }
         lines = read.0.map { $0.coords.map { (lat: $0.lat, lon: $0.lon) } }
-        story = read.1
+        story = read.1.filter { if case .stay = $0 { true } else { false } }
         facts = (read.2.0, read.2.1, read.2.2, read.2.3)
         picture = await DaySnapshot.image(key: day.formatted(.iso8601.year().month().day()), lines: lines, dark: scheme == .dark,
                                           size: CGSize(width: 360, height: 220))

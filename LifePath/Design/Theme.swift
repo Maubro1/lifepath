@@ -31,13 +31,13 @@ extension Font {
     }
 }
 
-/// A filled paper card: no outline, 3 pt corners.
+/// A filled paper card: no outline, 12 pt continuous corners.
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         content
             .padding(12)
-            .background(Color.card, in: .rect(cornerRadius: 3))
+            .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
     }
 }
 

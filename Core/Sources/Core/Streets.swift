@@ -63,7 +63,7 @@ public enum OSM {
     private struct Doc: Decodable {
         struct El: Decodable {
             struct P: Decodable { var lat: Double; var lon: Double }
-            struct M: Decodable { var type: String; var role: String?; var geometry: [P]? }
+            struct M: Decodable { var type: String; var ref: Int64?; var role: String?; var geometry: [P]?; var lat: Double?; var lon: Double? }
             var type: String; var id: Int64; var lat: Double?; var lon: Double?; var nodes: [Int64]?; var geometry: [P]?; var tags: [String: String]?
             var members: [M]?
         }
@@ -149,6 +149,54 @@ public enum OSM {
             }
         }
         return (areas, missing)
+    }
+
+    /// Public-transport routes touching a tile: relation members only (stop and way ids), no shapes.
+    public static func routeIndexQuery(minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) -> String {
+        let b = "(\(minLat),\(minLon),\(maxLat),\(maxLon))"
+        return "[out:json][timeout:60];rel[\"type\"=\"route\"][\"route\"~\"^(train|subway|light_rail|monorail|tram|bus|trolleybus|ferry)$\"]\(b);out body;"
+    }
+
+    public static func routeGeometryQuery(ids: [Int64]) -> String {
+        "[out:json][timeout:120];rel(id:\(ids.map(String.init).joined(separator: ",")));out geom;"
+    }
+
+    /// Routes with their stops in order and their track joined end to end (oriented from the first stop), and the ids of
+    /// relations whose shape still has to be fetched.
+    public static func parseRoutes(_ data: Data) throws -> (routes: [Route], missing: [Int64]) {
+        var routes: [Route] = [], missing: [Int64] = []
+        for e in try JSONDecoder().decode(Doc.self, from: data).elements where e.type == "relation" {
+            guard let mode = (e.tags?["route"]).flatMap(Route.mode), let members = e.members else { continue }
+            let ways = members.filter { $0.type == "way" }.compactMap(\.geometry)
+            guard !ways.isEmpty || members.contains(where: { $0.lat != nil }) else { missing.append(e.id); continue }
+            func stops(_ roles: (String) -> Bool) -> [Route.Stop] {
+                members.compactMap { m in
+                    guard m.type == "node", let r = m.role, roles(r), let lat = m.lat, let lon = m.lon, let id = m.ref else { return nil }
+                    return Route.Stop(id: id, lat: lat, lon: lon)
+                }
+            }
+            var list = stops { $0.hasPrefix("stop") }
+            if list.isEmpty { list = stops { $0.hasPrefix("platform") } }
+            // Ways in member order, each turned to continue from the end so far.
+            var path: [(lat: Double, lon: Double)] = []
+            func same(_ a: (lat: Double, lon: Double), _ b: (lat: Double, lon: Double)) -> Bool { a.lat == b.lat && a.lon == b.lon }
+            for (k, w) in ways.enumerated() {
+                var c = w.map { (lat: $0.lat, lon: $0.lon) }
+                guard k > 0, let end = path.last else { path = c; continue }
+                if k == 1, !same(end, c[0]), !same(end, c[c.count - 1]), same(path[0], c[0]) || same(path[0], c[c.count - 1]) {
+                    path.reverse()   // the first way pointed away from the second
+                }
+                // Turn each way to continue from the tail; a way that does not touch it is turned by its nearer end.
+                let tail = path[path.count - 1]
+                func d(_ p: (lat: Double, lon: Double)) -> Double { Geo.distance(tail.lat, tail.lon, p.lat, p.lon) }
+                if same(tail, c[c.count - 1]) || (!same(tail, c[0]) && d(c[c.count - 1]) < d(c[0])) { c.reverse() }
+                path += same(tail, c[0]) ? Array(c.dropFirst()) : c
+            }
+            if let s = list.first, let a = path.first, let z = path.last,
+               Geo.distance(s.lat, s.lon, z.lat, z.lon) < Geo.distance(s.lat, s.lon, a.lat, a.lon) { path.reverse() }
+            if list.count >= 2 && path.count >= 2 { routes.append(Route(id: e.id, mode: mode, stops: list, path: path)) }
+        }
+        return (routes, missing)
     }
 
     public static func query(minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) -> String {

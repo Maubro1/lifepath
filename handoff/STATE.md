@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-16 (update this line and the sections below whenever the handoff is refreshed).
+Last updated: 2026-11-19 (update this line and the sections below whenever the handoff is refreshed).
 
 ## Released (installable from GitHub Releases, all pre-releases)
 
@@ -10,6 +10,7 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.9.0-preview.1 | Stage 7: short stops without gaps, lines that keep their shape, see-through warm fog, cumulative line heat, travel modes internal, transit snapped to OSM routes, full-screen map with glass controls, delete chosen days. |
 | v0.8.0-preview.1 | Stage 6 design: two tabs (Map, You); Streets or Fog map that fills up; progress per city and neighbourhood (OSM borders); flicker-free map layers; the owner's study-page look (palette, Bricolage), appearance switch; day pages with map pictures and the day as a story. |
 | v0.7.2-preview.1 | Bus rides no longer read as boat rides (rough fixes, narrow boat speed prior, missing streets). |
 | v0.7.1-preview.1 | Map matching does one route search per starting point instead of one per pair (same results, about 8× less work while matching). |
@@ -22,9 +23,9 @@ Last updated: 2026-11-16 (update this line and the sections below whenever the h
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## Next: phone check of v0.8.0 with the owner
+## Now: stage 7 released as v0.9.0-preview.1, waiting for the owner's phone test
 
-Stage 6 is built from the agreed spec (`docs/superpowers/specs/2026-11-17-stage-6-design.md`), reviewed and released as v0.8.0-preview.1; decisions in `docs/decisions/stage-6.md`. Nothing is checked on the phone yet: ask the owner to try Streets and Fog, the place chip, Light/Dark, a live walk (no blinking), the You tab and a day page, plus a health report. Then the open questions below.
+Stage 7 (spec `docs/superpowers/specs/2026-11-18-stage-7-design.md`, research `reports/LifePath stage 7 techniques.md`, decisions `docs/decisions/stage-7.md`) is built and reviewed: short stops without gaps, lines that keep their shape, see-through fog, line heat, modes internal, glass map controls, transit snapped to OSM routes. The owner approved the screenshots (heat full at 40 passes, fog 3) and the release. Next: wait for their report from the phone. Known: in light mode the cleared fog strips are hard to see at city zoom. Never release a UI change before the owner has seen the screenshots.
 
 ## Questions for the owner (collected overnight, 2026-11-17)
 

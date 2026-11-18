@@ -45,13 +45,4 @@ final class DayStoryTests: XCTestCase {
         XCTAssertEqual(story, [.stay(name: "Home", placeId: 1, start: day, end: day + 3600),
                                .stay(name: "Home", placeId: 1, start: day + 82_800, end: day + 86_400)])
     }
-
-    func testDistanceByMode() {
-        let h = 3600.0
-        let modes = [ModeStretch(seq: 0, mode: .walk, confidence: 0.9, start: day + 8 * h, end: day + 8.25 * h),
-                     ModeStretch(seq: 1, mode: .bus, confidence: 0.9, start: day + 8.25 * h, end: day + 9 * h),
-                     ModeStretch(seq: 0, mode: .bike, confidence: 0.3, start: day + 10 * h, end: day + 11 * h)]
-        let d = DayStory.distanceByMode(lines: [line(8 * h, 9 * h, 4000), line(10 * h, 11 * h, 5000)], modes: modes)
-        XCTAssertEqual(d, [.walk: 1000, .bus: 3000])   // unsure stretches count for no mode
-    }
 }

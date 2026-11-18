@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var movingBackup = false
     @State private var backupError: String?
     @State private var exportingTracks = false
+    @State private var deletingDays = false
     @AppStorage("lastBackup") private var lastBackup: Double = 0   // seconds since 1970; 0 = never
     @AppStorage("appearance") private var appearance: Appearance = .system
     @Environment(\.scenePhase) private var scenePhase
@@ -44,10 +45,10 @@ struct SettingsView: View {
             stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn, notSavingSince: recorder.notSavingSince,
             signingExpiry: expiry, now: now)
         Group {   // pushed from the You tab, inside its navigation stack
-            List {
+            List { Group {
                 Section("Status") {
                     Label(s.headline, systemImage: s.level == .problem ? "exclamationmark.triangle" : s.level == .resting ? "moon" : "checkmark.circle")
-                        .foregroundStyle(s.level == .problem ? .red : s.level == .resting ? .secondary : .green)
+                        .foregroundStyle(s.level == .problem ? Color(UIColor(Palette.cherry)) : s.level == .resting ? Color.muted : Color(UIColor(Palette.mode(.bike))))   // as the You pill
                     if let hint = s.hint { Text(hint) }
                     LabeledContent("Last point", value: time(recorder.lastPoint))
                     LabeledContent("Last location check", value: time(recorder.lastCheckIn))
@@ -128,6 +129,12 @@ struct SettingsView: View {
                     Text("Adds the points from a backup file (for example after reinstalling LifePath). Nothing in this diary is removed.")
                 }
                 Section {
+                    Button("Delete days…", role: .destructive) { deletingDays = true }
+                        .sheet(isPresented: $deletingDays) { DeletePeriodSheet() }
+                } footer: {
+                    Text("Removes everything recorded on the days you choose.")
+                }
+                Section {
                     Button("Export tracks (GPX, GeoJSON, KML)") { exportingTracks = true }
                         .accessibilityHint("Choose a format and a period, then where to save the file")
                         .sheet(isPresented: $exportingTracks) { ExportSheet() }
@@ -144,7 +151,11 @@ struct SettingsView: View {
                     LabeledContent("SideStore refresh due", value: expiry.map { time($0) } ?? "unknown")
                     LabeledContent("Version", value: version)
                 }
+                }
+                .listRowBackground(Color.card)   // paper cards, as everywhere in LifePath
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.page)
             .navigationTitle("Settings")
             .refreshable { refresh() }
             .onAppear { refresh() }
@@ -181,7 +192,7 @@ private struct DiagnosticsView: View {
     @State private var stored: Int?
 
     var body: some View {
-        List {
+        List { Group {
             Section {
                 Toggle("Show recorded line on the map", isOn: $recordedLine)
             } footer: {
@@ -191,7 +202,11 @@ private struct DiagnosticsView: View {
                 LabeledContent("Points today", value: pointsToday.formatted())
                 LabeledContent("Points stored", value: stored?.formatted() ?? "…")
             }
+            }
+            .listRowBackground(Color.card)   // paper cards, as everywhere in LifePath
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.page)
         .navigationTitle("Diagnostics")
         .task {
             guard let diary = Recorder.shared.readDiary else { return }

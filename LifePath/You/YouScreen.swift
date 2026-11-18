@@ -5,18 +5,17 @@ import SwiftUI
 /// Everything about you in one page: status, lifetime numbers, your places, the year, and your days.
 struct YouScreen: View {
     @State private var data: YouData?
-    @State private var period = Period.year
     @State private var onScreen = false
+    @State private var path = NavigationPath()
     @AppStorage("countCycling") private var countCycling = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var scheme
 
-    enum Period: String, CaseIterable { case month = "This month", year = "This year", all = "All time" }
 
     private var visible: Bool { onScreen && scenePhase == .active }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     status
@@ -40,11 +39,17 @@ struct YouScreen: View {
                 await load()
             }
             .navigationDestination(for: Date.self) { DayPage(day: $0) }
+            .navigationDestination(for: String.self) { _ in SettingsView() }
+            .onAppear {
+                // Screenshot mode opens a day page or Settings directly.
+                guard DemoData.active, path.isEmpty else { return }
+                if DemoData.argument("-screen") == "day" { path.append(Calendar.current.startOfDay(for: Date())) }
+                if DemoData.argument("-screen") == "settings" { path.append("settings") }
+            }
         }
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in if v { Task { await load() } } }
-        .onChange(of: period) { Task { await load() } }
         .onChange(of: countCycling) { Task { await load() } }
         .onReceive(NotificationCenter.default.publisher(for: DayService.changed)) { _ in if visible { Task { await load() } } }
     }
@@ -61,8 +66,8 @@ struct YouScreen: View {
             Circle().fill(colour).frame(width: 8, height: 8)
             Text(s.headline).font(.subheadline).foregroundStyle(Color.ink)
         }
-        .padding(.horizontal, 12).frame(minHeight: 36)
-        .background(Color.card, in: .rect(cornerRadius: 3))
+        .padding(.horizontal, 14).frame(minHeight: 36)
+        .background(Color.card, in: .capsule)   // a pill, like the place chip on the map
         .accessibilityElement(children: .combine)
     }
 
@@ -74,7 +79,7 @@ struct YouScreen: View {
             fact(d.life.days.formatted(), "days recorded")
         }
         .padding(16)
-        .background(Color.card, in: .rect(cornerRadius: 3))
+        .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
     }
 
     private func fact(_ value: String, _ caption: String) -> some View {
@@ -107,7 +112,7 @@ struct YouScreen: View {
                     bar(c.share)
                 }
                 .padding(12)
-                .background(Color.card, in: .rect(cornerRadius: 3))
+                .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
                 .accessibilityElement(children: .combine)
             }
         }
@@ -126,17 +131,7 @@ struct YouScreen: View {
 
     private func year(_ d: YouData) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                header("Your year")
-                Spacer()
-                Menu {
-                    Picker("Period", selection: $period) { ForEach(Period.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                } label: {
-                    HStack(spacing: 4) { Text(period.rawValue); Image(systemName: "chevron.down").font(.caption2) }
-                        .font(.subheadline).padding(.horizontal, 10).frame(minHeight: 44)
-                }
-                .foregroundStyle(Color.ink)
-            }
+            header("Your year")
             // 52 weeks, oldest left: empty paper for still weeks, deeper satsuma for more walking.
             let most = max(d.weeks.max() ?? 0, 1)
             HStack(spacing: 2) {
@@ -146,29 +141,9 @@ struct YouScreen: View {
             }
             .accessibilityElement()
             .accessibilityLabel("Walked in \(d.weeks.filter { $0 > 0 }.count) of the last 52 weeks")
-            modeBar(d.byMode)
         }
         .padding(16)
-        .background(Color.card, in: .rect(cornerRadius: 3))
-    }
-
-    @ViewBuilder private func modeBar(_ by: [TravelMode: Double]) -> some View {
-        let total = by.values.reduce(0, +)
-        if total > 0 {
-            let parts = TravelMode.allCases.compactMap { m in by[m].map { (mode: m, share: $0 / total) } }.filter { $0.share > 0.005 }
-            GeometryReader { g in
-                HStack(spacing: 2) {
-                    ForEach(parts, id: \.mode) { p in
-                        Rectangle().fill(Color(UIColor(Palette.mode(p.mode)))).frame(width: max(2, (g.size.width - CGFloat(parts.count * 2)) * p.share))
-                    }
-                }
-            }
-            .frame(height: 18)
-            .accessibilityHidden(true)
-            FlowLegend(parts: parts)
-        } else {
-            Text("No classified trips in this period yet.").font(.subheadline).foregroundStyle(Color.muted)
-        }
+        .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
     }
 
     private func days(_ d: YouData) -> some View {
@@ -195,30 +170,9 @@ struct YouScreen: View {
     private func load() async {
         guard let diary = Recorder.shared.readDiary else { return }
         let bike = countCycling, now = Date(), cal = Calendar.current
-        let from: Date = switch period {
-        case .month: cal.date(byAdding: .month, value: -1, to: now)!
-        case .year: cal.date(byAdding: .year, value: -1, to: now)!
-        case .all: .distantPast
-        }
         data = await Task.detached(priority: .userInitiated) { () -> YouData? in
-            try? YouData.read(diary, bike: bike, from: from, now: now, calendar: cal)
+            try? YouData.read(diary, bike: bike, now: now, calendar: cal)
         }.value ?? data
-    }
-}
-
-/// Mode legend under the bar: a square and a share per mode.
-private struct FlowLegend: View {
-    let parts: [(mode: TravelMode, share: Double)]
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), alignment: .leading)], alignment: .leading, spacing: 6) {
-            ForEach(parts, id: \.mode) { p in
-                HStack(spacing: 6) {
-                    Rectangle().fill(Color(UIColor(Palette.mode(p.mode)))).frame(width: 10, height: 10)
-                    Text("\(p.mode.label) \(p.share.formatted(.percent.precision(.fractionLength(0))))").font(.caption).foregroundStyle(Color.ink)
-                }
-                .accessibilityElement(children: .combine)
-            }
-        }
     }
 }
 
@@ -236,13 +190,18 @@ private struct DayRow: View {
                 if let picture { Image(uiImage: picture).resizable().scaledToFill() }
             }
             .frame(width: 64, height: 64)
-            .clipShape(.rect(cornerRadius: 3))
+            .clipShape(.rect(cornerRadius: 12, style: .continuous))
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(Format.dayTitle(date)).font(.headline).foregroundStyle(Color.ink)
-                Text(day.moving > 0 ? "\(Format.distance(day.distance)) · \(Format.duration(day.moving))" + (day.steps.map { " · \($0.formatted()) steps" } ?? "")
-                     : "No trips" + (day.steps.map { " · \($0.formatted()) steps" } ?? ""))
-                    .font(.subheadline.monospacedDigit()).foregroundStyle(Color.muted)
+                HStack(spacing: 14) {
+                    if day.moving > 0 {
+                        Text(Format.distance(day.distance))
+                        Text(Format.duration(day.moving))
+                    } else { Text("No trips") }
+                    if let s = day.steps { Text("\(s.formatted()) steps") }
+                }
+                .font(.subheadline.monospacedDigit()).foregroundStyle(Color.muted)
                 if day.new > 0 {
                     Text("+\(day.new) new \(day.new == 1 ? "street" : "streets")").font(.subheadline.weight(.semibold)).foregroundStyle(Color.satsuma)
                 }
@@ -250,7 +209,7 @@ private struct DayRow: View {
             Spacer(minLength: 0)
         }
         .padding(10)
-        .background(Color.card, in: .rect(cornerRadius: 3))
+        .background(Color.card, in: .rect(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens this day")
         .task(id: dark) {
@@ -272,10 +231,9 @@ struct YouData: Sendable {
     var newThisWeek: Int
     var cities: [(name: String, share: Double)]
     var weeks: [Double]                 // metres walked per week, 52, oldest first
-    var byMode: [TravelMode: Double]
     var months: [(title: String, days: [Day])]
 
-    static func read(_ diary: Diary, bike: Bool, from: Date, now: Date, calendar cal: Calendar) throws -> YouData {
+    static func read(_ diary: Diary, bike: Bool, now: Date, calendar cal: Calendar) throws -> YouData {
         let progress = try diary.areaProgress(bike: bike), names = try diary.areaNames()
         let cities = progress.filter { names[$0.areaId]?.level == 8 && $0.total > 0 }
             .map { (name: names[$0.areaId]!.name, share: Double($0.covered) / Double($0.total), covered: $0.covered) }
@@ -292,7 +250,6 @@ struct YouData: Sendable {
             let back = cal.dateComponents([.weekOfYear], from: cal.dateInterval(of: .weekOfYear, for: date)?.start ?? date, to: weekStart).weekOfYear ?? 99
             if (0..<52).contains(back) { weeks[51 - back] += d.summary.walked }
         }
-        let lines = try diary.tripLines(from: from, to: now), modes = try diary.modes(from: from, to: now).values.flatMap { $0 }
         var months: [(title: String, days: [Day])] = []
         for d in days {
             guard let date = Format.date(d.summary.day) else { continue }
@@ -303,7 +260,6 @@ struct YouData: Sendable {
             if months.last?.title == title { months[months.count - 1].days.append(day) } else { months.append((title, [day])) }
         }
         return YouData(life: try diary.lifeStats(), streets: try diary.streetsWalked(bike: bike)?.covered ?? 0, neighbourhoods: explored,
-                       newThisWeek: try diary.newStreets(from: weekStart, to: .distantFuture, bike: bike), cities: cities, weeks: weeks,
-                       byMode: DayStory.distanceByMode(lines: lines, modes: modes), months: months)
+                       newThisWeek: try diary.newStreets(from: weekStart, to: .distantFuture, bike: bike), cities: cities, weeks: weeks, months: months)
     }
 }

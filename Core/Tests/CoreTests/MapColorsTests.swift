@@ -22,12 +22,6 @@ final class MapColorsTests: XCTestCase {
         XCTAssertEqual(MapColors.filledSpeeds([-1, -1]), [0, 0])
     }
 
-    func testHeatAlpha() {
-        XCTAssertEqual(MapColors.heatAlpha(0, max: 100), 0.15, accuracy: 1e-9)
-        XCTAssertEqual(MapColors.heatAlpha(100, max: 100), 0.85, accuracy: 1e-9)
-        XCTAssertEqual(MapColors.heatAlpha(5, max: 0), 0.85, accuracy: 1e-9)
-    }
-
     func testPointModesAndDominant() {
         func d(_ i: Int) -> Date { Date(timeIntervalSince1970: Double(i) * 10) }
         let s = [ModeStretch(seq: 0, mode: .walk, confidence: 0.9, start: d(0), end: d(1)),

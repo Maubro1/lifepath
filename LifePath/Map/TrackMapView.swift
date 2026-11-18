@@ -2,11 +2,6 @@ import Core
 import MapKit
 import SwiftUI
 
-extension TravelMode {
-    var color: UIColor { UIColor(Palette.mode(self)) }
-    var label: String { rawValue.capitalized }
-}
-
 /// A learned place's pin; the marker size follows the time spent there.
 final class PlaceAnnotation: MKPointAnnotation {
     var placeId: Int64 = 0
@@ -17,7 +12,6 @@ struct TrackMapView: UIViewRepresentable {
     let data: MapData?
     let mode: MapMode
     let colour: LineColour
-    let hidden: Set<TravelMode>   // modes switched off in the legend
     let dark: Bool
     let satellite: Bool
     let visible: Bool
@@ -28,13 +22,21 @@ struct TrackMapView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    static var standard: MKStandardMapConfiguration {
+        let c = MKStandardMapConfiguration(emphasisStyle: .muted)
+        c.pointOfInterestFilter = .excludingAll
+        return c
+    }
+
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
         map.delegate = context.coordinator
         map.pointOfInterestFilter = .excludingAll
+        map.preferredConfiguration = Self.standard   // muted, so LifePath's own layers carry the colour
         // The three layers live as long as the map; only their content changes.
         let c = context.coordinator
         map.addOverlay(c.streets, level: .aboveRoads)
+        map.addOverlay(c.heat, level: .aboveRoads)
         map.addOverlay(c.fog, level: .aboveLabels)
         map.addOverlay(c.lines, level: .aboveLabels)
         map.showsCompass = false   // the column below owns the compass, so it never overlaps the locate button
@@ -47,13 +49,22 @@ struct TrackMapView: UIViewRepresentable {
         let compass = MKCompassButton(mapView: map)
         compass.compassVisibility = .adaptive
         for v in [layers, locate] as [UIView] {
-            v.backgroundColor = UIColor(Palette.card)
             v.tintColor = UIColor(Palette.satsuma)
-            v.layer.cornerRadius = 3
             v.widthAnchor.constraint(equalToConstant: 44).isActive = true
             v.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
-        let column = UIStackView(arrangedSubviews: [layers, locate, compass])
+        // Layers and locate share one glass capsule (system Liquid Glass); the compass sits below it when the map is rotated.
+        let pair = UIStackView(arrangedSubviews: [layers, locate])
+        pair.axis = .vertical
+        let glass = UIVisualEffectView(effect: UIGlassEffect())
+        glass.layer.cornerRadius = 22; glass.layer.cornerCurve = .continuous; glass.clipsToBounds = true
+        pair.translatesAutoresizingMaskIntoConstraints = false
+        glass.contentView.addSubview(pair)
+        NSLayoutConstraint.activate([
+            pair.topAnchor.constraint(equalTo: glass.contentView.topAnchor), pair.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
+            pair.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor), pair.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
+        ])
+        let column = UIStackView(arrangedSubviews: [glass, compass])
         column.axis = .vertical; column.spacing = 8; column.alignment = .center
         column.translatesAutoresizingMaskIntoConstraints = false
         map.addSubview(column)
@@ -73,15 +84,12 @@ struct TrackMapView: UIViewRepresentable {
             map.setVisibleMapRect(target, edgePadding: UIEdgeInsets(top: 60, left: 20, bottom: 160, right: 20), animated: true)
         }
         if (map.preferredConfiguration is MKImageryMapConfiguration) != satellite {
-            let standard = MKStandardMapConfiguration()
-            standard.pointOfInterestFilter = .excludingAll   // as makeUIView
-            map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : standard
+            map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : Self.standard
         }
-        guard let data, data.generation != c.shownGeneration || colour != c.shownColour || dark != c.shownDark || hidden != c.shownHidden else { return }
+        guard let data, data.generation != c.shownGeneration || colour != c.shownColour || dark != c.shownDark else { return }
         c.shownGeneration = data.generation
         c.shownColour = colour
         c.shownDark = dark
-        c.shownHidden = hidden
         func keyed(_ items: [(key: String, coords: [(lat: Double, lon: Double)])]) -> [(key: String, rect: MKMapRect, coords: [(lat: Double, lon: Double)])] {
             items.map { ($0.key, mapRect($0.coords, pad: 2000), $0.coords) }
         }
@@ -89,13 +97,10 @@ struct TrackMapView: UIViewRepresentable {
             walked: keyed(data.covered), unwalked: keyed(data.unwalked),
             shading: data.shading.map { ($0.key, mapRect($0.rings.flatMap { $0 }, pad: 0), $0.rings, $0.holes, $0.share) }, dark: dark) : nil)
         c.fogRenderer.set(mode == .fog ? FogContent(data.fog, dark: dark) : nil)
-        c.linesRenderer.set(LinesContent(data.lines, colour: colour, hidden: hidden, edged: mode == .streets, dark: dark))
+        c.heatRenderer.set(mode == .heat ? HeatContent(data.heatLines, places: data.heatPlaces, max: data.heatMax, dark: dark) : nil)
+        c.linesRenderer.set(LinesContent(data.lines, colour: colour, edged: mode == .streets, dark: dark))
         // Overlays are keyed: unchanged ones stay on the map, new ones are added before stale ones go, so nothing blinks.
         var wanted: [(key: String, level: MKOverlayLevel, make: () -> MKOverlay)] = []
-        if !data.heat.isEmpty {   // under the labels, so lines always draw on top
-            let heat = data.heat
-            wanted.append(("h\(heat.hashValue)", .aboveRoads, { HeatOverlay(heat) }))
-        }
         for (id, cells) in data.outlines {
             wanted.append(("o\(id)-\(cells.hashValue)-\(dark)", .aboveRoads, {
                 MKMultiPolygon(cells.map { c in   // one square per 5 m cell; one shape, so the fill has no seams
@@ -139,8 +144,8 @@ struct TrackMapView: UIViewRepresentable {
         var shownColour = LineColour.plain
         var shownDark = false
         var flown: MKMapRect?
-        var shownHidden: Set<TravelMode> = []
-        let streets = LayerOverlay(), fog = LayerOverlay(), lines = LayerOverlay()
+        let streets = LayerOverlay(), fog = LayerOverlay(), lines = LayerOverlay(), heat = LayerOverlay()
+        lazy var heatRenderer = LayerRenderer(overlay: heat)
         lazy var streetsRenderer = LayerRenderer(overlay: streets)
         lazy var fogRenderer = LayerRenderer(overlay: fog)
         lazy var linesRenderer = LayerRenderer(overlay: lines)
@@ -189,7 +194,7 @@ struct TrackMapView: UIViewRepresentable {
                 r.fillColor = UIColor(Palette.text).withAlphaComponent(0.12)
                 return r
             }
-            if let heat = overlay as? HeatOverlay { return HeatRenderer(heat) }
+            if overlay === heat { return heatRenderer }
             if let circle = overlay as? MKCircle {
                 let r = MKCircleRenderer(circle: circle)
                 r.fillColor = UIColor(Palette.muted)

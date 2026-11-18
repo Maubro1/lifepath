@@ -313,6 +313,12 @@ import UIKit
     /// The open diary (nil before first unlock) for the map and the smoothing service (which writes only the derived cache).
     var readDiary: Diary? { diary }
 
+    /// Screenshot mode: a generated diary, no recording, no services.
+    func openDemo() {
+        diary = try? DemoData.make()
+        PlaceService.shared.places = (try? diary?.places()) ?? []
+    }
+
     private func openDiary() {
         do { diary = try Diary(path: Diary.defaultPath()); diaryError = nil; resume() } catch {
             diaryError = error.localizedDescription

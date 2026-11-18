@@ -60,6 +60,7 @@ public struct MotionEngine: Sendable {
     private var lastFixAt = Date.distantPast       // last accepted fix or trusted wake fix
     private var stopLogged = false                 // "still unconfirmed" logged for the current unconfirmed stretch
     private var spotDelay: TimeInterval = 30
+    private var stopStart: Date?   // a real stop's start; a wander-return does not move it
     private var spotChecking = false
     private var stillByFallback = false       // the current/last Still came from the no-fix fallback
     private var needFixAfterWake = false      // woke from a fallback Still: no fix within 2 min returns to Still
@@ -199,6 +200,12 @@ public struct MotionEngine: Sendable {
         Geo.distance(s.lat, s.lon, f.lat, f.lon) - s.hAcc > f.radius && place?.contains(lat: s.lat, lon: s.lon, hAcc: s.hAcc) != true
     }
 
+    /// The first 15 min of a stop away from a known place: check back every 15 s and wake on 15 steps, so a short wait
+    /// (a platform, a queue) never leaves a gap when the walk resumes. Known places keep the slower checks and step backoff.
+    private func fresh(_ now: Date) -> Bool {
+        place == nil && stopStart.map { now.timeIntervalSince($0) < 900 } == true
+    }
+
     /// Still points sit on the pin at a known place.
     private func stillPoint(_ f: Fence, _ now: Date) -> FilteredPoint {
         (place.map { Fence(lat: $0.pin.lat, lon: $0.pin.lon, radius: f.radius) } ?? f).stillPoint(at: now)
@@ -212,7 +219,7 @@ public struct MotionEngine: Sendable {
         let d = drift(now)
         let potter = walked - walkedAtWake >= 40 && d.map { $0.d <= $0.n + 10 } == true
         guard potter || (wanderFixed && now.timeIntervalSince(wanderSince) >= 60 && d?.out != true) else { return nil }
-        stepsThreshold = threshold == 15 ? 50 : 150
+        if !fresh(now) { stepsThreshold = threshold == 15 ? 50 : 150 }
         return goStill(w, now, writePoint: false) + [log("wake", potter ? "potter-return" : "wander-return", now)]
     }
 
@@ -274,7 +281,7 @@ public struct MotionEngine: Sendable {
         var pinned = fence
         if let k = lastKnown, pinned.map({ Geo.distance(k.lat, k.lon, $0.lat, $0.lon) > $0.radius }) ?? true { pinned = k }
         let returning = needFixAfterWake
-        if returning { stepsThreshold = threshold == 15 ? 50 : 150 }   // same backoff as a wander-return
+        if returning && !fresh(now) { stepsThreshold = threshold == 15 ? 50 : 150 }   // same backoff as a wander-return
         let out = goStill(pinned, now, fallback: true)
         return returning ? out + [log("wake", "indoor-nofix", now)] : out
     }
@@ -283,7 +290,8 @@ public struct MotionEngine: Sendable {
     private mutating func goStill(_ f: Fence?, _ now: Date, fallback: Bool = false, writePoint: Bool = true) -> [Command] {
         state = .still; wanderFence = nil; fence = f; stillSince = now; lastStillPoint = now
         lastConfirmed = fallback ? lastFixAt : now; stopLogged = false   // the no-fix fallback is confirmed only by its last fix
-        fixes = []; spotDelay = 30; stillByFallback = fallback; needFixAfterWake = false; stepLog = []; walkedAt = nil
+        stopStart = writePoint && !fallback ? now : (writePoint ? nil : stopStart)   // an indoor no-fix stop has no GPS to check back with
+        fixes = []; spotDelay = fresh(now) ? 15 : 30; stillByFallback = fallback; needFixAfterWake = false; stepLog = []; walkedAt = nil
         walked = 0; stepsPending = false; paceSince = nil
         var out: [Command] = endStruggle(now) + [.stopRecording]
         if let f { out.append(.armGeofence(departure(f))) }
@@ -332,7 +340,7 @@ public struct MotionEngine: Sendable {
             if spotChecking {
                 spotChecking = false
                 let calm = place != nil && stillSince.map { now.timeIntervalSince($0) >= 1800 } == true   // 30 min at a known place
-                spotDelay = min(spotDelay * 2, calm ? 900 : 300)
+                spotDelay = fresh(now) ? 15 : min(max(spotDelay, 15) * 2, calm ? 900 : 300)
                 out = [.stopSpotCheck, .scheduleSpotCheck(after: deepSleep ? 900 : spotDelay)]
             }
             return out + stillPointIfDue(now)
