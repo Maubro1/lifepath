@@ -67,3 +67,13 @@ First health reports (v0.2.1, evening of 14 Nov to 01:43 on 15 Nov): thermal nom
 
 
 Battery per day, warmth, wake counts per hour, spot checks per hour, gaps and their reasons, whether the 8-steps fidget threshold and the pin rules (100 points, dynamic hiding) feel right, and whether the deep-sleep keep-alive with 15-minute spot checks stays cool and battery-light overnight.
+
+## Stage 7 requests (owner, 18 Nov 2026, after v0.8.0)
+1. Travel modes are internal only: no mode colours in lines or stats. Classify from the trip's top speed (not the average) and signal; cars, buses and trains are Faraday cages (poor GPS is evidence).
+2. Rounded corners. Build a way to render the app's screens off the phone so the look can be inspected; every change gets a visual check. UX first: walk the user's steps, cut what is not needed, add what is missing; native iOS, not generic.
+3. Trains: a line that keeps crossing or following one railway and starts and ends at stations is a train; snap it to the railway. Same idea for tram, bus and metro. Stations worldwide, not only the Netherlands.
+4. Stops are detected too quickly: standing still a few minutes must not pause tracking or leave gaps.
+5. Fog must not be opaque; fog lags when panning; lines keep changing shape; simplify lines less (efficient, researched techniques).
+6. Heat map: follow the shape of the lines with natural gradients, no blocks.
+7. Rethink the map screen: what to show, where, and how it looks.
+Research each; use proven techniques; show initiative.
