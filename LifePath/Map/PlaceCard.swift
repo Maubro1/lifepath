@@ -21,8 +21,8 @@ struct PlaceCard: View {
                                 .foregroundStyle(Color.satsuma)
                             Text(countCycling ? "of streets walked or cycled" : "of streets walked").foregroundStyle(Color.muted)
                             if let p = city.counts {
-                                Text("\(p.covered.formatted()) of \(p.total.formatted()) streets · a street counts once you have covered 90% of it")
-                                    .font(.footnote).foregroundStyle(Color.muted)
+                                Text("\(p.covered.formatted()) of \(p.total.formatted()) streets").font(.footnote.weight(.semibold)).foregroundStyle(Color.ink)
+                                Text("A street counts once you have covered 90% of it.").font(.footnote).foregroundStyle(Color.muted)
                             }
                         }
                         .accessibilityElement(children: .combine)

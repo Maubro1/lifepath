@@ -13,6 +13,9 @@ enum DemoData {
         return a.firstIndex(of: name).flatMap { $0 + 1 < a.count ? a[$0 + 1] : nil }
     }
 
+    /// Look variant for comparing screenshots (`-variant 2`); 1 is the shipped look.
+    static let variant = argument("-variant").flatMap(Int.init) ?? 1
+
     static let origin = (lat: 52.0860, lon: 5.1640)   // Utrecht Science Park area
     static func at(_ north: Double, _ east: Double) -> (lat: Double, lon: Double) {
         Geo.offset(lat: origin.lat, lon: origin.lon, north: north, east: east)
@@ -75,6 +78,11 @@ enum DemoData {
                 }
             }
             points += trip
+            var modes = [ModeStretch(seq: 0, mode: .walk, confidence: 0.9, start: start, end: trip.filter { $0.kind == .moving }.last!.t)]
+            if let ride = trip.first(where: { $0.kind == .rough })?.t {
+                modes.append(ModeStretch(seq: 1, mode: .train, confidence: 0.9, start: ride, end: trip.last!.t))
+            }
+            try diary.saveMatches(tripStart: start, [], modes: modes)
             let walkEnd = trip.filter { $0.kind == .moving }.last!.t
             lines.append(TripLine(start: start, end: walkEnd, minLat: home.lat, maxLat: work.lat, minLon: home.lon, maxLon: work.lon,
                                   distance: 1500, coords: trip.filter { $0.kind == .moving }.map { ($0.lat, $0.lon, 1.4) }))

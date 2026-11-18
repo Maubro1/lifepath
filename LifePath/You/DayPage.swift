@@ -83,8 +83,10 @@ struct DayPage: View {
                 Image(systemName: walk ? "figure.walk" : "arrow.triangle.swap").foregroundStyle(walk ? Color.satsuma : Color.muted).frame(width: 18)
                 Text(walk ? "Walk" : "Trip").foregroundStyle(Color.ink)
                 Spacer()
-                Text("\(Format.duration(end.timeIntervalSince(start))) · \(Format.distance(distance))")
-                    .font(.subheadline.monospaced()).foregroundStyle(Color.muted)
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(Format.distance(distance)).font(.subheadline.monospacedDigit()).foregroundStyle(Color.ink)
+                    Text(Format.duration(end.timeIntervalSince(start))).font(.caption.monospacedDigit()).foregroundStyle(Color.muted)
+                }
             }
             .accessibilityElement(children: .combine)
         }

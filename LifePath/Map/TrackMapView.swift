@@ -22,10 +22,17 @@ struct TrackMapView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    static var standard: MKStandardMapConfiguration {
+        let c = MKStandardMapConfiguration(emphasisStyle: .muted)
+        c.pointOfInterestFilter = .excludingAll
+        return c
+    }
+
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
         map.delegate = context.coordinator
         map.pointOfInterestFilter = .excludingAll
+        map.preferredConfiguration = Self.standard   // muted, so LifePath's own layers carry the colour
         // The three layers live as long as the map; only their content changes.
         let c = context.coordinator
         map.addOverlay(c.streets, level: .aboveRoads)
@@ -77,9 +84,7 @@ struct TrackMapView: UIViewRepresentable {
             map.setVisibleMapRect(target, edgePadding: UIEdgeInsets(top: 60, left: 20, bottom: 160, right: 20), animated: true)
         }
         if (map.preferredConfiguration is MKImageryMapConfiguration) != satellite {
-            let standard = MKStandardMapConfiguration()
-            standard.pointOfInterestFilter = .excludingAll   // as makeUIView
-            map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : standard
+            map.preferredConfiguration = satellite ? MKImageryMapConfiguration() : Self.standard
         }
         guard let data, data.generation != c.shownGeneration || colour != c.shownColour || dark != c.shownDark else { return }
         c.shownGeneration = data.generation

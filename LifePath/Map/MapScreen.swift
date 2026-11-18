@@ -357,11 +357,13 @@ struct MapScreen: View {
     private var visible: Bool { onScreen && scenePhase == .active }
 
     var body: some View {
+        ZStack {   // the map alone runs full screen; the controls on this stack keep to the safe area
         TrackMapView(data: loader.data, mode: mode, colour: colour, dark: scheme == .dark, satellite: satellite,
                      visible: visible, onRegion: { region, width in loader.regionChanged(region, width: width) },
                      onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } },
                      target: target, onLayers: { choosingLayers = true })
-        .ignoresSafeArea(edges: .top)
+        .ignoresSafeArea()   // behind the status bar and the tab bar
+        }
         .overlay(alignment: .topLeading) { chip }
         .overlay(alignment: .bottom) { bottom }
         .onAppear { onScreen = true }
@@ -432,21 +434,13 @@ struct MapScreen: View {
             .pickerStyle(.segmented)
             .accessibilityLabel("Show streets walked, fog or heat")
             if let t = loader.data?.today {
-                HStack(spacing: 6) {
-                    Text(Format.distance(t.distance))
-                    if let steps = t.steps {
-                        Text("·")
-                        Text("\(steps.formatted()) steps")
-                    }
-                    if t.newStreets > 0 {
-                        Text("·")
-                        Text("+\(t.newStreets) new \(t.newStreets == 1 ? "street" : "streets")")
-                            .foregroundStyle(Color.satsuma)
-                            .fontWeight(.semibold)
-                    }
+                HStack(alignment: .firstTextBaseline, spacing: 22) {
+                    stat(Format.distance(t.distance), "today")
+                    if let steps = t.steps { stat(steps.formatted(), "steps") }
+                    if t.newStreets > 0 { stat("+\(t.newStreets)", t.newStreets == 1 ? "new street" : "new streets", accent: true) }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Color.muted)
                 }
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(Color.ink)
                 .accessibilityElement(children: .combine)
                 .frame(minHeight: 44, alignment: .leading)
                 .accessibilityLabel("Today")
@@ -460,6 +454,15 @@ struct MapScreen: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
+    }
+
+    /// A number over its caption, as in the You tab's facts.
+    private func stat(_ value: String, _ caption: String, accent: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value).font(.display(20, relativeTo: .title3)).foregroundStyle(accent ? Color.satsuma : Color.ink)
+                .monospacedDigit().lineLimit(1)
+            Text(caption).font(.caption).foregroundStyle(Color.muted).lineLimit(1)
+        }
     }
 
     private var dates: some View {
