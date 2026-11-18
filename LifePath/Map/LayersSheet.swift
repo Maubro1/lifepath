@@ -10,7 +10,7 @@ struct LayersSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            Form { Group {
                 Section {
                     Picker("Show", selection: $period) {
                         ForEach(TimeFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -28,7 +28,11 @@ struct LayersSheet: View {
                     }
                     .pickerStyle(.segmented)
                 }
+                }
+                .listRowBackground(Color.card)   // paper cards, as everywhere in LifePath
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.page)
             .navigationTitle("Layers")
             .navigationBarTitleDisplayMode(.inline)
         }

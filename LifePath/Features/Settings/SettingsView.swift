@@ -44,7 +44,7 @@ struct SettingsView: View {
             stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn, notSavingSince: recorder.notSavingSince,
             signingExpiry: expiry, now: now)
         Group {   // pushed from the You tab, inside its navigation stack
-            List {
+            List { Group {
                 Section("Status") {
                     Label(s.headline, systemImage: s.level == .problem ? "exclamationmark.triangle" : s.level == .resting ? "moon" : "checkmark.circle")
                         .foregroundStyle(s.level == .problem ? .red : s.level == .resting ? .secondary : .green)
@@ -144,7 +144,11 @@ struct SettingsView: View {
                     LabeledContent("SideStore refresh due", value: expiry.map { time($0) } ?? "unknown")
                     LabeledContent("Version", value: version)
                 }
+                }
+                .listRowBackground(Color.card)   // paper cards, as everywhere in LifePath
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.page)
             .navigationTitle("Settings")
             .refreshable { refresh() }
             .onAppear { refresh() }
@@ -181,7 +185,7 @@ private struct DiagnosticsView: View {
     @State private var stored: Int?
 
     var body: some View {
-        List {
+        List { Group {
             Section {
                 Toggle("Show recorded line on the map", isOn: $recordedLine)
             } footer: {
@@ -191,7 +195,11 @@ private struct DiagnosticsView: View {
                 LabeledContent("Points today", value: pointsToday.formatted())
                 LabeledContent("Points stored", value: stored?.formatted() ?? "…")
             }
+            }
+            .listRowBackground(Color.card)   // paper cards, as everywhere in LifePath
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.page)
         .navigationTitle("Diagnostics")
         .task {
             guard let diary = Recorder.shared.readDiary else { return }

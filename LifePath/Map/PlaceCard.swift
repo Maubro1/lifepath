@@ -12,7 +12,7 @@ struct PlaceCard: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            List { Group {
                 if let city {
                     Section {
                         VStack(alignment: .leading, spacing: 2) {
@@ -34,7 +34,11 @@ struct PlaceCard: View {
                         }
                     }
                 }
+                }
+                .listRowBackground(Color.card)   // paper cards, as everywhere in LifePath
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.page)
             .navigationTitle(city?.area.name ?? "")
             .navigationBarTitleDisplayMode(.inline)
         }

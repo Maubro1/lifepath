@@ -66,8 +66,8 @@ struct YouScreen: View {
             Circle().fill(colour).frame(width: 8, height: 8)
             Text(s.headline).font(.subheadline).foregroundStyle(Color.ink)
         }
-        .padding(.horizontal, 12).frame(minHeight: 36)
-        .background(Color.card, in: .rect(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 14).frame(minHeight: 36)
+        .background(Color.card, in: .capsule)   // a pill, like the place chip on the map
         .accessibilityElement(children: .combine)
     }
 
