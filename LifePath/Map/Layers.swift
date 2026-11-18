@@ -272,7 +272,7 @@ struct HeatContent: LayerContent {
     var grid: GridIndex
     var max: Double   // passes through the busiest cell at the loading zoom
     var dark: Bool
-    static let width: CGFloat = 3                                 // line width in buffer px (half the screen points)
+    static let width: CGFloat = 4                                 // line width in buffer px (half the screen points)
     static let row: [Float] = [1, 8, 28, 56, 70, 56, 28, 8, 1]   // binomial blur row, run three times: wide and soft
     static let blurs = 3
     /// Passes for full heat; variant 2 (screenshots only) heats up sooner, for comparison.
@@ -300,7 +300,7 @@ struct HeatContent: LayerContent {
 
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
         // Density at half the tile's points, a margin so strokes and blur cross tile seams, then smoothly scaled up to full points.
-        let px = Double(scale) / 2, m = 10
+        let px = Double(scale) / 2, m = 16   // margin covers the blur reach (3 x 4 px) plus half the line
         let w = Int((rect.width * px).rounded(.up)) + 2 * m, h = Int((rect.height * px).rounded(.up)) + 2 * m
         let ow = Swift.max(1, Int((rect.width * Double(scale)).rounded())), oh = Swift.max(1, Int((rect.height * Double(scale)).rounded()))
         guard w > 2 * m, h > 2 * m, max > 0,
