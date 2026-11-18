@@ -74,3 +74,27 @@ jobs:
           files: build/LifePath.ipa
           # Tags with a suffix (v0.1.1-preview.2) are marked as pre-releases: installable, not yet tested on the phone.
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # Screenshots for visual checks: only when the commit message asks with [screens]. Pushed to the `screens` branch.
+  screens:
+    needs: test
+    if: contains(github.event.head_commit.message, '[screens]')
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Screenshots
+        run: bash scripts/screens.sh
+      - name: Publish to the screens branch
+        run: |
+          cd screens
+          git init -q
+          git checkout -q -b screens
+          git add .
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Screens for ${GITHUB_SHA}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" screens

@@ -7,6 +7,7 @@ struct YouScreen: View {
     @State private var data: YouData?
     @State private var period = Period.year
     @State private var onScreen = false
+    @State private var path = NavigationPath()
     @AppStorage("countCycling") private var countCycling = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var scheme
@@ -16,7 +17,7 @@ struct YouScreen: View {
     private var visible: Bool { onScreen && scenePhase == .active }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     status
@@ -40,6 +41,13 @@ struct YouScreen: View {
                 await load()
             }
             .navigationDestination(for: Date.self) { DayPage(day: $0) }
+            .navigationDestination(for: String.self) { _ in SettingsView() }
+            .onAppear {
+                // Screenshot mode opens a day page or Settings directly.
+                guard DemoData.active, path.isEmpty else { return }
+                if DemoData.argument("-screen") == "day" { path.append(Calendar.current.startOfDay(for: Date())) }
+                if DemoData.argument("-screen") == "settings" { path.append("settings") }
+            }
         }
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
