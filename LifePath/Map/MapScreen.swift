@@ -334,16 +334,18 @@ struct MapScreen: View {
 
     private var visible: Bool { onScreen && scenePhase == .active }
 
+    @State private var panelHeight: CGFloat = 0
+
     var body: some View {
         ZStack {   // the map alone runs full screen; the controls on this stack keep to the safe area
         TrackMapView(data: loader.data, mode: mode, colour: colour, dark: scheme == .dark, satellite: satellite,
                      visible: visible, onRegion: { region, width in loader.regionChanged(region, width: width) },
                      onPlace: { id in openPlace = loader.data?.places.first { $0.id == id } },
-                     target: target, onLayers: { choosingLayers = true })
+                     target: target, onLayers: { choosingLayers = true }, bottomInset: panelHeight + 8)
         .ignoresSafeArea()   // behind the status bar and the tab bar
         }
         .overlay(alignment: .topLeading) { chip }
-        .overlay(alignment: .bottom) { bottom }
+        .overlay(alignment: .bottom) { bottom.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 } }
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }

@@ -19,6 +19,7 @@ struct TrackMapView: UIViewRepresentable {
     let onPlace: @MainActor (Int64) -> Void
     var target: MKMapRect? = nil                 // set to fly the map there once
     var onLayers: @MainActor () -> Void = {}
+    var bottomInset: CGFloat = 0                 // the floating panel: Apple's logo and Legal link sit just above it
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -77,6 +78,7 @@ struct TrackMapView: UIViewRepresentable {
     func updateUIView(_ map: MKMapView, context: Context) {
         let c = context.coordinator
         c.parent = self
+        if map.directionalLayoutMargins.bottom != bottomInset { map.directionalLayoutMargins.bottom = bottomInset }
         if map.showsUserLocation != visible { map.showsUserLocation = visible }   // location only while on screen
         if let target, !(c.flown.map { MKMapRectEqualToRect($0, target) } ?? false) {
             c.flown = target
