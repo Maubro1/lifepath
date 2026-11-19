@@ -29,9 +29,9 @@ struct RestoreButton: View {
         case .ready(let s, _):
             List {
                 Section {
-                    LabeledContent("Points", value: s.points.formatted())
-                    LabeledContent("From", value: s.first?.formatted(date: .abbreviated, time: .omitted) ?? "–")
-                    LabeledContent("To", value: s.last?.formatted(date: .abbreviated, time: .omitted) ?? "–")
+                    InfoRow("Points", value: s.points.formatted())
+                    InfoRow("From", value: s.first?.formatted(date: .abbreviated, time: .omitted) ?? "–")
+                    InfoRow("To", value: s.last?.formatted(date: .abbreviated, time: .omitted) ?? "–")
                 } footer: {
                     Text(s.points == 0 ? "This backup holds no points."
                          : "These points are added to your diary. Nothing already in it is removed, and a copy of your diary is kept first.")

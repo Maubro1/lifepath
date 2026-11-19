@@ -22,10 +22,10 @@ struct PlaceSheet: View {
                 TextField("Name", text: $name, prompt: Text("Name this place"))
                     .accessibilityLabel("Place name")
                     .onSubmit(save)
-                LabeledContent("Time spent", value: Duration.seconds(place.totalSeconds).formatted(.units(allowed: [.days, .hours], width: .wide)))
-                LabeledContent("Visits", value: "\(place.visits)")
-                LabeledContent("First visit", value: firstVisit?.formatted(date: .abbreviated, time: .omitted) ?? "unknown")
-                LabeledContent("Last visit", value: place.lastVisit.formatted(date: .abbreviated, time: .omitted))
+                InfoRow("Time spent", value: Duration.seconds(place.totalSeconds).formatted(.units(allowed: [.days, .hours], width: .wide)))
+                InfoRow("Visits", value: "\(place.visits)")
+                InfoRow("First visit", value: firstVisit?.formatted(date: .abbreviated, time: .omitted) ?? "unknown")
+                InfoRow("Last visit", value: place.lastVisit.formatted(date: .abbreviated, time: .omitted))
             }
             .navigationTitle(place.name ?? "Place")
             .toolbar { Button("Done") { dismiss() }.accessibilityLabel("Save and close") }

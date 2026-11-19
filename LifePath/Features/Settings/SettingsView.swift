@@ -50,8 +50,8 @@ struct SettingsView: View {
                     Label(s.headline, systemImage: s.level == .problem ? "exclamationmark.triangle" : s.level == .resting ? "moon" : "checkmark.circle")
                         .foregroundStyle(s.level == .problem ? Color(UIColor(Palette.cherry)) : s.level == .resting ? Color.muted : Color(UIColor(Palette.mode(.bike))))   // as the You pill
                     if let hint = s.hint { Text(hint) }
-                    LabeledContent("Last point", value: time(recorder.lastPoint))
-                    LabeledContent("Last location check", value: time(recorder.lastCheckIn))
+                    InfoRow("Last point", value: time(recorder.lastPoint))
+                    InfoRow("Last location check", value: time(recorder.lastCheckIn))
                     if ["Off", "Not set up"].contains(MotionService.stepCounting) {   // only shown when it needs fixing
                         Button("Open iOS Settings") {
                             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
@@ -105,12 +105,12 @@ struct SettingsView: View {
                             do { backup = try await recorder.backup(); movingBackup = true } catch { backupError = error.localizedDescription }
                         }
                     }
-                    LabeledContent {
+                    InfoRow(title: "Last backup") {
                         HStack(spacing: 6) {
                             if backupOld { Circle().fill(Color.satsuma).frame(width: 8, height: 8).accessibilityHidden(true) }
                             Text(lastBackup == 0 ? "never" : Date(timeIntervalSince1970: lastBackup).formatted(date: .abbreviated, time: .shortened))
                         }
-                    } label: { Text("Last backup") }
+                    }
                     .accessibilityHint(backupOld ? "A new backup is recommended" : "")
                 } header: { Text("Your data") } footer: {
                     Text("A copy of your whole diary. Keep it in Files or iCloud Drive: deleting LifePath deletes everything stored inside it.")
@@ -140,8 +140,8 @@ struct SettingsView: View {
                 }
                 Section {
                     NavigationLink("Diagnostics") { DiagnosticsView(pointsToday: pointsToday) }
-                    LabeledContent("SideStore refresh due", value: expiry.map { time($0) } ?? "unknown")
-                    LabeledContent("Version", value: version)
+                    InfoRow("SideStore refresh due", value: expiry.map { time($0) } ?? "unknown")
+                    InfoRow("Version", value: version)
                 }
                 }
                 .listRowBackground(Color.card)   // paper cards, as everywhere in LifePath
@@ -201,8 +201,8 @@ private struct DiagnosticsView: View {
                 Text("Draws the line as the phone recorded it, before smoothing and street matching.")
             }
             Section {
-                LabeledContent("Points today", value: pointsToday.formatted())
-                LabeledContent("Points stored", value: stored?.formatted() ?? "…")
+                InfoRow("Points today", value: pointsToday.formatted())
+                InfoRow("Points stored", value: stored?.formatted() ?? "…")
             }
             }
             .listRowBackground(Color.card)   // paper cards, as everywhere in LifePath

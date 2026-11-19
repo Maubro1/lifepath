@@ -41,6 +41,24 @@ struct Card<Content: View>: View {
     }
 }
 
+/// A list row: its title with the value underneath, the same in every list of LifePath.
+struct InfoRow<Value: View>: View {
+    let title: String
+    @ViewBuilder var value: Value
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).foregroundStyle(Color.ink)
+            value.font(.subheadline).foregroundStyle(Color.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+extension InfoRow where Value == Text {
+    init(_ title: String, value: String) { self.init(title: title) { Text(value) } }
+}
+
 /// The appearance chosen in Settings.
 enum Appearance: String, CaseIterable {
     case system, light, dark
