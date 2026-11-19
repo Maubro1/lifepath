@@ -23,6 +23,7 @@ Spec: `docs/superpowers/specs/2026-11-18-stage-7-design.md`. Plan: `docs/superpo
 ## Transit
 - Route snaps are stored as matched stretches on way id = −relation id; `Diary.ways(ids:)` returns the route's track for those, so every consumer draws them and cache rebuilds keep them.
 - Two lines on one track with similar slices: the first is used (they draw the same).
+- Pieces of a ride are linked (`Transit.link`), rail and tram only: one route between two stations, ends settled by a walk or a 30 s dwell (a station passed at speed is no end, also for a piece the trip snapped alone), no stay or walk over 2 min between, gaps passable at 320 km/h, under 3 h apart. One run of joined pieces at a time, with only the routes around it. Each trip stores its share of the track, running on across the gap; the street run looks back 3 h.
 - One geometry request per tile for all new routes; a timeout in a large bus city skips routes for that run.
 
 ## Look
