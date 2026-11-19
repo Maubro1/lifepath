@@ -138,6 +138,8 @@ enum StreetService {
             modeCount += modes.count
             unsure += modes.filter { $0.confidence < TravelModes.confident }.count
         }
+        // Rides cut into pieces by signal gaps or long station stops, linked across trips (looks back 3 h, so a ride still going links later).
+        if matched > 0 { try linkRides(diary, from: from) }
         var walked = ""
         // Days were deleted: count streets again without them.
         let dirty = try diary.meta("coverageDirty") == "1"
@@ -162,6 +164,56 @@ enum StreetService {
     }
 
     /// Only a map rectangle leaves the phone: no cookies, no cache, nothing but the User-Agent.
+    /// Train, tram and metro pieces that no trip could snap alone, from 3 h before `from` on, linked into rides (`Transit.link`);
+    /// each trip keeps its share of the ride's track, so its line follows the rails across the gap too.
+    private static func linkRides(_ diary: Diary, from: Date) throws {
+        var pieces: [Transit.Piece] = [], owner: [(trip: Trip, seq: Int)] = []
+        var previous: Date?   // end of the last piece that may still be joined; nil after a walk, a stay or a snapped ride
+        for line in try diary.tripLines(from: from.addingTimeInterval(-3 * 3600), to: .distantFuture) {
+            try Task.checkCancellation()
+            guard let trip = try Trips.split(diary.points(from: line.start, to: line.end)).first(where: { $0.start == line.start }) else { continue }
+            let modes = try diary.modes(tripStart: trip.start).sorted { $0.start < $1.start }
+            let snapped = try diary.matches(tripStart: trip.start).filter { $0.wayId < 0 }
+            func foot(_ k: Int) -> Bool { modes.indices.contains(k) && [.walk, .run, .bike].contains(modes[k].mode) }
+            for (k, m) in modes.enumerated() {
+                if foot(k) { if m.end.timeIntervalSince(m.start) > 120 { previous = nil }; continue }   // a real walk ends any ride before it
+                if snapped.contains(where: { $0.start <= m.end && $0.end >= m.start }) { previous = nil; continue }
+                // The walk's last and first minute around the ride: the switch to riding is noticed up to 30 s late, past the platform.
+                let before = foot(k - 1), after = foot(k + 1)
+                let points = trip.points.filter { $0.kind != .still && $0.t >= m.start.addingTimeInterval(before ? -60 : 0) && $0.t <= m.end.addingTimeInterval(after ? 60 : 0) }
+                guard let first = points.first else { continue }
+                var joins = false
+                if let p = previous, first.t.timeIntervalSince(p) <= 3 * 3600 { joins = try diary.visits(from: p, to: first.t).isEmpty }
+                pieces.append(Transit.Piece(points: points, walkBefore: before, walkAfter: after, joins: joins))
+                owner.append((trip, m.seq))
+                previous = points.last!.t
+            }
+        }
+        guard pieces.count > 1 else { return }
+        let lat = pieces.flatMap { $0.points.map(\.lat) }, lon = pieces.flatMap { $0.points.map(\.lon) }
+        let routes = try diary.routes(minLat: lat.min()! - 0.01, maxLat: lat.max()! + 0.01, minLon: lon.min()! - 0.01, maxLon: lon.max()! + 0.01)
+        let linked = Transit.link(pieces, routes: routes)
+        guard !linked.isEmpty else { return }
+        let hits = try diary.segmentHitsDated()
+        for (start, shares) in Dictionary(grouping: linked, by: { owner[$0.piece].trip.start }) {
+            let trip = owner[shares[0].piece].trip
+            var modes = try diary.modes(tripStart: start), matches = try diary.matches(tripStart: start)
+            for share in shares {
+                let s = share.stretch
+                matches.removeAll { $0.start <= s.end && $0.end >= s.start }
+                matches.append(s)
+                if let k = modes.firstIndex(where: { $0.seq == owner[share.piece].seq }) {
+                    modes[k].mode = share.mode; modes[k].confidence = max(modes[k].confidence, 0.9)
+                }
+            }
+            try diary.saveMatches(tripStart: start, matches, modes: modes, hits: Set(hits.filter { $0.tripStart == start }.map(\.hit)))
+            let ways = Dictionary(try diary.ways(ids: matches.map(\.wayId)).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            let smooth = Dictionary(try diary.smoothed(from: trip.start, to: trip.end).map { ($0.t, (lat: $0.lat, lon: $0.lon)) },
+                                    uniquingKeysWith: { a, _ in a })
+            try diary.replaceTripLine(TripLines.snapped(trip, smoothed: smooth, matches: matches, ways: ways))
+        }
+    }
+
     private static func makeSession(cellular: Bool) -> URLSession {
         let c = URLSessionConfiguration.ephemeral
         c.allowsCellularAccess = cellular

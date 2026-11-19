@@ -22,6 +22,37 @@ final class TransitTests: XCTestCase {
         }
     }
 
+    /// A piece of a ride from `from` to `to` metres, its fixes starting `after` seconds past t0.
+    func piece(_ from: Double, _ to: Double, after: Double, walkBefore: Bool = false, walkAfter: Bool = false, joins: Bool = true) -> Transit.Piece {
+        Transit.Piece(points: ride(from, to).map { var p = $0; p.t += after; return p }, walkBefore: walkBefore, walkAfter: walkAfter, joins: joins)
+    }
+
+    func testLinksPiecesAcrossAGap() throws {
+        // Boarded at 2 km, no signal from 4.5 to 6 km for 5 minutes, alighted at 8 km: one ride, drawn without a gap.
+        let out = Transit.link([piece(2000, 4500, after: 0, walkBefore: true), piece(6000, 8000, after: 400, walkAfter: true)], routes: [line(1)])
+        XCTAssertEqual(out.map(\.piece), [0, 1])
+        XCTAssertEqual(out[0].stretch.fromM, 2000, accuracy: 1)
+        XCTAssertEqual(out[0].stretch.toM, out[1].stretch.fromM, accuracy: 1e-9)   // the first share runs on across the gap
+        XCTAssertEqual(out[1].stretch.toM, 8000, accuracy: 1)
+        XCTAssertEqual(out[0].stretch.wayId, -1)
+    }
+
+    func testStationPassedAtSpeedIsNoEnd() throws {
+        // The second piece ends right at the 6 km station without stopping: the ride runs on to 8 km.
+        let out = Transit.link([piece(2000, 4500, after: 0, walkBefore: true), piece(4750, 6000, after: 200),
+                                piece(6250, 8000, after: 300, walkAfter: true)], routes: [line(1)])
+        XCTAssertEqual(out.map(\.piece), [0, 1, 2])
+        XCTAssertEqual(out[2].stretch.toM, 8000, accuracy: 1)
+    }
+
+    func testImpossibleGapOrStayIsNotLinked() {
+        // 1.5 km further only 1 s later is no train; a stay between pieces (joins false) ends the chain.
+        XCTAssertTrue(Transit.link([piece(2000, 4500, after: 0, walkBefore: true), piece(7000, 8000, after: 101, walkAfter: true)],
+                                   routes: [line(1)]).isEmpty)
+        XCTAssertTrue(Transit.link([piece(2000, 4500, after: 0, walkBefore: true), piece(6000, 8000, after: 400, walkAfter: true, joins: false)],
+                                   routes: [line(1)]).isEmpty)
+    }
+
     func testMatchesOrderedStops() throws {
         let m = try XCTUnwrap(Transit.match(ride(2000, 8000), routes: [line(1)]))
         XCTAssertEqual(m.route.id, 1)

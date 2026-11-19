@@ -88,6 +88,64 @@ public enum Transit {
         return line.count == 1 ? Geo.distance(p.lat, p.lon, line[0].lat, line[0].lon) : best
     }
 
+    /// A ride stretch the street run could not snap on its own: its fixes, whether a walk touches it on each side, and
+    /// whether it may join the piece before it (no stay, no long walk and under 3 h between them).
+    public struct Piece: Sendable {
+        public var points: [FilteredPoint]
+        public var walkBefore, walkAfter, joins: Bool
+        public init(points: [FilteredPoint], walkBefore: Bool, walkAfter: Bool, joins: Bool) {
+            self.points = points; self.walkBefore = walkBefore; self.walkAfter = walkAfter; self.joins = joins
+        }
+    }
+
+    /// Rides cut into pieces by signal gaps or long station stops, linked back together: consecutive pieces that joined
+    /// match one route between two stations (`match`), each end settled at its station, and every gap passable by train.
+    /// Returns, per linked piece, its share of the route's track; the share runs on to the next piece, so gaps are drawn too.
+    public static func link(_ pieces: [Piece], routes: [Route]) -> [(piece: Int, stretch: MatchedStretch, mode: TravelMode)] {
+        var out: [(piece: Int, stretch: MatchedStretch, mode: TravelMode)] = [], i = 0
+        while i < pieces.count {
+            var j = i, found = false
+            while !found, j + 1 < pieces.count, pieces[j + 1].joins, j - i < 8 {
+                j += 1
+                let all = pieces[i...j].flatMap(\.points)
+                guard let m = match(all, routes: routes) else { continue }
+                let r = m.route, rad = radius(r.mode)
+                // A station passed at speed is a blip: an end counts when a walk touches it or the fixes stay there 30 s.
+                func dwell(_ ps: [FilteredPoint], _ s: Route.Stop) -> Bool {
+                    let t = ps.filter { Geo.distance($0.lat, $0.lon, s.lat, s.lon) <= rad }.map(\.t)
+                    guard let first = t.min(), let last = t.max() else { return false }
+                    return last.timeIntervalSince(first) >= 30
+                }
+                guard pieces[i].walkBefore || dwell(pieces[i].points, r.stops[m.from]),
+                      pieces[j].walkAfter || dwell(pieces[j].points, r.stops[m.to]) else { continue }
+                // Metres along the matched track to a fix (its nearest vertex).
+                var cum = [0.0]
+                for (a, b) in zip(m.path, m.path.dropFirst()) { cum.append(cum[cum.count - 1] + Geo.distance(a.lat, a.lon, b.lat, b.lon)) }
+                func along(_ p: FilteredPoint) -> Double {
+                    cum[m.path.indices.min { Geo.distance(m.path[$0].lat, m.path[$0].lon, p.lat, p.lon) < Geo.distance(m.path[$1].lat, m.path[$1].lon, p.lat, p.lon) }!]
+                }
+                // Across each gap the train moves on along the track, at most 320 km/h (rough fixes get 1.5 km of slack).
+                let passable = (i..<j).allSatisfy { k in
+                    let a = pieces[k].points.last!, b = pieces[k + 1].points.first!
+                    let d = along(b) - along(a)
+                    return d >= -300 && d <= 89 * b.t.timeIntervalSince(a.t) + 1500
+                }
+                guard passable else { continue }
+                let base = stretch(r, from: m.from, to: m.to, start: all[0].t, end: all[all.count - 1].t).fromM
+                var from = base
+                for k in i...j {
+                    let to = k == j ? base + cum[cum.count - 1] : max(from, base + along(pieces[k + 1].points[0]))
+                    out.append((k, MatchedStretch(seq: 0, wayId: -r.id, fromM: from, toM: to, confidence: 1,
+                                                  start: pieces[k].points[0].t, end: pieces[k].points.last!.t), r.mode))
+                    from = to
+                }
+                found = true
+            }
+            i = found ? j + 1 : i + 1
+        }
+        return out
+    }
+
     /// The matched ride as a stretch on the route's track (way id = -relation id), from stop `i` to stop `j`.
     public static func stretch(_ r: Route, from i: Int, to j: Int, start: Date, end: Date) -> MatchedStretch {
         func along(_ v: Int) -> Double {
