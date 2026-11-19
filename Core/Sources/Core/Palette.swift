@@ -18,7 +18,7 @@ public enum Palette {
     public static let mustard = Hex(light: 0xB07D12, dark: 0xE7B547)
     public static let unsure = Hex(light: 0x8E8E93, dark: 0x8E8E93)
     /// Fog: the paper in light mode; a grey mist in dark mode, so unexplored areas read differently from the dark map.
-    public static let fog = Hex(light: 0xF1ECE2, dark: 0x4A443C)   // warm paper mist
+    public static let fog = Hex(light: 0xDCCFB6, dark: 0x4A443C)   // warm paper mist; light a shade deeper than the muted map, so cleared streets show
 
     public static func mode(_ m: TravelMode) -> Hex {
         switch m {
