@@ -104,9 +104,10 @@ public enum Transit {
     public static func link(_ pieces: [Piece], routes: [Route]) -> [(piece: Int, stretch: MatchedStretch, mode: TravelMode)] {
         var out: [(piece: Int, stretch: MatchedStretch, mode: TravelMode)] = [], i = 0
         while i < pieces.count {
+            // From the piece alone on: one the trip already snapped on a station blip gets relinked with its neighbours.
             var j = i, found = false
-            while !found, j + 1 < pieces.count, pieces[j + 1].joins, j - i < 8 {
-                j += 1
+            while !found, j < pieces.count, j - i <= 8, j == i || pieces[j].joins {
+                defer { if !found { j += 1 } }
                 let all = pieces[i...j].flatMap(\.points)
                 guard let m = match(all, routes: routes) else { continue }
                 let r = m.route, rad = radius(r.mode)
@@ -131,6 +132,8 @@ public enum Transit {
                     return d >= -300 && d <= 89 * b.t.timeIntervalSince(a.t) + 1500
                 }
                 guard passable else { continue }
+                found = true
+                guard j > i else { break }   // a ride of one piece is the trip's own snap, already stored
                 let base = stretch(r, from: m.from, to: m.to, start: all[0].t, end: all[all.count - 1].t).fromM
                 var from = base
                 for k in i...j {
@@ -139,7 +142,6 @@ public enum Transit {
                                                   start: pieces[k].points[0].t, end: pieces[k].points.last!.t), r.mode))
                     from = to
                 }
-                found = true
             }
             i = found ? j + 1 : i + 1
         }

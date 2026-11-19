@@ -45,6 +45,16 @@ final class TransitTests: XCTestCase {
         XCTAssertEqual(out[2].stretch.toM, 8000, accuracy: 1)
     }
 
+    func testPieceSnappedOnABlipIsRelinked() throws {
+        // The first piece alone runs station to station (1 to 3), but passes the 6 km station at speed: it joins the next piece.
+        let out = Transit.link([piece(2000, 6000, after: 0, walkBefore: true), piece(6250, 8000, after: 200, walkAfter: true)], routes: [line(1)])
+        XCTAssertEqual(out.map(\.piece), [0, 1])
+        XCTAssertEqual(out[1].stretch.toM, 8000, accuracy: 1)
+        // A piece settled at both ends is its own ride: nothing to link.
+        XCTAssertTrue(Transit.link([piece(2000, 6000, after: 0, walkBefore: true, walkAfter: true), piece(6250, 8000, after: 200, walkAfter: true)],
+                                   routes: [line(1)]).isEmpty)
+    }
+
     func testImpossibleGapOrStayIsNotLinked() {
         // 1.5 km further only 1 s later is no train; a stay between pieces (joins false) ends the chain.
         XCTAssertTrue(Transit.link([piece(2000, 4500, after: 0, walkBefore: true), piece(7000, 8000, after: 101, walkAfter: true)],
