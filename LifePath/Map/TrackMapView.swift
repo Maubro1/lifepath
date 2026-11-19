@@ -35,7 +35,6 @@ struct TrackMapView: UIViewRepresentable {
         map.preferredConfiguration = Self.standard   // muted, so LifePath's own layers carry the colour
         // The three layers live as long as the map; only their content changes.
         let c = context.coordinator
-        map.addOverlay(c.streets, level: .aboveRoads)
         map.addOverlay(c.heat, level: .aboveRoads)
         map.addOverlay(c.fog, level: .aboveLabels)
         map.addOverlay(c.lines, level: .aboveLabels)
@@ -90,12 +89,6 @@ struct TrackMapView: UIViewRepresentable {
         c.shownGeneration = data.generation
         c.shownColour = colour
         c.shownDark = dark
-        func keyed(_ items: [(key: String, coords: [(lat: Double, lon: Double)])]) -> [(key: String, rect: MKMapRect, coords: [(lat: Double, lon: Double)])] {
-            items.map { ($0.key, mapRect($0.coords, pad: 2000), $0.coords) }
-        }
-        c.streetsRenderer.set(mode == .streets ? StreetsContent(
-            walked: keyed(data.covered), unwalked: keyed(data.unwalked),
-            shading: data.shading.map { ($0.key, mapRect($0.rings.flatMap { $0 }, pad: 0), $0.rings, $0.holes, $0.share) }, dark: dark) : nil)
         c.fogRenderer.set(mode == .fog ? FogContent(data.fog, dark: dark) : nil)
         c.heatRenderer.set(mode == .heat ? HeatContent(data.heatLines, places: data.heatPlaces, max: data.heatMax, dark: dark) : nil)
         c.linesRenderer.set(mode == .streets ? LinesContent(data.lines, colour: colour, edged: true, dark: dark) : nil)
@@ -144,9 +137,8 @@ struct TrackMapView: UIViewRepresentable {
         var shownColour = LineColour.plain
         var shownDark = false
         var flown: MKMapRect?
-        let streets = LayerOverlay(), fog = LayerOverlay(), lines = LayerOverlay(), heat = LayerOverlay()
+        let fog = LayerOverlay(), lines = LayerOverlay(), heat = LayerOverlay()
         lazy var heatRenderer = LayerRenderer(overlay: heat)
-        lazy var streetsRenderer = LayerRenderer(overlay: streets)
         lazy var fogRenderer = LayerRenderer(overlay: fog)
         lazy var linesRenderer = LayerRenderer(overlay: lines)
         var shown: [String: MKOverlay] = [:]   // overlays on the map by key
@@ -186,7 +178,6 @@ struct TrackMapView: UIViewRepresentable {
         }
 
         func mapView(_ map: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            if overlay === streets { return streetsRenderer }
             if overlay === fog { return fogRenderer }
             if overlay === lines { return linesRenderer }
             if let shape = overlay as? MKMultiPolygon {

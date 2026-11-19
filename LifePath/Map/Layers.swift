@@ -167,58 +167,13 @@ struct FogContent: LayerContent {
     }
 }
 
-// MARK: - streets
-
-/// Walked streets glowing over faint unwalked ones; zoomed out, neighbourhoods shaded by progress instead.
-struct StreetsContent: LayerContent {
-    var walked: [(key: String, rect: MKMapRect, coords: [(lat: Double, lon: Double)])]
-    var unwalked: [(key: String, rect: MKMapRect, coords: [(lat: Double, lon: Double)])]
-    var shading: [(key: String, rect: MKMapRect, rings: [[(lat: Double, lon: Double)]], holes: [[(lat: Double, lon: Double)]], share: Double)]
-    var dark: Bool
-
-    var style: String { "streets\(dark)" }
-    var items: [String: MKMapRect] {
-        var d: [String: MKMapRect] = [:]
-        for w in walked { d["w" + w.key] = w.rect }
-        for u in unwalked { d["u" + u.key] = u.rect }
-        for s in shading { d["s" + s.key] = s.rect }
-        return d
-    }
-
-    func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
-        let lat = rect.origin.coordinate.latitude
-        let near = rect.insetBy(dx: -8 / scale, dy: -8 / scale)
-        // On-screen length of a 20 m street segment: below 0.5 pt shading only, above 1 pt streets only, cross-faded between.
-        let seg = 20 * pointsPerMetre(lat) * Double(scale)
-        let streets = min(1, max(0, (seg - 0.5) / 0.5))
-        if streets < 1 {
-            for s in shading where s.rect.intersects(near) {
-                ctx.setFillColor(cgColor(Palette.satsuma, dark: dark, alpha: CGFloat((0.15 + 0.6 * s.share) * (1 - streets))))
-                for r in s.rings { ctx.addPath(renderer.path(r, closed: true)) }
-                for h in s.holes { ctx.addPath(renderer.path(h, closed: true)) }
-                ctx.fillPath(using: .evenOdd)
-            }
-        }
-        guard streets > 0 else { return }
-        ctx.setLineCap(.round); ctx.setLineJoin(.round)
-        ctx.setStrokeColor(cgColor(Palette.muted, dark: dark, alpha: 0.35 * streets)); ctx.setLineWidth(1 / scale)
-        for u in unwalked where u.rect.intersects(near) { ctx.addPath(renderer.path(u.coords)) }
-        ctx.strokePath()
-        for (width, alpha) in [(6.0, 0.25), (2.5, 1.0)] {   // glow, then the line
-            ctx.setStrokeColor(cgColor(Palette.satsuma, dark: dark, alpha: alpha * streets)); ctx.setLineWidth(width / scale)
-            for w in walked where w.rect.intersects(near) { ctx.addPath(renderer.path(w.coords)) }
-            ctx.strokePath()
-        }
-    }
-}
-
 // MARK: - lines
 
 /// Your own lines for the chosen period: one colour, or by travel mode, date or speed; never faded with age.
 struct LinesContent: LayerContent {
     var lines: [(rect: MKMapRect, line: MapLine)]
     var colour: LineColour
-    var edged: Bool   // Streets mode: a dark edge keeps lines apart from the glowing streets
+    var edged: Bool   // a dark edge keeps the lines readable over the map
     var dark: Bool
 
     var style: String { "lines\(colour)\(edged)\(dark)" }

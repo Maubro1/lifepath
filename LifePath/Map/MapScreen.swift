@@ -31,9 +31,6 @@ struct MapData: Sendable {
     var still: [(lat: Double, lon: Double)] = []
     var places: [Place] = []                    // pins visible at the end of the range, in the visible region
     var outlines: [Int64: Set<PlaceCell>] = [:] // their regions, at street zoom only
-    var covered: [(key: String, coords: [(lat: Double, lon: Double)])] = []   // walked streets in the region, in Streets mode
-    var unwalked: [(key: String, coords: [(lat: Double, lon: Double)])] = []  // countable streets not walked yet, in Streets mode
-    var shading: [(key: String, rings: [[(lat: Double, lon: Double)]], holes: [[(lat: Double, lon: Double)]], share: Double)] = []   // neighbourhoods, zoomed out
     var fog: [(key: String, stroke: FogStroke)] = []   // what clears the fog, in Fog mode
     var here: Here?                                    // the area under the map centre, for the place chip
     var today: (distance: Double, steps: Int?, newStreets: Int)?
@@ -247,26 +244,7 @@ struct MapOptions: Equatable {
         let key = Days.key(Date(), .current)
         let day = try diary.days().first { $0.summary.day == key }
         out.today = (day?.summary.distance ?? 0, day?.steps, try diary.newStreets(from: start, to: .distantFuture, bike: q.bike))
-        if q.mode == .streets {   // stored by the street run; the map only reads them
-            // Streets while a 20 m segment is at least 0.5 pt on screen, neighbourhood shading while it is at most 1 pt.
-            if q.metresPerPoint <= 40 {
-                let covered = try diary.coveredWays(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, bike: q.bike)
-                let ids = Set(covered.map(\.id))
-                for w in covered { out.covered.append((key: "\(w.id)", coords: w.coords)) }   // OSM ways are sparse: drawn as stored
-                for w in try diary.ways(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon) where w.countable && !ids.contains(w.id) {
-                    out.unwalked.append((key: "\(w.id)", coords: w.coords))
-                }
-            }
-            if q.metresPerPoint >= 20 {
-                let areas = try diary.areas(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon).filter { progress[$0.id] != nil }
-                // Neighbourhoods; a city only where none of its neighbourhoods has streets.
-                let fine = areas.filter { $0.level > 8 }
-                for a in areas where a.level > 8 || !fine.contains(where: { f in Areas.locate(lat: f.rings[0][0].lat, lon: f.rings[0][0].lon, in: [a]).city != nil }) {
-                    let p = progress[a.id]!
-                    out.shading.append((key: "\(a.id)-\(p.covered)", rings: a.rings, holes: a.holes, share: p.total > 0 ? Double(p.covered) / Double(p.total) : 0))
-                }
-            }
-        } else if q.mode == .heat {
+        if q.mode == .heat {
             // Heat: every cached trip in the region, all time; the busiest cell (4 screen points) sets the scale at this zoom.
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
             let cell = 4 * q.metresPerPoint, k = cos((q.minLat + q.maxLat) / 2 * .pi / 180)
@@ -286,7 +264,7 @@ struct MapOptions: Equatable {
             }
             out.heatMax = passes.values.max() ?? 0
             out.heatPlaces = q.places.compactMap { p in p.pin.map { (lat: $0.lat, lon: $0.lon, hours: p.totalSeconds / 3600) } }
-        } else {
+        } else if q.mode == .fog {
             // Fog: every cached trip line in the region, all time, plus this period's lines so a trip clears at once.
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
             let modes = cached.isEmpty ? [:] : try diary.modes(from: cached.map(\.start).min()!, to: q.to)
