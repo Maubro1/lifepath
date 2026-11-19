@@ -32,7 +32,7 @@ final class HeatRampTests: XCTestCase {
         // A young diary: the busiest spot has one pass, yet that pass must not saturate.
         let one = HeatRamp.level(count: 1, max: 1)
         XCTAssertLessThan(one, 0.25)
-        XCTAssertLessThan(HeatRamp.colour(one).a, 0.4)
+        XCTAssertLessThan(HeatRamp.colour(one).a, 0.2)   // half of v0.9.0's first trace
         XCTAssertLessThan(one, HeatRamp.level(count: 5, max: 5))
         XCTAssertLessThan(HeatRamp.level(count: 5, max: 5), HeatRamp.level(count: 40, max: 40))
         XCTAssertEqual(HeatRamp.level(count: 40, max: 40), 1, accuracy: 1e-9)

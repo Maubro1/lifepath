@@ -18,7 +18,7 @@ struct DayPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Button {
+                if facts == nil || !lines.isEmpty { Button {
                     AppNav.shared.showDay = day
                     AppNav.shared.tab = 0
                 } label: {
@@ -31,9 +31,9 @@ struct DayPage: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Map of this day")
-                .accessibilityHint("Shows this day on the map")
+                .accessibilityHint("Shows this day on the map") }
                 if let f = facts {
-                    HStack(alignment: .top, spacing: 0) {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 16) {
                         fact(Format.distance(f.distance), "moved")
                         fact(Format.duration(f.moving), "moving")
                         if let s = f.steps { fact(s.formatted(), "steps") }
@@ -76,8 +76,8 @@ struct DayPage: View {
 
     private func fact(_ value: String, _ caption: String, accent: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.display(20, relativeTo: .title3)).foregroundStyle(accent ? Color.satsuma : Color.ink)
-                .lineLimit(1).minimumScaleFactor(0.7)
+            Text(value).font(.display(30, relativeTo: .title)).foregroundStyle(accent ? Color.satsuma : Color.ink)
+                .lineLimit(1).minimumScaleFactor(0.6)
             Text(caption).font(.caption).foregroundStyle(Color.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -140,7 +140,7 @@ struct DayPage: View {
                         a.coords.map { Geo.distance(lat, lon, $0.lat, $0.lon) }.min()! < b.coords.map { Geo.distance(lat, lon, $0.lat, $0.lon) }.min()!
                     }?.name
             }
-            let key = day.formatted(.iso8601.year().month().day().dateSeparator(.dash))
+            let key = Days.key(day, .current)
             let summary = (try? diary.days())?.first { $0.summary.day == key }
             let new = (try? diary.newStreets(from: day, to: end, bike: bike)) ?? 0
             return (lines, story, (summary?.summary.distance ?? 0, summary?.summary.movingTime ?? 0, summary?.steps, new))
@@ -149,7 +149,7 @@ struct DayPage: View {
         lines = read.0.map { $0.coords.map { (lat: $0.lat, lon: $0.lon) } }
         story = read.1.filter { if case .stay = $0 { true } else { false } }
         facts = (read.2.0, read.2.1, read.2.2, read.2.3)
-        picture = await DaySnapshot.image(key: day.formatted(.iso8601.year().month().day()), lines: lines, dark: scheme == .dark,
+        picture = await DaySnapshot.image(key: Days.key(day, .current), lines: lines, dark: scheme == .dark,
                                           size: CGSize(width: 360, height: 220))
     }
 }

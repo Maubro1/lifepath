@@ -52,9 +52,7 @@ struct SettingsView: View {
                     if let hint = s.hint { Text(hint) }
                     LabeledContent("Last point", value: time(recorder.lastPoint))
                     LabeledContent("Last location check", value: time(recorder.lastCheckIn))
-                    let stepCounting = MotionService.stepCounting
-                    LabeledContent("Step counting", value: stepCounting)
-                    if ["Off", "Not set up"].contains(stepCounting) {
+                    if ["Off", "Not set up"].contains(MotionService.stepCounting) {   // only shown when it needs fixing
                         Button("Open iOS Settings") {
                             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                         }
@@ -107,12 +105,6 @@ struct SettingsView: View {
                             do { backup = try await recorder.backup(); movingBackup = true } catch { backupError = error.localizedDescription }
                         }
                     }
-                    .fileMover(isPresented: $movingBackup, file: backup) { result in
-                        switch result {
-                        case .success: lastBackup = Date().timeIntervalSince1970
-                        case .failure: if let backup { try? FileManager.default.removeItem(at: backup) }   // cancelled: no copy left in tmp
-                        }
-                    }
                     LabeledContent {
                         HStack(spacing: 6) {
                             if backupOld { Circle().fill(Color.satsuma).frame(width: 8, height: 8).accessibilityHidden(true) }
@@ -160,7 +152,17 @@ struct SettingsView: View {
             .refreshable { refresh() }
             .onAppear { refresh() }
             .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
-            .fileExporter(isPresented: $exporting, document: report, contentType: .plainText, defaultFilename: filename) { _ in }
+            .background {   // each file dialog on its own leaf: nested file modifiers silently cancel each other
+                ZStack {
+                    Color.clear.fileExporter(isPresented: $exporting, document: report, contentType: .plainText, defaultFilename: filename) { _ in }
+                    Color.clear.fileMover(isPresented: $movingBackup, file: backup) { result in
+                        switch result {
+                        case .success: lastBackup = Date().timeIntervalSince1970
+                        case .failure: if let backup { try? FileManager.default.removeItem(at: backup) }   // cancelled: no copy left in tmp
+                        }
+                    }
+                }
+            }
             .alert("Backup failed", isPresented: Binding { backupError != nil } set: { if !$0 { backupError = nil } }) {} message: {
                 Text(backupError ?? "")
             }

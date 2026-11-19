@@ -5,7 +5,7 @@ import Foundation
 public enum HeatRamp {
     /// Stops of the ramp: (position, colour 0xRRGGBB, alpha).
     static let stops: [(v: Double, rgb: UInt32, a: Double)] = [
-        (0, 0xE7B547, 0), (0.15, 0xE7B547, 0.3), (0.4, 0xF08C4E, 0.65), (0.7, 0xE0503F, 0.88), (1, 0xFFE9C8, 1),
+        (0, 0xE7B547, 0), (0.15, 0xE7B547, 0.08), (0.4, 0xF08C4E, 0.65), (0.7, 0xE0503F, 0.88), (1, 0xFFE9C8, 1),
     ]
 
     /// Colour at `v` in 0...1, linear between stops.

@@ -9,7 +9,7 @@ import SwiftUI
         let cal = Calendar.current, a = cal.startOfDay(for: min(first, last))
         let b = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: max(first, last)))!
         var keys: [String] = [], d = a
-        while d < b { keys.append(d.formatted(.iso8601.year().month().day().dateSeparator(.dash))); d = cal.date(byAdding: .day, value: 1, to: d)! }
+        while d < b { keys.append(Days.key(d, .current)); d = cal.date(byAdding: .day, value: 1, to: d)! }
         let n = await Task.detached(priority: .userInitiated) { [keys] in try? diary.deleteRecords(from: a, to: b, days: keys) }.value
         PlaceService.shared.places = (try? diary.places()) ?? PlaceService.shared.places
         Recorder.shared.log("delete", "\(keys.count) days")

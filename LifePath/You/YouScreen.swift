@@ -194,14 +194,10 @@ private struct DayRow: View {
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(Format.dayTitle(date)).font(.headline).foregroundStyle(Color.ink)
-                HStack(spacing: 14) {
-                    if day.moving > 0 {
-                        Text(Format.distance(day.distance))
-                        Text(Format.duration(day.moving))
-                    } else { Text("No trips") }
-                    if let s = day.steps { Text("\(s.formatted()) steps") }
-                }
-                .font(.subheadline.monospacedDigit()).foregroundStyle(Color.muted)
+                Text(((day.moving > 0 ? [Format.distance(day.distance), Format.duration(day.moving)] : ["No trips"])
+                      + (day.steps.map { ["\($0.formatted()) steps"] } ?? []))
+                    .map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: "\u{2003}"))
+                    .font(.subheadline.monospacedDigit()).foregroundStyle(Color.muted)
                 if day.new > 0 {
                     Text("+\(day.new) new \(day.new == 1 ? "street" : "streets")").font(.subheadline.weight(.semibold)).foregroundStyle(Color.satsuma)
                 }

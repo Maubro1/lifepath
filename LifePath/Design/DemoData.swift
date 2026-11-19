@@ -97,7 +97,7 @@ enum DemoData {
             lines.append(TripLine(start: start, end: walkEnd, minLat: home.lat, maxLat: work.lat, minLon: home.lon, maxLon: work.lon,
                                   distance: 1500, coords: trip.filter { $0.kind == .moving }.map { ($0.lat, $0.lon, 1.4) }))
             visits += [Visit(start: day, end: start, placeId: 1), Visit(start: walkEnd, end: day.addingTimeInterval(14.5 * 3600), placeId: 2)]
-            let key = day.formatted(.iso8601.year().month().day().dateSeparator(.dash))
+            let key = Days.key(day, .current)
             days.append(DaySummary(day: key, distance: d % 2 == 0 ? 8_100 : 1_500, movingTime: d % 2 == 0 ? 1_900 : 1_100, walked: 1_500, points: trip.count))
             steps.append(DaySteps(day: key, steps: 4_000 + d * 900, distance: 1_500, floorsUp: 3))
         }

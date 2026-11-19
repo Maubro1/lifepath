@@ -244,7 +244,7 @@ struct MapOptions: Equatable {
             out.here = Here(name: progress[a.id] != nil ? a.name : city.name, cityId: city.id, covered: p.covered, total: p.total)
         }
         let start = Calendar.current.startOfDay(for: Date())
-        let key = Date().formatted(.iso8601.year().month().day().dateSeparator(.dash))
+        let key = Days.key(Date(), .current)
         let day = try diary.days().first { $0.summary.day == key }
         out.today = (day?.summary.distance ?? 0, day?.steps, try diary.newStreets(from: start, to: .distantFuture, bike: q.bike))
         if q.mode == .streets {   // stored by the street run; the map only reads them

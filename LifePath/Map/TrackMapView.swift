@@ -98,7 +98,7 @@ struct TrackMapView: UIViewRepresentable {
             shading: data.shading.map { ($0.key, mapRect($0.rings.flatMap { $0 }, pad: 0), $0.rings, $0.holes, $0.share) }, dark: dark) : nil)
         c.fogRenderer.set(mode == .fog ? FogContent(data.fog, dark: dark) : nil)
         c.heatRenderer.set(mode == .heat ? HeatContent(data.heatLines, places: data.heatPlaces, max: data.heatMax, dark: dark) : nil)
-        c.linesRenderer.set(LinesContent(data.lines, colour: colour, edged: mode == .streets, dark: dark))
+        c.linesRenderer.set(mode == .streets ? LinesContent(data.lines, colour: colour, edged: true, dark: dark) : nil)
         // Overlays are keyed: unchanged ones stay on the map, new ones are added before stale ones go, so nothing blinks.
         var wanted: [(key: String, level: MKOverlayLevel, make: () -> MKOverlay)] = []
         for (id, cells) in data.outlines {
