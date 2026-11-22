@@ -17,7 +17,7 @@ public struct ModeStretch: Sendable, Equatable, Codable {
 /// Travel mode per stretch: a small Hidden Markov Model over 30 s windows of a trip, decoded with Viterbi in log space.
 /// Features: CoreMotion activity, speed, halts at mapped stops, nearness to each network, share of rough fixes.
 public enum TravelModes {
-    public static let version = 4   // 4: rides linked across signal gaps (Transit.link); re-matches history once
+    public static let version = 5   // 5: rides anchored to the platform (Transit.link); re-matches history once
     public static let confident = 0.6
 
     /// What one 30 s window shows.
