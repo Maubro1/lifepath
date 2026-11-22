@@ -207,14 +207,21 @@ enum StreetService {
             func foot(_ k: Int) -> Bool { modes.indices.contains(k) && [.walk, .run, .bike].contains(modes[k].mode) }
             for (k, m) in modes.enumerated() {
                 if foot(k) { if m.end.timeIntervalSince(m.start) > 120 { try flush(); previous = nil }; continue }   // a real walk ends any ride
-                // The walk's last and first minute around the ride: the switch to riding is noticed up to 30 s late, past the platform.
                 let before = foot(k - 1), after = foot(k + 1)
-                let points = trip.points.filter { $0.kind != .still && $0.t >= m.start.addingTimeInterval(before ? -60 : 0) && $0.t <= m.end.addingTimeInterval(after ? 60 : 0) }
+                let points = trip.points.filter { $0.kind != .still && $0.t >= m.start && $0.t <= m.end }
                 guard let first = points.first else { continue }
                 var joins = false
                 if let p = previous, first.t.timeIntervalSince(p) <= 3 * 3600 { joins = try diary.visits(from: p, to: first.t).isEmpty }
                 if !joins { try flush() }
-                run.append(Transit.Piece(points: points, walkBefore: before, walkAfter: after, joins: joins))
+                // Where you stood before and after the ride: the last precise fix before it and the first after it (the platform, or the
+                // walk's end; the switch to riding is noticed late, past the station). Waiting for a train records nothing new once you
+                // are still, so it may be up to 90 min back, never past an earlier ride of this trip.
+                let last = points.last!
+                let since = max(first.t.addingTimeInterval(-5400), k > 0 && !foot(k - 1) ? modes[k - 1].end : .distantPast)
+                let until = min(last.t.addingTimeInterval(5400), k + 1 < modes.count && !foot(k + 1) ? modes[k + 1].start : .distantFuture)
+                let lead = try diary.points(from: since, to: first.t).last { $0.t < first.t && $0.hAcc <= 50 }
+                let tail = try diary.points(from: last.t, to: until).first { $0.t > last.t && $0.hAcc <= 50 }
+                run.append(Transit.Piece(points: points, walkBefore: before, walkAfter: after, joins: joins, lead: lead, tail: tail))
                 owner.append((trip, m.seq))
                 previous = points.last!.t
             }

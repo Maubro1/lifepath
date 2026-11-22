@@ -188,6 +188,9 @@ struct LinesContent: LayerContent {
         switch colour {
         case .plain: return Palette.satsuma
         case .date: let r = Palette.dateRamp(1 - l.dateFraction); return Hex(light: r.light, dark: r.dark)
+        case .speed:   // in eighth steps of the log scale: runs of one colour stay long, so a line is a few strokes, not hundreds
+            let kmh = Swift.max(1, l.speeds[i] * 3.6), r = Palette.speedRamp(exp((log(kmh) * 8).rounded() / 8))
+            return Hex(light: r.light, dark: r.dark)
         }
     }
 

@@ -88,28 +88,32 @@ public enum Transit {
         return line.count == 1 ? Geo.distance(p.lat, p.lon, line[0].lat, line[0].lon) : best
     }
 
-    /// A ride stretch the street run could not snap on its own: its fixes, whether a walk touches it on each side, and
-    /// whether it may join the piece before it (no stay, no long walk and under 3 h between them).
+    /// A ride stretch: its fixes, whether a walk touches it on each side, whether it may join the piece before it (no stay,
+    /// no long walk and under 3 h between them), and the last precise fix before it and the first after it (`lead`, `tail`:
+    /// where you stood on the platform; a ride's own first and last fixes are often rough and hundreds of metres off).
     public struct Piece: Sendable {
         public var points: [FilteredPoint]
         public var walkBefore, walkAfter, joins: Bool
-        public init(points: [FilteredPoint], walkBefore: Bool, walkAfter: Bool, joins: Bool) {
-            self.points = points; self.walkBefore = walkBefore; self.walkAfter = walkAfter; self.joins = joins
+        public var lead, tail: FilteredPoint?
+        public init(points: [FilteredPoint], walkBefore: Bool, walkAfter: Bool, joins: Bool, lead: FilteredPoint? = nil, tail: FilteredPoint? = nil) {
+            self.points = points; self.walkBefore = walkBefore; self.walkAfter = walkAfter; self.joins = joins; self.lead = lead; self.tail = tail
         }
     }
 
     /// Rides cut into pieces by signal gaps or long station stops, linked back together: consecutive pieces that joined
     /// match one route between two stations (`match`), each end settled at its station, and every gap passable by train.
-    /// Returns, per linked piece, its share of the route's track; the share runs on to the next piece, so gaps are drawn too.
+    /// Returns, per piece of each ride (one piece or more), its share of the route's track; a share runs on to the next piece,
+    /// so gaps are drawn too.
     public static func link(_ pieces: [Piece], routes: [Route]) -> [(piece: Int, stretch: MatchedStretch, mode: TravelMode)] {
         var out: [(piece: Int, stretch: MatchedStretch, mode: TravelMode)] = [], i = 0
         while i < pieces.count {
-            // From the piece alone on: one the trip already snapped on a station blip gets relinked with its neighbours.
+            // From the piece alone on: one the trip snapped on a station blip, or not at all, gets another chance here.
             var j = i, found = false
             while !found, j < pieces.count, j - i <= 8, j == i || pieces[j].joins {
                 defer { if !found { j += 1 } }
-                let all = pieces[i...j].flatMap(\.points)
-                guard let m = match(all, routes: routes) else { continue }
+                let plain = pieces[i...j].flatMap(\.points), lead = pieces[i].lead, tail = pieces[j].tail
+                let anchored = (lead.map { [$0] } ?? []) + plain + (tail.map { [$0] } ?? [])
+                guard let m = match(anchored, routes: routes) ?? (anchored.count > plain.count ? match(plain, routes: routes) : nil) else { continue }
                 let r = m.route, rad = radius(r.mode)
                 // A station passed at speed is a blip: an end counts when a walk touches it or the fixes stay there 30 s.
                 func dwell(_ ps: [FilteredPoint], _ s: Route.Stop) -> Bool {
@@ -117,8 +121,10 @@ public enum Transit {
                     guard let first = t.min(), let last = t.max() else { return false }
                     return last.timeIntervalSince(first) >= 30
                 }
-                guard pieces[i].walkBefore || dwell(pieces[i].points, r.stops[m.from]),
-                      pieces[j].walkAfter || dwell(pieces[j].points, r.stops[m.to]) else { continue }
+                // Standing on the platform before or after the ride settles that end too.
+                func at(_ p: FilteredPoint?, _ s: Route.Stop) -> Bool { p.map { Geo.distance($0.lat, $0.lon, s.lat, s.lon) <= rad } ?? false }
+                guard pieces[i].walkBefore || at(lead, r.stops[m.from]) || dwell(pieces[i].points, r.stops[m.from]),
+                      pieces[j].walkAfter || at(tail, r.stops[m.to]) || dwell(pieces[j].points, r.stops[m.to]) else { continue }
                 // Metres along the matched track to a fix (its nearest vertex).
                 var cum = [0.0]
                 for (a, b) in zip(m.path, m.path.dropFirst()) { cum.append(cum[cum.count - 1] + Geo.distance(a.lat, a.lon, b.lat, b.lon)) }
@@ -133,11 +139,10 @@ public enum Transit {
                 }
                 guard passable else { continue }
                 found = true
-                guard j > i else { break }   // a ride of one piece is the trip's own snap, already stored
-                let base = stretch(r, from: m.from, to: m.to, start: all[0].t, end: all[all.count - 1].t).fromM
+                let base = stretch(r, from: m.from, to: m.to, start: plain[0].t, end: plain[plain.count - 1].t).fromM, end = base + cum[cum.count - 1]
                 var from = base
                 for k in i...j {
-                    let to = k == j ? base + cum[cum.count - 1] : max(from, base + along(pieces[k + 1].points[0]))
+                    let to = k == j ? end : min(end, max(from, base + along(pieces[k + 1].points[0])))
                     out.append((k, MatchedStretch(seq: 0, wayId: -r.id, fromM: from, toM: to, confidence: 1,
                                                   start: pieces[k].points[0].t, end: pieces[k].points.last!.t), r.mode))
                     from = to
@@ -151,7 +156,8 @@ public enum Transit {
     /// The matched ride as a stretch on the route's track (way id = -relation id), from stop `i` to stop `j`.
     public static func stretch(_ r: Route, from i: Int, to j: Int, start: Date, end: Date) -> MatchedStretch {
         func along(_ v: Int) -> Double {
-            zip(r.path[0..<v], r.path[1...v]).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.reduce(0, +)
+            // `1...v` would trap for a ride from the line's first stop
+            zip(r.path[..<v], r.path.dropFirst().prefix(v)).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.reduce(0, +)
         }
         return MatchedStretch(seq: 0, wayId: -r.id, fromM: along(vertex(r.path, near: r.stops[i])), toM: along(vertex(r.path, near: r.stops[j])),
                               confidence: 1, start: start, end: end)

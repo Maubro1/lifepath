@@ -40,6 +40,20 @@ public enum Palette {
         return (mix(a.light, b.light, t), mix(a.dark, b.dark, t))
     }
 
+    /// Line colour by speed, slow to fast: teal at walking pace, olive, mustard, satsuma, cherry, plum from 160 km/h.
+    /// On a log scale, so a walk and a bike ride differ as clearly as a car and a train; speeds only, never a mode.
+    public static let speedStops: [(kmh: Double, colour: Hex)] = [
+        (4, Hex(light: 0x227A72, dark: 0x5DB8AC)), (12, Hex(light: 0x5A842C, dark: 0x9DC46A)), (25, mustard), (50, satsuma), (100, cherry),
+        (160, Hex(light: 0x7A2E5C, dark: 0xC47AA8)),
+    ]
+
+    public static func speedRamp(_ kmh: Double) -> (light: UInt32, dark: UInt32) {
+        let s = speedStops, v = min(s[s.count - 1].kmh, max(s[0].kmh, kmh))
+        let k = s.lastIndex { $0.kmh <= v }!, a = s[k], b = s[min(k + 1, s.count - 1)]
+        let t = b.kmh > a.kmh ? log(v / a.kmh) / log(b.kmh / a.kmh) : 0
+        return (mix(a.colour.light, b.colour.light, t), mix(a.colour.dark, b.colour.dark, t))
+    }
+
     static func mix(_ a: UInt32, _ b: UInt32, _ t: Double) -> UInt32 {
         (0..<3).reduce(0) { acc, k in
             let s = UInt32(16 - 8 * k)

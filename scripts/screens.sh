@@ -33,6 +33,10 @@ for appearance in light dark; do
     sleep 15
     xcrun simctl io "$UDID" screenshot "screens/heat-v$v-$appearance.png"
   done
+  # Lines coloured by speed (the stored choice, passed as a launch argument).
+  xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen streets -appearance "$appearance" -lineColour "By speed"
+  sleep 15
+  xcrun simctl io "$UDID" screenshot "screens/speed-$appearance.png"
   for v in ${FOG_VARIANTS:-}; do
     xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen fog -variant "$v" -appearance "$appearance"
     sleep 15

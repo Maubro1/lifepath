@@ -41,7 +41,15 @@ struct LayersSheet: View {
 
     @ViewBuilder private var legend: some View {
         if colour == .date { HStack { swatch(Palette.mustard, "Newest"); swatch(Palette.satsuma, "Middle"); swatch(Palette.cherry, "Oldest") } }
+        if colour == .speed {
+            HStack {   // the unit once, so four swatches fit a phone's width
+                ForEach([5.0, 25, 80, 160], id: \.self) { k in swatch(ramp(k), k == 160 ? "160+" : "\(Int(k))") }
+                Text("km/h").font(.footnote).foregroundStyle(Color.muted)
+            }
+        }
     }
+
+    private func ramp(_ kmh: Double) -> Hex { let r = Palette.speedRamp(kmh); return Hex(light: r.light, dark: r.dark) }
 
     private func swatch(_ h: Hex, _ label: String) -> some View {
         HStack(spacing: 6) {

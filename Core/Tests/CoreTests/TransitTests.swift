@@ -27,6 +27,12 @@ final class TransitTests: XCTestCase {
         Transit.Piece(points: ride(from, to).map { var p = $0; p.t += after; return p }, walkBefore: walkBefore, walkAfter: walkAfter, joins: joins)
     }
 
+    func testRideFromTheFirstStop() {
+        // A terminus sits on the track's first vertex: the stretch starts at 0 m instead of trapping.
+        let s = Transit.stretch(line(1), from: 0, to: 2, start: t0, end: t0 + 300)
+        XCTAssertEqual(s.fromM, 0); XCTAssertEqual(s.toM, 4000, accuracy: 1)
+    }
+
     func testLinksPiecesAcrossAGap() throws {
         // Boarded at 2 km, no signal from 4.5 to 6 km for 5 minutes, alighted at 8 km: one ride, drawn without a gap.
         let out = Transit.link([piece(2000, 4500, after: 0, walkBefore: true), piece(6000, 8000, after: 400, walkAfter: true)], routes: [line(1)])
@@ -50,9 +56,24 @@ final class TransitTests: XCTestCase {
         let out = Transit.link([piece(2000, 6000, after: 0, walkBefore: true), piece(6250, 8000, after: 200, walkAfter: true)], routes: [line(1)])
         XCTAssertEqual(out.map(\.piece), [0, 1])
         XCTAssertEqual(out[1].stretch.toM, 8000, accuracy: 1)
-        // A piece settled at both ends is its own ride: nothing to link.
-        XCTAssertTrue(Transit.link([piece(2000, 6000, after: 0, walkBefore: true, walkAfter: true), piece(6250, 8000, after: 200, walkAfter: true)],
-                                   routes: [line(1)]).isEmpty)
+        // A piece settled at both ends is its own ride; the next one, starting 250 m past the station, stays unsnapped.
+        XCTAssertEqual(Transit.link([piece(2000, 6000, after: 0, walkBefore: true, walkAfter: true), piece(6250, 8000, after: 200, walkAfter: true)],
+                                    routes: [line(1)]).map(\.piece), [0])
+    }
+
+    func testRoughEndsAnchoredOnThePlatform() throws {
+        // The ride's first and last fixes are 400 m past the stations (rough, late); you stood on the platforms just before and after.
+        var p = piece(2400, 7600, after: 60)
+        let at = { (e: Double, t: Double) -> FilteredPoint in
+            let c = self.at(e, 5); return FilteredPoint(t: self.t0 + t, lat: c.lat, lon: c.lon, rawLat: c.lat, rawLon: c.lon, hAcc: 10, speed: 0, kind: .still)
+        }
+        p.lead = at(2000, 0); p.tail = at(8000, 400)
+        let out = Transit.link([p], routes: [line(1)])
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].stretch.fromM, 2000, accuracy: 1)
+        XCTAssertEqual(out[0].stretch.toM, 8000, accuracy: 1)
+        XCTAssertEqual(out[0].stretch.start, p.points[0].t)   // shares keep the trip's own times, so the line finds them
+        XCTAssertTrue(Transit.link([piece(2400, 7600, after: 60)], routes: [line(1)]).isEmpty)   // without anchors: no station near either end
     }
 
     func testImpossibleGapOrStayIsNotLinked() {

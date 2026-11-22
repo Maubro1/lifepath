@@ -3,7 +3,7 @@ import Diary
 import MapKit
 import SwiftUI
 
-enum LineColour: String, CaseIterable { case plain = "One colour", date = "By age" }
+enum LineColour: String, CaseIterable { case plain = "One colour", date = "By age", speed = "By speed" }
 
 /// What the map shows filling up: walked streets lit, or fog cleared where you have been.
 enum MapMode: String, CaseIterable {
