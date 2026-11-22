@@ -213,6 +213,7 @@ final class DiaryTests: XCTestCase {
         try diary.saveTripLines([b, a], replacingFrom: d(0))
         XCTAssertEqual(try diary.tripLines(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90, from: d(0), to: d(1000)), [a, b])
         XCTAssertEqual(try diary.tripLinesUntil(), d(400))
+        XCTAssertEqual(try diary.tripLinesSince(), d(100))
     }
 
     func testTripLineOverlapQueries() throws {

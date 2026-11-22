@@ -78,7 +78,9 @@ struct TrackMapView: UIViewRepresentable {
     func updateUIView(_ map: MKMapView, context: Context) {
         let c = context.coordinator
         c.parent = self
-        if map.directionalLayoutMargins.bottom != bottomInset { map.directionalLayoutMargins.bottom = bottomInset }
+        // Compared with what we last set, never with the map's own margins: iOS reports them with the safe area added, so that
+        // comparison never matched, and re-setting margins on every update re-laid out the map, which reloaded and redrew the lines.
+        if c.inset != bottomInset { c.inset = bottomInset; map.directionalLayoutMargins.bottom = bottomInset }
         if map.showsUserLocation != visible { map.showsUserLocation = visible }   // location only while on screen
         if let target, !(c.flown.map { MKMapRectEqualToRect($0, target) } ?? false) {
             c.flown = target
@@ -139,6 +141,7 @@ struct TrackMapView: UIViewRepresentable {
         var shownColour = LineColour.plain
         var shownDark = false
         var flown: MKMapRect?
+        var inset: CGFloat = -1   // the bottom margin last set
         let fog = LayerOverlay(), lines = LayerOverlay(), heat = LayerOverlay()
         lazy var heatRenderer = LayerRenderer(overlay: heat)
         lazy var fogRenderer = LayerRenderer(overlay: fog)

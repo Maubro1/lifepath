@@ -356,6 +356,13 @@ public final class Diary: Sendable {
         }
     }
 
+    /// The first cached trip's start: a fixed origin for colouring lines by age, whatever part of the map is loaded.
+    public func tripLinesSince() throws -> Date? {
+        try pool.read { db in
+            try Double.fetchOne(db, sql: "SELECT MIN(start) FROM tripLine").map { Date(timeIntervalSince1970: $0) }
+        }
+    }
+
     public func tripLinesUntil() throws -> Date? {
         try pool.read { db in
             try Double.fetchOne(db, sql: "SELECT MAX(end) FROM tripLine").map { Date(timeIntervalSince1970: $0) }

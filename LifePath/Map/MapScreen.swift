@@ -277,7 +277,9 @@ struct MapOptions: Equatable {
             }
             for st in Fog.circles(places: q.places) { out.fog.append(("p\(st.coords[0].lat),\(st.coords[0].lon)", st)) }
         }
-        let lo = q.from == .distantPast ? (trips.map(\.start).min() ?? q.to) : q.from
+        // All time ages from the diary's first trip, not the first one in view: a key holds the age, so a per-view origin would
+        // re-key every line on each pan and make the map redraw all of them.
+        let lo = q.from == .distantPast ? (try diary.tripLinesSince() ?? trips.map(\.start).min() ?? q.to) : q.from
         let span = max(1, q.to.timeIntervalSince(lo))
         try Task.checkCancellation()
         // shortcut: past the vertex budget lines are thinned by Douglas–Peucker, which can change shapes; upgrade to a global Visvalingam cut if huge ranges show it
