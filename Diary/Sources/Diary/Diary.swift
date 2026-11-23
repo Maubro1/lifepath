@@ -228,6 +228,23 @@ public final class Diary: Sendable {
         }
     }
 
+    /// Replaces the cached lines touching `from...line.end` with `line` (stale ones in the gap before it go too); lines after
+    /// it stay until their own trip is saved, so a rebuild never empties the map while it runs.
+    public func replaceTripLines(with l: TripLine, from: Date) throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM tripLine WHERE end > ? AND start <= ?", arguments: [from.timeIntervalSince1970, l.end.timeIntervalSince1970])
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO tripLine(start, end, minLat, maxLat, minLon, maxLon, distance, coords, topSpeed) VALUES (?,?,?,?,?,?,?,?,?)",
+                arguments: [l.start.timeIntervalSince1970, l.end.timeIntervalSince1970, l.minLat, l.maxLat, l.minLon, l.maxLon,
+                            l.distance, Self.encode(l.coords), l.topSpeed])
+        }
+    }
+
+    /// Drops cached lines that start after `t`: what a finished rebuild did not save again (pottering that is no trip now).
+    public func deleteTripLines(startingAfter t: Date) throws {
+        try pool.write { db in try db.execute(sql: "DELETE FROM tripLine WHERE start > ?", arguments: [t.timeIntervalSince1970]) }
+    }
+
     /// Deletes everything recorded in `from..<to` (local days the caller chose): points, smoothed points, trip lines and
     /// matching of trips overlapping it, visits, motion activity, day summaries and steps of those days. A place known only
     /// from deleted visits goes too. Coverage is marked for recounting. One transaction; returns the points deleted.

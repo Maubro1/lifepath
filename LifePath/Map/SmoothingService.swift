@@ -27,6 +27,7 @@ enum SmoothingService {
             try diary.tripLines(minLat: -90, maxLat: 90, minLon: -180, maxLon: 180, from: u, to: .distantFuture).map(\.start).min() ?? u
         } ?? .distantPast
         var trips = 0, points = 0, lines = 0
+        var lastEnd: Date?   // end of the last line saved in this run
         func process(_ split: [Trip]) async throws {
             for trip in split {
                 try Task.checkCancellation()
@@ -45,7 +46,9 @@ enum SmoothingService {
                 let byT = Dictionary(smooth.map { ($0.t, (lat: $0.lat, lon: $0.lon)) }, uniquingKeysWith: { a, _ in a })
                 let matches = try diary.matches(tripStart: trip.start)
                 let ways = Dictionary(try diary.ways(ids: Array(Set(matches.map(\.wayId)))).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-                try diary.saveTripLines([TripLines.snapped(trip, smoothed: byT, matches: matches, ways: ways)], replacingFrom: trip.start)
+                // In place: the old line stays drawn until this one replaces it, and stale lines between trips go with it.
+                try diary.replaceTripLines(with: TripLines.snapped(trip, smoothed: byT, matches: matches, ways: ways), from: lastEnd ?? trip.start)
+                lastEnd = trip.end
                 lines += 1
             }
         }
@@ -59,6 +62,7 @@ enum SmoothingService {
             after = chunk[chunk.count - 1].t
         }
         try await process(Trips.split(carry))
+        if resmooth, let lastEnd { try diary.deleteTripLines(startingAfter: lastEnd) }   // a finished rebuild drops what it did not save
         if resmooth { try diary.setMeta(versionKey, version) }
         return (trips, points, lines)
     }

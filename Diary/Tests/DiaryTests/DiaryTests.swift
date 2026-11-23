@@ -784,4 +784,16 @@ final class DiaryTests: XCTestCase {
         try diary.saveMatches(tripStart: d(100), [walk, after, ride], modes: [])
         XCTAssertEqual(try diary.matches(tripStart: d(100)).map(\.wayId), [1, -7, 2])
     }
+
+    /// A rebuild replaces lines in place: later lines stay until replaced, stale ones in the gap go, the tail is dropped at the end.
+    func testTripLinesReplacedInPlace() throws {
+        let diary = try Diary(path: tempPath())
+        try diary.saveTripLines([line(100, 200), line(250, 260), line(300, 400), line(500, 600)], replacingFrom: d(0))
+        try diary.replaceTripLines(with: line(100, 210), from: d(100))
+        XCTAssertEqual(try diary.tripLines(from: d(0), to: d(1000)).map(\.end), [d(210), d(260), d(400), d(600)], "later lines stay")
+        try diary.replaceTripLines(with: line(300, 400), from: d(210))   // the pottering line at 250 goes
+        XCTAssertEqual(try diary.tripLines(from: d(0), to: d(1000)).map(\.start), [d(100), d(300), d(500)])
+        try diary.deleteTripLines(startingAfter: d(400))
+        XCTAssertEqual(try diary.tripLines(from: d(0), to: d(1000)).map(\.start), [d(100), d(300)])
+    }
 }
