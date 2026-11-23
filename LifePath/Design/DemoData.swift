@@ -79,12 +79,13 @@ enum DemoData {
             points += side
             try diary.saveMatches(tripStart: eve, [], modes: [ModeStretch(seq: 0, mode: .walk, confidence: 0.9, start: eve, end: side.last!.t)])
             lines.append(TripLine(start: eve, end: side.last!.t, minLat: side.first!.lat, maxLat: side.last!.lat, minLon: side.first!.lon,
-                                  maxLon: side.first!.lon, distance: 1190, coords: side.map { ($0.lat, $0.lon, 1.4) }))
+                                  maxLon: side.first!.lon, distance: 1190, coords: side.map { ($0.lat, $0.lon, 1.4) }, topSpeed: TripLines.topSpeed(side)))
             if d % 2 == 0 {   // a train ride along the rail in the afternoon
                 let ride = day.addingTimeInterval(15 * 3600)
                 trip += (0..<60).map { k in
                     let p = at(-400 + sin(Double(k) / 6) * 12, -3000 + Double(k) * 110)
-                    return FilteredPoint(t: ride + Double(k) * 10, lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon, hAcc: 180, speed: 22, kind: .rough)
+                    // 110 m every 6 s: 66 km/h, so the train sits on the fast side of the top-speed filter
+                    return FilteredPoint(t: ride + Double(k) * 6, lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon, hAcc: 180, speed: 22, kind: .rough)
                 }
             }
             points += trip
@@ -95,7 +96,8 @@ enum DemoData {
             try diary.saveMatches(tripStart: start, [], modes: modes)
             let walkEnd = trip.filter { $0.kind == .moving }.last!.t
             lines.append(TripLine(start: start, end: walkEnd, minLat: home.lat, maxLat: work.lat, minLon: home.lon, maxLon: work.lon,
-                                  distance: 1500, coords: trip.filter { $0.kind == .moving }.map { ($0.lat, $0.lon, 1.4) }))
+                                  distance: 1500, coords: trip.filter { $0.kind == .moving }.map { ($0.lat, $0.lon, 1.4) },
+                                  topSpeed: TripLines.topSpeed(trip.filter { $0.kind == .moving })))
             visits += [Visit(start: day, end: start, placeId: 1), Visit(start: walkEnd, end: day.addingTimeInterval(14.5 * 3600), placeId: 2)]
             let key = Days.key(day, .current)
             days.append(DaySummary(day: key, distance: d % 2 == 0 ? 8_100 : 1_500, movingTime: d % 2 == 0 ? 1_900 : 1_100, walked: 1_500, points: trip.count))

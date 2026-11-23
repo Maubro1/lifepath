@@ -9,6 +9,44 @@ final class TripLineTests: XCTestCase {
         return Trip(points: pts, start: pts[0].t, end: pts[pts.count - 1].t, distance: 123, movingTime: 10)
     }
 
+    /// Points at times `ts` (s) with Doppler `speeds` (m/s); kind rough where speed is nil.
+    func points(_ ts: [Double], _ speeds: [Double?], north: [Double]? = nil) -> [FilteredPoint] {
+        zip(ts, speeds).enumerated().map { i, x in
+            let p = Geo.offset(lat: 52, lon: 4, north: north?[i] ?? 0, east: 0)
+            return FilteredPoint(t: Date(timeIntervalSince1970: x.0), lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon,
+                                 hAcc: x.1 == nil ? 900 : 5, speed: x.1 ?? -1, kind: x.1 == nil ? .rough : .moving)
+        }
+    }
+
+    func testTopSpeedIgnoresSpikeAndShortStretches() {
+        // A 20 min bike ride at 5 m/s with one 24 m/s (87 km/h) spike: despiked, top speed stays a bike's.
+        let ts = (0...1200).map(Double.init)
+        var v: [Double?] = ts.map { _ in 5 }; v[600] = 24
+        XCTAssertEqual(TripLines.topSpeed(points(ts, v)), 5, accuracy: 0.01)
+        // A walk to the station (10 min at 1.4) then 20 min of train at 30 m/s: the train decides.
+        let walk = (0..<600).map { _ in 1.4 } as [Double?], train = (0..<1200).map { _ in 30.0 } as [Double?]
+        XCTAssertEqual(TripLines.topSpeed(points((0..<1800).map(Double.init), walk + train)), 30, accuracy: 0.01)
+    }
+
+    func testTopSpeedIsHeldFor15sAndWeighsTime() {
+        // Walking with a point every 7 s, then 2 min cycling at 6 m/s with a point every second: 6, whatever the point counts.
+        let w = stride(from: 0.0, to: 600, by: 7).map { $0 }, c = (0..<120).map { 600 + Double($0) }
+        XCTAssertEqual(TripLines.topSpeed(points(w + c, w.map { _ in 1.4 } + c.map { _ in 6 })), 6, accuracy: 0.01)
+        // A city bus: 5 min at 6 m/s with one 20 s run at 14 m/s (50 km/h) between lights counts as 14.
+        let ts = (0..<300).map(Double.init)
+        XCTAssertEqual(TripLines.topSpeed(points(ts, ts.map { $0 >= 100 && $0 < 120 ? 14 : 6 })), 14, accuracy: 0.01)
+        // 8 s at 14 is too short to hold for 15 s: (8 × 14 + 7 × 6) / 15.
+        XCTAssertEqual(TripLines.topSpeed(points(ts, ts.map { $0 >= 100 && $0 < 108 ? 14 : 6 })), (8 * 14 + 7 * 6) / 15.0, accuracy: 0.01)
+        // A 10 s trip: its mean.
+        XCTAssertEqual(TripLines.topSpeed(points((0...10).map(Double.init), (0...10).map { _ in 2 })), 2, accuracy: 0.01)
+    }
+
+    func testTopSpeedOfRoughTrainRunIsEndToEnd() {
+        // Only rough fixes, 10 km in 300 s: 33.3 m/s; no known speed at all is -1.
+        XCTAssertEqual(TripLines.topSpeed(points([0, 150, 300], [nil, nil, nil], north: [0, 5000, 10_000])), 10_000 / 300, accuracy: 0.5)
+        XCTAssertEqual(TripLines.topSpeed(points([0, 10], [-1, -1])), -1)
+    }
+
     func testBoundingBoxCoversAllPoints() {
         let line = TripLines.make(trip([(50, 4), (50.001, 4.002), (49.999, 4.001), (50.0005, 3.999)]))
         XCTAssertEqual(line.minLat, 49.999); XCTAssertEqual(line.maxLat, 50.001)

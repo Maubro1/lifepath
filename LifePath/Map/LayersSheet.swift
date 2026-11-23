@@ -6,6 +6,8 @@ struct LayersSheet: View {
     @Binding var colour: LineColour
     @Binding var satellite: Bool
     @Binding var period: TimeFilter
+    @Binding var showSlow: Bool
+    @Binding var showFast: Bool
     var chooseDates: () -> Void
 
     var body: some View {
@@ -20,7 +22,16 @@ struct LayersSheet: View {
                         ForEach(LineColour.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     legend
-                } header: { Text("Your lines") }
+                    if colour == .speed {
+                        // One side always stays on, so the map never goes blank by accident.
+                        Toggle("Top speed under 40 km/h", isOn: $showSlow).disabled(showSlow && !showFast)
+                        Toggle("Top speed 40 km/h and over", isOn: $showFast).disabled(showFast && !showSlow)
+                    }
+                } header: { Text("Your lines") } footer: {
+                    if colour == .speed {
+                        Text("A trip's top speed is the fastest it went for 15 seconds. Walks and bike rides stay under 40 km/h; trains and most car and bus trips go over, though a slow trip through town can stay under.")
+                    }
+                }
                 Section("Map") {
                     Picker("Map style", selection: $satellite) {
                         Text("Standard").tag(false)

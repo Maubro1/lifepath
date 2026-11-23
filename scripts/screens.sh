@@ -37,6 +37,10 @@ for appearance in light dark; do
   xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen streets -appearance "$appearance" -lineColour "By speed"
   sleep 15
   xcrun simctl io "$UDID" screenshot "screens/speed-$appearance.png"
+  # The layers panel with the top-speed choice, trips of 40 km/h and over hidden.
+  xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen streets -appearance "$appearance" -lineColour "By speed" -showFastTrips NO -layers 1
+  sleep 15
+  xcrun simctl io "$UDID" screenshot "screens/layers-speed-$appearance.png"
   for v in ${FOG_VARIANTS:-}; do
     xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen fog -variant "$v" -appearance "$appearance"
     sleep 15

@@ -134,6 +134,10 @@ public final class Diary: Sendable {
                 CREATE TABLE routeTile(x INTEGER, y INTEGER, PRIMARY KEY(x, y));
                 """)
         }
+        migrator.registerMigration("v13") { db in
+            // Additive cache column; NULL (a line cached before v13) reads as unknown until the trip-line rebuild refills it.
+            try db.execute(sql: "ALTER TABLE tripLine ADD COLUMN topSpeed REAL")
+        }
         return migrator
     }
 
@@ -230,9 +234,9 @@ public final class Diary: Sendable {
             try db.execute(sql: "DELETE FROM tripLine WHERE end >= ?", arguments: [replacingFrom.timeIntervalSince1970])
             for l in lines {
                 try db.execute(
-                    sql: "INSERT OR REPLACE INTO tripLine(start, end, minLat, maxLat, minLon, maxLon, distance, coords) VALUES (?,?,?,?,?,?,?,?)",
+                    sql: "INSERT OR REPLACE INTO tripLine(start, end, minLat, maxLat, minLon, maxLon, distance, coords, topSpeed) VALUES (?,?,?,?,?,?,?,?,?)",
                     arguments: [l.start.timeIntervalSince1970, l.end.timeIntervalSince1970, l.minLat, l.maxLat, l.minLon, l.maxLon,
-                                l.distance, Self.encode(l.coords)])
+                                l.distance, Self.encode(l.coords), l.topSpeed])
             }
         }
     }
@@ -275,9 +279,9 @@ public final class Diary: Sendable {
     public func replaceTripLine(_ l: TripLine) throws -> Bool {
         try pool.write { db in
             guard try Row.fetchOne(db, sql: "SELECT 1 FROM tripLine WHERE start = ?", arguments: [l.start.timeIntervalSince1970]) != nil else { return false }
-            try db.execute(sql: "UPDATE tripLine SET end = ?, minLat = ?, maxLat = ?, minLon = ?, maxLon = ?, distance = ?, coords = ? WHERE start = ?",
+            try db.execute(sql: "UPDATE tripLine SET end = ?, minLat = ?, maxLat = ?, minLon = ?, maxLon = ?, distance = ?, coords = ?, topSpeed = ? WHERE start = ?",
                            arguments: [l.end.timeIntervalSince1970, l.minLat, l.maxLat, l.minLon, l.maxLon, l.distance, Self.encode(l.coords),
-                                       l.start.timeIntervalSince1970])
+                                       l.topSpeed, l.start.timeIntervalSince1970])
             return true
         }
     }
@@ -290,7 +294,7 @@ public final class Diary: Sendable {
                 """, arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970]).map { r in
                 TripLine(start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"]),
                          minLat: r["minLat"], maxLat: r["maxLat"], minLon: r["minLon"], maxLon: r["maxLon"],
-                         distance: r["distance"], coords: Self.decode(r["coords"]))
+                         distance: r["distance"], coords: Self.decode(r["coords"]), topSpeed: r["topSpeed"] ?? -1)
             }
         }
     }
@@ -351,7 +355,7 @@ public final class Diary: Sendable {
                              arguments: [from.timeIntervalSince1970 - 86400, to.timeIntervalSince1970, from.timeIntervalSince1970]).map { r in
                 TripLine(start: Date(timeIntervalSince1970: r["start"]), end: Date(timeIntervalSince1970: r["end"]),
                          minLat: r["minLat"], maxLat: r["maxLat"], minLon: r["minLon"], maxLon: r["maxLon"],
-                         distance: r["distance"], coords: Self.decode(r["coords"]))
+                         distance: r["distance"], coords: Self.decode(r["coords"]), topSpeed: r["topSpeed"] ?? -1)
             }
         }
     }

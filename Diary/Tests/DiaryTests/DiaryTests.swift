@@ -209,7 +209,8 @@ final class DiaryTests: XCTestCase {
     func testTripLineRoundTrip() throws {
         let diary = try Diary(path: tempPath())
         XCTAssertNil(try diary.tripLinesUntil())
-        let a = line(100, 200), b = line(300, 400)
+        var a = line(100, 200); let b = line(300, 400)
+        a.topSpeed = 12.5   // b keeps -1 (unknown)
         try diary.saveTripLines([b, a], replacingFrom: d(0))
         XCTAssertEqual(try diary.tripLines(minLat: 0, maxLat: 90, minLon: 0, maxLon: 90, from: d(0), to: d(1000)), [a, b])
         XCTAssertEqual(try diary.tripLinesUntil(), d(400))

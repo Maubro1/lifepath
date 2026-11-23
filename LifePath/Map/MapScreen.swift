@@ -56,6 +56,7 @@ struct MapOptions: Equatable {
     var customTo = Date()
     var recorded = false
     var mode = MapMode.streets
+    var slowTrips = true, fastTrips = true   // by top speed (`TripLines.topSpeed`) under / from 40 km/h; both while the panel doesn't apply it
 
     func range(now: Date) -> (from: Date, to: Date) {
         let cal = Calendar.current, today = cal.startOfDay(for: now)
@@ -94,6 +95,10 @@ struct MapOptions: Equatable {
         var metresPerPoint: Double
         var centerLat, centerLon: Double
         var places: [Place]   // in memory, refreshed by each places run; the loader never reads them per pan
+        var slow = true, fast = true
+
+        /// A trip shows when its side of 40 km/h is on; an unknown top speed (-1) always shows.
+        func keep(_ topSpeed: Double) -> Bool { topSpeed < 0 || (topSpeed < 40 / 3.6 ? slow : fast) }
     }
 
     private nonisolated static let budget = 400_000   // vertices per load and points per read chunk: memory guards that coarsen, never drop a trip
@@ -131,7 +136,7 @@ struct MapOptions: Equatable {
                       from: range.from, to: range.to, recorded: options.recorded,
                       street: r.span.latitudeDelta * 111_000 < 2000, zoomedOut: metresPerPoint > 7.5,
                       mode: options.mode, bike: UserDefaults.standard.bool(forKey: "countCycling"), metresPerPoint: metresPerPoint, centerLat: c.latitude, centerLon: c.longitude,
-                      places: PlaceService.shared.places)   // half the cache's 15 m tolerance per screen point
+                      places: PlaceService.shared.places, slow: options.slowTrips, fast: options.fastTrips)   // half the cache's 15 m tolerance per screen point
         generation += 1
         let gen = generation
         task = Task {
@@ -155,7 +160,7 @@ struct MapOptions: Equatable {
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: min(until, q.to))
             // shortcut: cached lines carry no rough flag and draw solid; upgrade when stage 3 stores rail-matched lines
             // Cached lines are simplified, so a point has no index in the trip: the whole line takes the trip's longest confident mode.
-            trips = try cached.map { c in
+            trips = try cached.filter { q.keep($0.topSpeed) }.map { c in
                 let mode = MapColors.dominantMode(modesByTrip[c.start] ?? [])
                 return (coords: c.coords.map { (lat: $0.lat, lon: $0.lon) }, speeds: MapColors.filledSpeeds(c.coords.map(\.speed)),
                         modes: [TravelMode?](repeating: mode, count: c.coords.count), start: c.start, segment: 0, rough: false)
@@ -167,6 +172,8 @@ struct MapOptions: Equatable {
         func add(_ split: [Trip]) throws {
             for trip in split {
                 try Task.checkCancellation()
+                // shortcut: a trip not yet cached is judged on the points read in this region; the cache judges the whole trip
+                guard q.keep(TripLines.topSpeed(trip.points)) else { continue }
                 var coords = trip.points.map { (lat: $0.lat, lon: $0.lon) }
                 if !q.recorded {
                     let smooth = try diary.smoothed(from: trip.start, to: trip.end)
@@ -323,6 +330,8 @@ struct MapScreen: View {
     @AppStorage("lineColour") private var colour = LineColour.plain
     @AppStorage("mapMode") private var mode = MapMode.streets
     @AppStorage("satellite") private var satellite = false
+    @AppStorage("showSlowTrips") private var showSlow = true
+    @AppStorage("showFastTrips") private var showFast = true
     @State private var onScreen = false
     @State private var choosingDates = false
     @State private var choosingLayers = false
@@ -348,12 +357,16 @@ struct MapScreen: View {
         }
         .overlay(alignment: .topLeading) { chip }
         .overlay(alignment: .bottom) { bottom.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 } }
-        .onAppear { onScreen = true }
+        .onAppear { onScreen = true; if DemoData.argument("-layers") != nil { choosingLayers = true } }   // screenshots of the panel
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
         .onChange(of: mode, initial: true) { _, m in loader.options.mode = m }
         .onChange(of: loader.options) { loader.reload() }
         .onChange(of: recordedLine, initial: true) { _, r in loader.options.recorded = r }
+        .onChange(of: [colour == .speed && mode == .streets, showSlow, showFast], initial: true) { _, v in
+            // The top-speed choice lives under "By speed" and applies only there, so a hidden setting never hides lines.
+            loader.options.slowTrips = !v[0] || v[1]; loader.options.fastTrips = !v[0] || v[2]
+        }
         .onChange(of: countCycling) { loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: SmoothingService.linesChanged)) { _ in loader.reload() }   // no-op unless visible
         .onReceive(NotificationCenter.default.publisher(for: PlaceService.changed)) { _ in loader.reload() }
@@ -361,7 +374,8 @@ struct MapScreen: View {
         .sheet(item: $openPlace, onDismiss: { loader.reload() }) { PlaceSheet(place: $0) }
         .sheet(item: $openCity) { ref in PlaceCard(cityId: ref.id) { rect in openCity = nil; target = rect } }
         .sheet(isPresented: $choosingLayers) {
-            LayersSheet(colour: $colour, satellite: $satellite, period: $loader.options.filter, chooseDates: { choosingLayers = false; choosingDates = true })
+            LayersSheet(colour: $colour, satellite: $satellite, period: $loader.options.filter, showSlow: $showSlow, showFast: $showFast,
+                        chooseDates: { choosingLayers = false; choosingDates = true })
         }
         .onChange(of: loader.options.filter) { _, f in if f == .custom { choosingDates = true } }
         .sheet(isPresented: $choosingDates) { dates }
