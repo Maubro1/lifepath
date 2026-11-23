@@ -3,8 +3,11 @@ import Foundation
 public struct Sample: Sendable, Equatable {
     public var t: Date
     public var lat, lon, hAcc, speed, course: Double   // speed/course < 0 = invalid, as CoreLocation
-    public init(t: Date, lat: Double, lon: Double, hAcc: Double, speed: Double, course: Double) {
+    public var speedAccuracy, courseAccuracy: Double   // m/s and degrees from CoreLocation; < 0 = unknown (never stored)
+    public init(t: Date, lat: Double, lon: Double, hAcc: Double, speed: Double, course: Double,
+                speedAccuracy: Double = -1, courseAccuracy: Double = -1) {
         self.t = t; self.lat = lat; self.lon = lon; self.hAcc = hAcc; self.speed = speed; self.course = course
+        self.speedAccuracy = speedAccuracy; self.courseAccuracy = courseAccuracy
     }
 }
 

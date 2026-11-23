@@ -22,7 +22,35 @@ final class TrackFilterTests: XCTestCase {
         var f = primed()
         XCTAssertNil(feed(&f, sample(1, hAcc: -1)))
         XCTAssertEqual(feed(&f, sample(2, hAcc: 65.5))?.kind, .rough)
-        XCTAssertEqual(feed(&f, sample(3, hAcc: 65))?.kind, .moving)
+        XCTAssertEqual(feed(&f, sample(13, hAcc: 65))?.kind, .rough, "Wi-Fi fixes report 65 m or more (Apple)")
+        XCTAssertEqual(feed(&f, sample(14, hAcc: 64.9))?.kind, .moving)
+    }
+
+    func testDopplerSummaryReportsMediansAndClears() {
+        var f = TrackFilter(quality: .balanced)
+        XCTAssertNil(f.takeDopplerSummary())
+        for (i, (sa, ca)) in [(0.3, 8.0), (0.5, -1.0), (0.9, 20.0)].enumerated() {
+            var s = sample(Double(i)); s.speedAccuracy = sa; s.courseAccuracy = ca
+            _ = feed(&f, s)
+        }
+        XCTAssertEqual(f.takeDopplerSummary(), "speedAcc=0.50 courseAcc=20.00 n=3")
+        XCTAssertNil(f.takeDopplerSummary())
+    }
+
+    /// iOS's accuracies only widen the Doppler noise: a reading it marks as poor moves the line less, a confident one no more than before.
+    func testSpeedAccuracyOnlyDownWeights() throws {
+        func run(_ speedAcc: Double) throws -> Double {
+            var f = TrackFilter(quality: .balanced)
+            var last: FilteredPoint?
+            for i in 0..<10 {
+                var s = sample(Double(i), north: 1.4 * Double(i), hAcc: 5); s.speed = i == 9 ? 15 : 1.4; s.speedAccuracy = i == 9 ? speedAcc : 0.1
+                last = feed(&f, s)
+            }
+            let p = try XCTUnwrap(last), truth = sample(9, north: 12.6)
+            return Geo.distance(p.lat, p.lon, truth.lat, truth.lon)
+        }
+        XCTAssertLessThan(try run(10), try run(-1), "a spike iOS calls inaccurate pulls less")
+        XCTAssertEqual(try run(0.01), try run(-1), accuracy: 1e-9, "never trusted more than the fixed 0.7 m/s")
     }
 
     /// Trains: iOS reports ~1 km accuracy for positions that are often fine. They are kept as rough points, raw, and never

@@ -63,6 +63,8 @@ import CoreLocation
         if recording.desiredAccuracy != accuracy { recording.desiredAccuracy = accuracy }
         if recording.distanceFilter != distanceFilter { recording.distanceFilter = distanceFilter }
         if recording.activityType != type { recording.activityType = type }
+        // Apple merges the settings of an app's managers; the keep-alive asks for the same processing so the recorder's type holds.
+        if keepAlive.activityType != type { keepAlive.activityType = type }
         if recording.showsBackgroundLocationIndicator != showsIndicator { recording.showsBackgroundLocationIndicator = showsIndicator }
         if showsIndicator, backgroundSession == nil { backgroundSession = CLBackgroundActivitySession() }
         if !showsIndicator, let s = backgroundSession { s.invalidate(); backgroundSession = nil }
@@ -93,7 +95,8 @@ import CoreLocation
 
     private static func sample(_ l: CLLocation) -> Sample {
         Sample(t: l.timestamp, lat: l.coordinate.latitude, lon: l.coordinate.longitude,
-               hAcc: l.horizontalAccuracy, speed: l.speed, course: l.course)
+               hAcc: l.horizontalAccuracy, speed: l.speed, course: l.course,
+               speedAccuracy: l.speedAccuracy, courseAccuracy: l.courseAccuracy)
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {

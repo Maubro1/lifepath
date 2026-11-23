@@ -101,7 +101,16 @@ public enum HealthReport {
         func n(_ f: (Double) -> Bool) -> Int { moving.filter { f($0.hAcc) }.count }
         out += ["", "== Accuracy of moving points ==", "<5 m: \(n { $0 < 5 })", "5–10 m: \(n { $0 >= 5 && $0 < 10 })",
                 "10–20 m: \(n { $0 >= 10 && $0 < 20 })", "20–50 m: \(n { $0 >= 20 && $0 < 50 })", "≥50 m: \(n { $0 >= 50 })",
-                "", "== Gaps over 15 min =="]
+                "", "== iOS speed and direction accuracy (median per batch) =="]
+        // shortcut: the median of batch medians, not of every fix; enough to judge whether iOS's values are trustworthy.
+        let doppler = events.filter { $0.kind == "doppler" && $0.t >= first }
+        func values(_ key: String) -> [Double] {
+            doppler.compactMap { e in e.detail.split(separator: " ").first { $0.hasPrefix(key + "=") }.flatMap { Double($0.dropFirst(key.count + 1)) } }.sorted()
+        }
+        let sa = values("speedAcc"), ca = values("courseAcc")
+        out.append(doppler.isEmpty ? "none" : "speed \(sa.isEmpty ? "-" : String(format: "%.2f m/s", sa[sa.count / 2])), "
+                   + "direction \(ca.isEmpty ? "-" : String(format: "%.1f°", ca[ca.count / 2])), batches \(doppler.count)")
+        out += ["", "== Gaps over 15 min =="]
         var gaps = 0
         for (p, q) in zip(windowPoints, windowPoints.dropFirst()) where q.t.timeIntervalSince(p.t) > 15 * 60 {
             let last = events.last { $0.t <= p.t }.map { "\(hm.string(from: $0.t)) \($0.kind) \($0.detail)" } ?? "none"

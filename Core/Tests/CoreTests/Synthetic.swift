@@ -30,15 +30,28 @@ struct Doppler {
     static let vehicle = Doppler(courseSigma: 3, lag: 2)
 }
 
+/// Phone-like position error on top of the white `noise`: a first-order Gauss-Markov drift per axis (stationary sigma
+/// `sigma` m, correlation time `tau` s) plus a constant per-trip offset of `offset` m in a seeded direction. Measured on
+/// phones against RTK: 26-66 s correlation, ~3.5 m slow part, 2-6 m offset (Kanzaki et al. 2025; reports/LifePath tracking accuracy.md).
+/// Drawn from its own RNG stream, so the white noise is the same with or without it.
+struct Drift {
+    var sigma: Double, tau: TimeInterval, offset: Double
+    static let phone = Drift(sigma: 3.5, tau: 45, offset: 4)
+}
+
 /// Walks `path` (metres north/east of 52.37, 4.90) at `speed` m/s, sampling every `every` s.
-/// `noise` is the per-axis sigma in metres; hAcc = noise * 1.5.
+/// `noise` is the per-axis sigma in metres of the white part; hAcc = 1.5 x the total per-axis sigma (white and drift).
 func walk(path: [(north: Double, east: Double)], speed: Double, every: TimeInterval, noise: Double,
-          seed: UInt64, start: Date, doppler: Doppler? = nil) -> (truth: [(Date, Double, Double)], samples: [Sample]) {
+          seed: UInt64, start: Date, doppler: Doppler? = nil, drift: Drift? = nil) -> (truth: [(Date, Double, Double)], samples: [Sample]) {
     let originLat = 52.37, originLon = 4.90
     var rng = SeededRandom(seed: seed)
     var dRng = SeededRandom(seed: seed ^ 0xD099_1E55)
     var courseError = 0.0
     let phi = exp(-every / 5)
+    var gRng = SeededRandom(seed: seed ^ 0x6A55_3A2C)
+    let angle = Double.random(in: 0..<2 * .pi, using: &gRng)
+    var gn = (drift?.sigma ?? 0) * gRng.gaussian(), ge = (drift?.sigma ?? 0) * gRng.gaussian()   // starts stationary
+    let hAcc = 1.5 * (noise * noise + pow(drift?.sigma ?? 0, 2)).squareRoot()
     // Leg start times and headings, to look up the heading `lag` seconds ago.
     var legs: [(start: Double, course: Double)] = []
     var acc = 0.0
@@ -53,7 +66,15 @@ func walk(path: [(north: Double, east: Double)], speed: Double, every: TimeInter
 
     func emit(_ t: Date, _ n: Double, _ e: Double, course: Double) {
         let p = Geo.offset(lat: originLat, lon: originLon, north: n, east: e)
-        let noisy = Geo.offset(lat: p.lat, lon: p.lon, north: rng.gaussian() * noise, east: rng.gaussian() * noise)
+        var dn = 0.0, de = 0.0
+        if let d = drift {
+            if !samples.isEmpty {
+                let a = exp(-every / d.tau), b = (1 - a * a).squareRoot() * d.sigma
+                gn = a * gn + b * gRng.gaussian(); ge = a * ge + b * gRng.gaussian()
+            }
+            dn = gn + d.offset * cos(angle); de = ge + d.offset * sin(angle)
+        }
+        let noisy = Geo.offset(lat: p.lat, lon: p.lon, north: rng.gaussian() * noise + dn, east: rng.gaussian() * noise + de)
         truth.append((t, p.lat, p.lon))
         var spd = speed, crs = course
         if let d = doppler {
@@ -63,7 +84,7 @@ func walk(path: [(north: Double, east: Double)], speed: Double, every: TimeInter
             let heading = legs.last(where: { $0.start <= secs })?.course ?? legs.first?.course ?? course
             crs = spd < 0.5 ? -1 : (heading + courseError + 360).truncatingRemainder(dividingBy: 360)
         }
-        samples.append(Sample(t: t, lat: noisy.lat, lon: noisy.lon, hAcc: noise * 1.5, speed: spd, course: crs))
+        samples.append(Sample(t: t, lat: noisy.lat, lon: noisy.lon, hAcc: hAcc, speed: spd, course: crs))
     }
 
     var nextSample = 0.0    // time of next sample

@@ -15,6 +15,14 @@ public struct TrackFilter: Sendable {
     private var gatedRun: [(x: Double, y: Double)] = []   // raw positions of the current run of gated fixes (last 10)
 
     public private(set) var dropCounts: [String: Int] = [:]
+    private var speedAccs: [Double] = [], courseAccs: [Double] = []   // iOS's own Doppler accuracies since the last take
+    /// Median speed and course accuracy iOS reported since the last call, for the health report; nil when none arrived.
+    public mutating func takeDopplerSummary() -> String? {
+        defer { speedAccs = []; courseAccs = [] }
+        func median(_ v: [Double]) -> String { v.isEmpty ? "-" : String(format: "%.2f", v.sorted()[v.count / 2]) }
+        guard !speedAccs.isEmpty || !courseAccs.isEmpty else { return nil }
+        return "speedAcc=\(median(speedAccs)) courseAcc=\(median(courseAccs)) n=\(max(speedAccs.count, courseAccs.count))"
+    }
     public mutating func takeDropCounts() -> [String: Int] { defer { dropCounts = [:] }; return dropCounts }
     private mutating func drop(_ reason: String) -> FilteredPoint? { dropCounts[reason, default: 0] += 1; return nil }
 
@@ -77,9 +85,11 @@ public struct TrackFilter: Sendable {
 
     public mutating func process(_ s: Sample, receivedAt: Date, activity: Activity) -> FilteredPoint? {
         guard s.hAcc >= 0 else { return drop("accuracy") }
+        if s.speedAccuracy >= 0 { speedAccs.append(s.speedAccuracy) }
+        if s.courseAccuracy >= 0 { courseAccs.append(s.courseAccuracy) }
         guard receivedAt.timeIntervalSince(s.t) <= 10 else { return drop("stale") }
         guard s.t.timeIntervalSince(receivedAt) <= 2 else { return drop("future") }
-        if s.hAcc > quality.accuracyCeiling {   // kept raw, never fed to the Kalman state
+        if s.hAcc >= quality.accuracyCeiling {   // kept raw, never fed to the Kalman state; Wi-Fi fixes report 65 m or more (Apple)
             if let r = lastRough, s.t.timeIntervalSince(r) < 10 { return drop(s.t > r ? "rough-spacing" : "order") }
             lastRough = s.t
             return FilteredPoint(t: s.t, lat: s.lat, lon: s.lon, rawLat: s.lat, rawLon: s.lon, hAcc: s.hAcc, speed: -1, kind: .rough)
@@ -118,8 +128,11 @@ public struct TrackFilter: Sendable {
                 }
                 models[j] = m
             }
-            let heading = (activity == .cycling || activity == .automotive ? 3.0 : 10.0) * .pi / 180
-            let rv = 0.49 + pow(s.speed * heading, 2)   // Doppler speed sigma 0.7 m/s plus heading error * speed
+            // Doppler speed sigma 0.7 m/s plus heading error * speed. iOS's own per-fix accuracies only ever widen these:
+            // their calibration is unmeasured, so they may down-weight a spike but never make a reading more trusted.
+            let floor = activity == .cycling || activity == .automotive ? 3.0 : 10.0
+            let heading = max(floor, s.courseAccuracy) * .pi / 180
+            let rv = pow(max(0.7, s.speedAccuracy), 2) + pow(s.speed * heading, 2)
             for j in 0..<2 { models[j].predict(dt, qa: j == 0 ? qa : qa * Self.manoeuvre) }
             // A gated fix whose offset the calm model's (valid-course) Doppler does not explain is multipath-like:
             // inflate the calm model's R by the run length. Course -1 never counts as agreeing.

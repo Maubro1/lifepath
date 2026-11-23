@@ -364,6 +364,7 @@ import UIKit
         if !drops.isEmpty {
             buffer.add(LoggedEvent(t: Date(), kind: "drops", detail: drops.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")))
         }
+        if let d = filter.takeDopplerSummary() { buffer.add(LoggedEvent(t: Date(), kind: "doppler", detail: d)) }
         let (points, events) = buffer.take()
         guard !points.isEmpty || !events.isEmpty else { return }
         do {

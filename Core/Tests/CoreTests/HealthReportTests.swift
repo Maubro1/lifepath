@@ -32,6 +32,14 @@ final class HealthReportTests: XCTestCase {
         XCTAssertTrue(row(out, "11:00").contains(" 0%"), row(out, "11:00"))
     }
 
+    func testReportDopplerAccuracy() {
+        let out = render(events: [ev(at(15, 9), "doppler", "speedAcc=0.40 courseAcc=12.00 n=30"),
+                                  ev(at(15, 10), "doppler", "speedAcc=0.60 courseAcc=- n=5"),
+                                  ev(at(15, 11), "doppler", "speedAcc=0.50 courseAcc=20.00 n=9")])
+        XCTAssertTrue(out.contains("speed 0.50 m/s, direction 20.0°, batches 3"), out)
+        XCTAssertTrue(render().contains("(median per batch) ==\nnone"))
+    }
+
     func testReportAccuracyHistogram() {
         let pts = [3, 6, 9, 15, 30, 60, 80].map { pt(at(15, 9), acc: Double($0)) } + [pt(at(15, 9), acc: 1, kind: .still)]
         let out = render(points: pts)
