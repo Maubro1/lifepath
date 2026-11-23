@@ -21,8 +21,7 @@ public enum Fog {
         guard let m, m.confidence >= TravelModes.confident else { return road }
         switch m.mode {
         case .walk, .run, .bike: return onFoot
-        case .car, .bus, .tram, .vehicle: return road
-        case .train, .boat: return 0
+        case .car, .bus, .tram, .vehicle, .train, .boat: return road   // rides clear their line too: no gaps in train rides (owner, 23 Nov 2026)
         }
     }
 

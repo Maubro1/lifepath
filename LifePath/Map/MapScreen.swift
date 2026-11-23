@@ -311,7 +311,7 @@ struct MapOptions: Equatable {
             for l in out.lines where l.coords.count > 1 {
                 var a = 0
                 func width(_ m: TravelMode?) -> Double {
-                    switch m { case .walk?, .run?, .bike?: Fog.onFoot; case .train?, .boat?: 0; default: Fog.road }
+                    switch m { case .walk?, .run?, .bike?: Fog.onFoot; default: Fog.road }
                 }
                 for b in 1..<l.coords.count where b == l.coords.count - 1 || width(l.modes[b]) != width(l.modes[a]) {
                     let w = width(l.modes[a]), run = Array(l.coords[a...b])

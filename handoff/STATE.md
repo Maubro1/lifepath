@@ -10,6 +10,7 @@ Last updated: 2026-11-23 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.9.14-preview.1 | Train and boat rides clear a 6 m fog band along their line like other rides, no gaps (owner, 23 Nov). |
 | v0.9.13-preview.1 | Trip-line rebuilds replace lines in place (old line stays drawn until its trip is saved again; stale lines between trips and after the last go), so the map never empties during a rebuild. |
 | v0.9.12-preview.1 | Fog and Heat follow the Show period like Streets (owner, 23 Nov). Open: should trains clear fog along the track (now only station circles)? Next: rebuild trip lines in place instead of clearing the cache first. |
 | v0.9.11-preview.1 | Closed ways (roundabouts, pond paths) are drawn the way round the fixes follow (one-way: forward; no fixes: shorter); 4 matched stretches in the owner's history went the long way round (16 Nov roundabout). Trip-line cache v6. |
@@ -36,7 +37,7 @@ Last updated: 2026-11-23 (update this line and the sections below whenever the h
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## Now: v0.9.13-preview.1 released (CI not checked yet: usage window ran out) (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
+## Now: v0.9.14-preview.1 released (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
 
 Accuracy round 1 and the top-speed filter shipped. Next from the report, in its order: measure first (the health report now gives iOS's speed/direction accuracy and the walks' offset from their street with a fade time; feed the measured fade time into `Drift.phone`), then the `.fitness` vs `.other` walk experiment (needs the owner's test walks), walker-tuned map matching (beta by spacing, off-network option), drift states in the smoother. Speed filter follow-ups: per stretch instead of per trip (a walk to the station currently counts with the train), and speed pedelecs (32-45 km/h) straddle the 40 km/h line. Known: km during a signal gap are not counted in the day's distance.
 

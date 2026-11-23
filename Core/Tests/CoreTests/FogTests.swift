@@ -23,10 +23,10 @@ final class FogTests: XCTestCase {
         XCTAssertEqual(s[1].coords.count, 6)   // 500...1000 m, sharing the boundary
     }
 
-    func testTrainClearsOnlyEnds() {
+    func testTrainClearsItsLine() {
         let s = Fog.strokes(line: line(1000, 100), modes: [mode(.train, 0, 100)])
-        XCTAssertEqual(s.count, 2)
-        XCTAssertTrue(s.allSatisfy { $0.coords.count == 1 && $0.halfWidth == 25 })
+        XCTAssertEqual(s.map(\.halfWidth), [Fog.road])
+        XCTAssertEqual(s.first?.coords.count, 11)
     }
 
     func testUnsureAndUnclassifiedAre6m() {
