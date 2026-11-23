@@ -313,4 +313,15 @@ final class PlacesTests: XCTestCase {
     func testEmptyPlaceHasNoPin() {
         XCTAssertNil(Place(id: 1, name: nil, cells: [:], updatedAt: day0, lastVisit: day0, totalSeconds: 0, visits: 0, isCandidate: true).pin)
     }
+
+    func testDaysVisitedCountsDifferentDaysTouched() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "Europe/Amsterdam")!
+        func at(_ d: Int, _ h: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: 11, day: d, hour: h))! }
+        let visits = [Visit(start: at(1, 9), end: at(1, 11), placeId: 1), Visit(start: at(1, 15), end: at(1, 17), placeId: 1),   // day 1 twice
+                      Visit(start: at(2, 22), end: at(3, 8), placeId: 1),                                                         // a night: days 2 and 3
+                      Visit(start: at(5, 10), end: at(6, 0), placeId: 1),                                                         // ends at midnight: day 5 only
+                      Visit(start: at(4, 10), end: at(4, 12), placeId: 2)]
+        XCTAssertEqual(Places.daysVisited(visits, placeId: 1, calendar: cal), 4)
+        XCTAssertEqual(Places.daysVisited(visits, placeId: 9, calendar: cal), 0)
+    }
 }

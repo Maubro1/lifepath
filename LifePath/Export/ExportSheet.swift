@@ -49,8 +49,8 @@ enum ExportService {
 /// Trips as GPX, GeoJSON or KML for all history or a period, handed to the system file mover.
 struct ExportSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var format = ExportFormat.gpx
-    @State private var allHistory = true
+    @AppStorage("exportFormat") private var format = ExportFormat.gpx   // remembered, like every choice in LifePath
+    @AppStorage("exportAllHistory") private var allHistory = true
     @State private var from = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     @State private var to = Date()
     @State private var task: Task<Void, Never>?

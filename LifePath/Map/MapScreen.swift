@@ -50,10 +50,12 @@ enum TimeFilter: String, CaseIterable {
     case today = "Today", week = "Week", month = "Month", year = "Year", all = "All", custom = "Custom", off = "Off"
 }
 
+/// The period and its custom dates are remembered across launches (saved by `MapScreen`); first launch shows all time.
 struct MapOptions: Equatable {
-    var filter = TimeFilter.today
-    var customFrom = Date()
-    var customTo = Date()
+    var filter = TimeFilter(rawValue: UserDefaults.standard.string(forKey: "period") ?? "") ?? .all
+    var customFrom = MapOptions.stored("customFrom")
+    var customTo = MapOptions.stored("customTo")
+    static func stored(_ key: String) -> Date { let t = UserDefaults.standard.double(forKey: key); return t > 0 ? Date(timeIntervalSince1970: t) : Date() }
     var recorded = false
     var mode = MapMode.streets
     var slowTrips = true, fastTrips = true   // by top speed (`TripLines.topSpeed`) under / from 40 km/h, in every map mode
@@ -361,7 +363,12 @@ struct MapScreen: View {
         .onDisappear { onScreen = false }
         .onChange(of: visible, initial: true) { _, v in loader.setActive(v) }
         .onChange(of: mode, initial: true) { _, m in loader.options.mode = m }
-        .onChange(of: loader.options) { loader.reload() }
+        .onChange(of: loader.options) { _, o in
+            loader.reload()
+            let d = UserDefaults.standard   // remembered for the next launch
+            d.set(o.filter.rawValue, forKey: "period")
+            d.set(o.customFrom.timeIntervalSince1970, forKey: "customFrom"); d.set(o.customTo.timeIntervalSince1970, forKey: "customTo")
+        }
         .onChange(of: recordedLine, initial: true) { _, r in loader.options.recorded = r }
         .onChange(of: [showSlow, showFast], initial: true) { _, v in   // lines, Fog and Heat alike
             loader.options.slowTrips = v[0]; loader.options.fastTrips = v[1]

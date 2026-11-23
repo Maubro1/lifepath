@@ -5,6 +5,7 @@ import SwiftUI
 struct PlaceSheet: View {
     let place: Place
     @State private var name: String
+    @State private var days: Int?   // different days visited, from the life-long visit table
     @Environment(\.dismiss) private var dismiss
 
     init(place: Place) {
@@ -23,11 +24,15 @@ struct PlaceSheet: View {
                     .accessibilityLabel("Place name")
                     .onSubmit(save)
                 InfoRow("Time spent", value: Duration.seconds(place.totalSeconds).formatted(.units(allowed: [.days, .hours], width: .wide)))
-                InfoRow("Visits", value: "\(place.visits)")
+                InfoRow("Days visited", value: days.map(String.init) ?? "…")
                 InfoRow("First visit", value: firstVisit?.formatted(date: .abbreviated, time: .omitted) ?? "unknown")
                 InfoRow("Last visit", value: place.lastVisit.formatted(date: .abbreviated, time: .omitted))
             }
             .navigationTitle(place.name ?? "Place")
+            .task {
+                let id = place.id, visits = (try? Recorder.shared.readDiary?.visits(from: .distantPast, to: .distantFuture)) ?? []
+                days = Places.daysVisited(visits, placeId: id, calendar: .current)
+            }
             .toolbar { Button("Done") { dismiss() }.accessibilityLabel("Save and close") }
             .onDisappear(perform: save)   // a swipe-down keeps the edit too
         }

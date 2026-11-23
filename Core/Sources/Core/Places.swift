@@ -96,6 +96,19 @@ public struct PlaceShape: Sendable, Equatable {
     public static func == (a: PlaceShape, b: PlaceShape) -> Bool { a.region == b.region && a.pin == b.pin }
 }
 
+extension Places {
+    /// How many different local days the place was visited on, at least once: every day a visit touches counts, so a night
+    /// over counts both days and two visits on one day count once.
+    public static func daysVisited(_ visits: [Visit], placeId: Int64, calendar: Calendar) -> Int {
+        var days = Set<Date>()
+        for v in visits where v.placeId == placeId {
+            var d = calendar.startOfDay(for: v.start)
+            repeat { days.insert(d); d = calendar.date(byAdding: .day, value: 1, to: d)! } while d < v.end
+        }
+        return days.count
+    }
+}
+
 public struct Visit: Sendable, Equatable, Codable {
     public var start: Date
     public var end: Date
