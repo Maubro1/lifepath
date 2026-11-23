@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-19 (update this line and the sections below whenever the handoff is refreshed).
+Last updated: 2026-11-23 (update this line and the sections below whenever the handoff is refreshed).
 
 ## Released (installable from GitHub Releases, all pre-releases)
 
@@ -10,6 +10,7 @@ Last updated: 2026-11-19 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.9.5-preview.1 | Accuracy round 1 (report `reports/LifePath tracking accuracy.md`): tests use phone-like drifting error (new bars live 6.0 m, smoothed 5.8 m, corner 11.5 m); iOS speed/course accuracy can only widen the Doppler noise; a 65 m Wi-Fi fix counts as rough; keep-alive asks for the recorder's activity type; health report shows iOS speed/direction accuracy and walks against their matched street. Layers panel: under "By speed", show trips with top speed under 40 km/h and/or 40 km/h and over (top speed = fastest held for 15 s; per trip); trip-line cache rebuilt once (v3). Backup of v0.9.4: tag `backup/before-accuracy-2026-11-23` and `handoff/private/backups/`. |
 | v0.9.4-preview.1 | Lines no longer vanish while panning: the map margin (for the Apple logo) was re-set on every update because iOS reports it with the safe area added, which re-laid out, reloaded and redrew the map nonstop; All-time line ages start at the diary's first trip, so a pan no longer re-keys every line. |
 | v0.9.3-preview.1 | Rides anchored to where you stood before and after (platform waits up to 90 min), single rides through the same check; crash on rides from a line's first stop fixed; walks next to rides keep their street snap; lines by speed again (log scale, km/h legend, no modes). |
 | v0.9.2-preview.1 | Train rides linked across signal gaps and station stops (one ride, snapped station to station, rail only); Streets mode shows only the tracked lines; Apple logo above the panel; list values under their titles. |
@@ -27,9 +28,9 @@ Last updated: 2026-11-19 (update this line and the sections below whenever the h
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## Now: v0.9.4-preview.1 released, waiting for the owner's phone test
+## Now: v0.9.5-preview.1 released (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
 
-Stage 7 (spec `docs/superpowers/specs/2026-11-18-stage-7-design.md`, research `reports/LifePath stage 7 techniques.md`, decisions `docs/decisions/stage-7.md`) is built and reviewed: short stops without gaps, lines that keep their shape, see-through fog, line heat, modes internal, glass map controls, transit snapped to OSM routes. The owner approved the screenshots (heat full at 40 passes, fog 3) and the release. Next: wait for their report from the phone. To check on the phone: lines stay while panning and zooming with Show all; train rides after the one-time re-match (v0.9.2 crashed on rides from a terminus and broke lines; Gouda to Woerden had broken into unsnapped pieces), Save a backup, the icon. Known: km during a signal gap are not counted in the day's distance. Never release a UI change before the owner has seen the screenshots.
+Accuracy round 1 and the top-speed filter shipped. Next from the report, in its order: measure first (the health report now gives iOS's speed/direction accuracy and the walks' offset from their street with a fade time; feed the measured fade time into `Drift.phone`), then the `.fitness` vs `.other` walk experiment (needs the owner's test walks), walker-tuned map matching (beta by spacing, off-network option), drift states in the smoother. Speed filter follow-ups: per stretch instead of per trip (a walk to the station currently counts with the train), and speed pedelecs (32-45 km/h) straddle the 40 km/h line. Known: km during a signal gap are not counted in the day's distance.
 
 ## Questions for the owner (collected overnight, 2026-11-17)
 
