@@ -249,8 +249,8 @@ struct MapOptions: Equatable {
         let day = try diary.days().first { $0.summary.day == key }
         out.today = (day?.summary.distance ?? 0, day?.steps, try diary.newStreets(from: start, to: .distantFuture, bike: q.bike))
         if q.mode == .heat {
-            // Heat: every cached trip in the region, all time; the busiest cell (4 screen points) sets the scale at this zoom.
-            let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
+            // Heat: every cached trip in the region in the chosen period (owner, 23 Nov 2026); the busiest cell (4 screen points) sets the scale at this zoom.
+            let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: q.to)
             let cell = 4 * q.metresPerPoint, k = cos((q.minLat + q.maxLat) / 2 * .pi / 180)
             var passes: [Int64: Double] = [:]
             for l in cached {
@@ -270,10 +270,10 @@ struct MapOptions: Equatable {
             out.heatMax = passes.values.max() ?? 0
             out.heatPlaces = q.places.compactMap { p in p.pin.map { (lat: $0.lat, lon: $0.lon, hours: p.totalSeconds / 3600) } }
         } else if q.mode == .fog {
-            // Fog: every cached trip line in the region, all time, plus this period's lines so a trip clears at once. Read over at
+            // Fog: every cached trip line in the region in the chosen period, plus this period's live lines so a trip clears at once. Read over at
             // least 3 km around the view, so a closed pocket reaching past the screen edge is still seen whole when zoomed in.
             let b = Self.fogBox(q)
-            let cached = try diary.tripLines(minLat: b.minLat, maxLat: b.maxLat, minLon: b.minLon, maxLon: b.maxLon, from: .distantPast, to: q.to)
+            let cached = try diary.tripLines(minLat: b.minLat, maxLat: b.maxLat, minLon: b.minLon, maxLon: b.maxLon, from: q.from, to: q.to)   // the chosen period, like Streets
             let modes = cached.isEmpty ? [:] : try diary.modes(from: cached.map(\.start).min()!, to: q.to)
             for l in cached where q.keep(l.topSpeed) {   // the top-speed choice holds in Fog too
                 for (i, st) in Fog.strokes(line: l, modes: modes[l.start] ?? []).enumerated() {
