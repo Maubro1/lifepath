@@ -22,15 +22,12 @@ struct LayersSheet: View {
                         ForEach(LineColour.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     legend
-                    if colour == .speed {
-                        // Switching off the last side switches the other on, so the map never goes blank and no toggle looks greyed out.
-                        Toggle("Top speed under 40 km/h", isOn: Binding(get: { showSlow }, set: { showSlow = $0; if !$0 { showFast = true } }))
-                        Toggle("Top speed 40 km/h and over", isOn: Binding(get: { showFast }, set: { showFast = $0; if !$0 { showSlow = true } }))
-                    }
+                    // Always shown: the choice holds for lines, Fog and Heat alike. Switching off the last side switches the other on,
+                    // so the map never goes blank and no toggle looks greyed out.
+                    Toggle("Top speed under 40 km/h", isOn: Binding(get: { showSlow }, set: { showSlow = $0; if !$0 { showFast = true } }))
+                    Toggle("Top speed 40 km/h and over", isOn: Binding(get: { showFast }, set: { showFast = $0; if !$0 { showSlow = true } }))
                 } header: { Text("Your lines") } footer: {
-                    if colour == .speed {
-                        Text("A trip's top speed is the fastest it went for 15 seconds. Walks and bike rides stay under 40 km/h; trains and most car and bus trips go over, though a slow trip through town can stay under.")
-                    }
+                    Text("Applies to lines, Fog and Heat. A trip's top speed is the fastest it went for 15 seconds. Walks and bike rides stay under 40 km/h; trains and most car and bus trips go over, though a slow trip through town can stay under.")
                 }
                 Section("Map") {
                     Picker("Map style", selection: $satellite) {

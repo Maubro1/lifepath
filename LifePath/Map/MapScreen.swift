@@ -56,7 +56,7 @@ struct MapOptions: Equatable {
     var customTo = Date()
     var recorded = false
     var mode = MapMode.streets
-    var slowTrips = true, fastTrips = true   // by top speed (`TripLines.topSpeed`) under / from 40 km/h; both while the panel doesn't apply it
+    var slowTrips = true, fastTrips = true   // by top speed (`TripLines.topSpeed`) under / from 40 km/h, in every map mode
 
     func range(now: Date) -> (from: Date, to: Date) {
         let cal = Calendar.current, today = cal.startOfDay(for: now)
@@ -252,6 +252,7 @@ struct MapOptions: Equatable {
             let cell = 4 * q.metresPerPoint, k = cos((q.minLat + q.maxLat) / 2 * .pi / 180)
             var passes: [Int64: Double] = [:]
             for l in cached {
+                guard q.keep(l.topSpeed) else { continue }   // the top-speed choice holds in Heat too
                 var seen = Set<Int64>()
                 for (a, b) in zip(l.coords, l.coords.dropFirst()) {
                     let n = max(1, Int(Geo.distance(a.lat, a.lon, b.lat, b.lon) / cell * 2))
@@ -270,7 +271,7 @@ struct MapOptions: Equatable {
             // Fog: every cached trip line in the region, all time, plus this period's lines so a trip clears at once.
             let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
             let modes = cached.isEmpty ? [:] : try diary.modes(from: cached.map(\.start).min()!, to: q.to)
-            for l in cached {
+            for l in cached where q.keep(l.topSpeed) {   // the top-speed choice holds in Fog too
                 for (i, st) in Fog.strokes(line: l, modes: modes[l.start] ?? []).enumerated() {
                     // Thinned to half a screen point at this zoom: invisible under the soft fog edge, far lighter to draw.
                     let keep = Simplify.douglasPeucker(st.coords, tolerance: q.metresPerPoint / 2)
@@ -362,9 +363,8 @@ struct MapScreen: View {
         .onChange(of: mode, initial: true) { _, m in loader.options.mode = m }
         .onChange(of: loader.options) { loader.reload() }
         .onChange(of: recordedLine, initial: true) { _, r in loader.options.recorded = r }
-        .onChange(of: [colour == .speed && mode == .streets, showSlow, showFast], initial: true) { _, v in
-            // The top-speed choice lives under "By speed" and applies only there, so a hidden setting never hides lines.
-            loader.options.slowTrips = !v[0] || v[1]; loader.options.fastTrips = !v[0] || v[2]
+        .onChange(of: [showSlow, showFast], initial: true) { _, v in   // lines, Fog and Heat alike
+            loader.options.slowTrips = v[0]; loader.options.fastTrips = v[1]
         }
         .onChange(of: countCycling) { loader.reload() }
         .onReceive(NotificationCenter.default.publisher(for: SmoothingService.linesChanged)) { _ in loader.reload() }   // no-op unless visible
