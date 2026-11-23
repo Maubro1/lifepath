@@ -41,6 +41,10 @@ for appearance in light dark; do
   xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen streets -appearance "$appearance" -lineColour "By speed" -showFastTrips NO -layers 1
   sleep 15
   xcrun simctl io "$UDID" screenshot "screens/layers-speed-$appearance.png"
+  # Lines by age, with the layers panel's age bar.
+  xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen streets -appearance "$appearance" -lineColour "By age" -layers 1
+  sleep 15
+  xcrun simctl io "$UDID" screenshot "screens/layers-age-$appearance.png"
   for v in ${FOG_VARIANTS:-}; do
     xcrun simctl launch --terminate-running-process "$UDID" app.lifepath.LifePath -demo -screen fog -variant "$v" -appearance "$appearance"
     sleep 15

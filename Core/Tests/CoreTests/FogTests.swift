@@ -43,4 +43,29 @@ final class FogTests: XCTestCase {
         XCTAssertEqual(c[0].coords.count, 1)
         XCTAssertEqual(c[0].halfWidth, 25)
     }
+
+    /// A walk (15 m half-width) from (north, east) to (north, east) in metres from (52, 5).
+    func walk(_ a: (Double, Double), _ b: (Double, Double)) -> FogStroke {
+        let p = Geo.offset(lat: 52, lon: 5, north: a.0, east: a.1), q = Geo.offset(lat: 52, lon: 5, north: b.0, east: b.1)
+        return FogStroke(coords: [(p.lat, p.lon), (q.lat, q.lon)], halfWidth: Fog.onFoot)
+    }
+    func gaps(_ s: [FogStroke]) -> [FogFill] {
+        let lo = Geo.offset(lat: 52, lon: 5, north: -300, east: -300), hi = Geo.offset(lat: 52, lon: 5, north: 600, east: 600)
+        return Fog.enclosedGaps(s, minLat: lo.lat, maxLat: hi.lat, minLon: lo.lon, maxLon: hi.lon)
+    }
+
+    func testRoadBetweenTwoCyclePathsClosedAtBothEndsIsFilled() throws {
+        // Paths 40 m apart on both sides of a road: a 10 m strip of fog, closed by crossings at both ends.
+        let sides = [walk((0, 0), (0, 300)), walk((40, 0), (40, 300))]
+        let fill = try XCTUnwrap(gaps(sides + [walk((0, 0), (40, 0)), walk((0, 300), (40, 300))]).first)
+        let mid = Geo.offset(lat: 52, lon: 5, north: 20, east: 150)
+        XCTAssertTrue(fill.rects.contains { $0.minLat <= mid.lat && mid.lat <= $0.maxLat && $0.minLon <= mid.lon && mid.lon <= $0.maxLon })
+        XCTAssertTrue(gaps(sides + [walk((0, 0), (40, 0))]).isEmpty, "open at one end: the strip stays fog")
+    }
+
+    func testWalkedBlockIsTooWideToFill() {
+        // Around a 100 m block: the fog inside is 70 m wide, more than one walk's 30 m band.
+        let block = [walk((0, 0), (0, 100)), walk((0, 100), (100, 100)), walk((100, 100), (100, 0)), walk((100, 0), (0, 0))]
+        XCTAssertTrue(gaps(block).isEmpty)
+    }
 }

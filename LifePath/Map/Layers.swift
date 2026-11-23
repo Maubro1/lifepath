@@ -125,15 +125,23 @@ struct FogContent: LayerContent {
     var strokes: [(key: String, rect: MKMapRect, stroke: FogStroke)]
     var points: [[MKMapPoint]]
     var grid: GridIndex
+    var fills: [(key: String, rect: MKMapRect, rects: [MKMapRect])]
     var dark: Bool
     static let feather = 4.0   // m
     static let opacity = 0.8   // see-through paper; set here, never through the renderer's alpha (stalls tiles on iOS 18)
 
     var style: String { "fog\(dark)" }
-    var items: [String: MKMapRect] { Dictionary(strokes.map { ($0.key, $0.rect) }, uniquingKeysWith: { a, _ in a }) }
+    var items: [String: MKMapRect] { Dictionary(strokes.map { ($0.key, $0.rect) } + fills.map { ($0.key, $0.rect) }, uniquingKeysWith: { a, _ in a }) }
 
-    init(_ strokes: [(key: String, stroke: FogStroke)], dark: Bool) {
+    init(_ strokes: [(key: String, stroke: FogStroke)], fills: [FogFill] = [], dark: Bool) {
         self.dark = dark
+        self.fills = fills.map { f in
+            let rects = f.rects.map { r in mapRect([(r.minLat, r.minLon), (r.maxLat, r.maxLon)], pad: 0) }
+            let all = rects.reduce(MKMapRect.null) { $0.union($1) }
+            var h = Hasher()   // a pocket is redrawn only when its shape changes
+            for r in rects { h.combine(Int(r.minX)); h.combine(Int(r.minY)); h.combine(Int(r.maxX)); h.combine(Int(r.maxY)) }
+            return ("f\(h.finalize())", all.insetBy(dx: -400, dy: -400), rects)
+        }
         self.strokes = strokes.map { s in
             let lat = s.stroke.coords.first?.lat ?? 0
             return (s.key, mapRect(s.stroke.coords, pad: (s.stroke.halfWidth + Self.feather) * pointsPerMetre(lat) + 400), s.stroke)
@@ -162,6 +170,10 @@ struct FogContent: LayerContent {
                     ctx.setLineWidth(w); ctx.addPath(renderer.path(points[i])); ctx.strokePath()
                 }
             }
+        }
+        ctx.setBlendMode(.clear)   // closed pockets between nearby trips, cleared whole
+        for f in fills where f.rect.intersects(near) {
+            for r in f.rects where r.intersects(near) { ctx.fill(renderer.rect(for: r)) }
         }
         ctx.setBlendMode(.normal)
     }

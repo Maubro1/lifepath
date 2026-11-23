@@ -33,18 +33,51 @@ public enum Palette {
         }
     }
 
-    /// Line colour by age: 0 newest (mustard), 0.5 satsuma, 1 oldest (cherry); full strength, linear in sRGB.
+    public static let plum = Hex(light: 0x7A2E5C, dark: 0xC47AA8)
+    public static let navy = Hex(light: 0x34558F, dark: 0x8CA6DB)
+
+    /// Line colour by age, newest to oldest: mustard, satsuma, cherry, plum, navy, evenly spaced and blended in Oklab
+    /// (a perceptual colour space), so every step of age reads as an equal step of colour across a wide range.
+    public static let dateStops = [mustard, satsuma, cherry, plum, navy]
+
     public static func dateRamp(_ f: Double) -> (light: UInt32, dark: UInt32) {
-        let f = min(1, max(0, f))
-        let (a, b, t) = f < 0.5 ? (mustard, satsuma, f * 2) : (satsuma, cherry, f * 2 - 1)
-        return (mix(a.light, b.light, t), mix(a.dark, b.dark, t))
+        let x = min(1, max(0, f)) * Double(dateStops.count - 1), k = min(Int(x), dateStops.count - 2), t = x - Double(k)
+        let a = dateStops[k], b = dateStops[k + 1]
+        return (oklabMix(a.light, b.light, t), oklabMix(a.dark, b.dark, t))
+    }
+
+    /// Blends two sRGB colours in Oklab (Björn Ottosson, 2020).
+    static func oklabMix(_ a: UInt32, _ b: UInt32, _ t: Double) -> UInt32 {
+        func lab(_ c: UInt32) -> [Double] {
+            let rgb = [16, 8, 0].map { s -> Double in
+                let v = Double((c >> UInt32(s)) & 0xFF) / 255
+                return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
+            }
+            let l = cbrt(0.4122214708 * rgb[0] + 0.5363325363 * rgb[1] + 0.0514459929 * rgb[2])
+            let m = cbrt(0.2119034982 * rgb[0] + 0.6806995451 * rgb[1] + 0.1073969566 * rgb[2])
+            let s = cbrt(0.0883024619 * rgb[0] + 0.2817188376 * rgb[1] + 0.6299787005 * rgb[2])
+            return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                    1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                    0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s]
+        }
+        let p = lab(a), q = lab(b), o = (0..<3).map { p[$0] + (q[$0] - p[$0]) * t }
+        let l = pow(o[0] + 0.3963377774 * o[1] + 0.2158037573 * o[2], 3)
+        let m = pow(o[0] - 0.1055613458 * o[1] - 0.0638541728 * o[2], 3)
+        let s = pow(o[0] - 0.0894841775 * o[1] - 1.2914855480 * o[2], 3)
+        let rgb = [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                   -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                   -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s]
+        return rgb.enumerated().reduce(UInt32(0)) { acc, e in
+            let v = min(1, max(0, e.element)), g = v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1 / 2.4) - 0.055
+            return acc | UInt32((g * 255).rounded()) << UInt32(16 - 8 * e.offset)
+        }
     }
 
     /// Line colour by speed, slow to fast: teal at walking pace, olive, mustard, satsuma, cherry, plum from 160 km/h.
     /// On a log scale, so a walk and a bike ride differ as clearly as a car and a train; speeds only, never a mode.
     public static let speedStops: [(kmh: Double, colour: Hex)] = [
         (4, Hex(light: 0x227A72, dark: 0x5DB8AC)), (12, Hex(light: 0x5A842C, dark: 0x9DC46A)), (25, mustard), (50, satsuma), (100, cherry),
-        (160, Hex(light: 0x7A2E5C, dark: 0xC47AA8)),
+        (160, plum),
     ]
 
     public static func speedRamp(_ kmh: Double) -> (light: UInt32, dark: UInt32) {

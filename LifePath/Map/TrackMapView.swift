@@ -93,7 +93,7 @@ struct TrackMapView: UIViewRepresentable {
         c.shownGeneration = data.generation
         c.shownColour = colour
         c.shownDark = dark
-        c.fogRenderer.set(mode == .fog ? FogContent(data.fog, dark: dark) : nil)
+        c.fogRenderer.set(mode == .fog ? FogContent(data.fog, fills: data.fogFills, dark: dark) : nil)
         c.heatRenderer.set(mode == .heat ? HeatContent(data.heatLines, places: data.heatPlaces, max: data.heatMax, dark: dark) : nil)
         c.linesRenderer.set(mode == .streets ? LinesContent(data.lines, colour: colour, edged: true, dark: dark) : nil)
         // Overlays are keyed: unchanged ones stay on the map, new ones are added before stale ones go, so nothing blinks.
@@ -109,9 +109,6 @@ struct TrackMapView: UIViewRepresentable {
                     return MKPolygon(coordinates: &corners, count: 4)
                 })
             }))
-        }
-        for p in data.still {
-            wanted.append(("s\(p.lat),\(p.lon)-\(dark)", .aboveLabels, { MKCircle(center: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), radius: 3) }))
         }
         for w in wanted where c.shown[w.key] == nil {
             let o = w.make()
@@ -191,11 +188,6 @@ struct TrackMapView: UIViewRepresentable {
                 return r
             }
             if overlay === heat { return heatRenderer }
-            if let circle = overlay as? MKCircle {
-                let r = MKCircleRenderer(circle: circle)
-                r.fillColor = UIColor(Palette.muted)
-                return r
-            }
             return MKOverlayRenderer(overlay: overlay)
         }
     }

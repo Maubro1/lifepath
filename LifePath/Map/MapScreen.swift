@@ -28,10 +28,10 @@ struct MapData: Sendable {
     var heatLines: [(key: String, coords: [(lat: Double, lon: Double)])] = []   // every cached trip in the region, in Heat mode
     var heatPlaces: [(lat: Double, lon: Double, hours: Double)] = []
     var heatMax = 0.0                                                           // passes through the busiest cell at this zoom
-    var still: [(lat: Double, lon: Double)] = []
     var places: [Place] = []                    // pins visible at the end of the range, in the visible region
     var outlines: [Int64: Set<PlaceCell>] = [:] // their regions, at street zoom only
     var fog: [(key: String, stroke: FogStroke)] = []   // what clears the fog, in Fog mode
+    var fogFills: [FogFill] = []                       // closed pockets narrower than a walk's band, cleared whole
     var here: Here?                                    // the area under the map centre, for the place chip
     var today: (distance: Double, steps: Int?, newStreets: Int)?
     var walked: (covered: Int, total: Int)?     // the tally; nil before the first coverage run
@@ -234,11 +234,6 @@ struct MapOptions: Equatable {
             return (q.minLat...q.maxLat).contains(pin.lat) && (q.minLon...q.maxLon).contains(pin.lon)
         }
         if q.street { for p in out.places { out.outlines[p.id] = p.region() } }
-        if q.street {
-            let cell = 0.000225   // ~25 m of latitude: one dot per place, not one per check-in
-            out.still = try diary.stillPoints(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: q.from, to: q.to,
-                                              cell: cell, lonCell: cell / cos((q.minLat + q.maxLat) / 2 * .pi / 180))
-        }
         out.bike = q.bike
         out.walked = try diary.streetsWalked(bike: q.bike)
         let progress = Dictionary(try diary.areaProgress(bike: q.bike).map { ($0.areaId, $0) }, uniquingKeysWith: { a, _ in a })
@@ -319,6 +314,10 @@ struct MapOptions: Equatable {
                     a = b
                 }
             }
+        }
+        if q.mode == .fog {
+            try Task.checkCancellation()
+            out.fogFills = Fog.enclosedGaps(out.fog.map(\.stroke), minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon)
         }
         return out
     }

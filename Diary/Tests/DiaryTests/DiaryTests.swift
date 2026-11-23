@@ -176,18 +176,6 @@ final class DiaryTests: XCTestCase {
         XCTAssertEqual(try chunk(400), [pts[4]])
     }
 
-    func testStillPointsOnePerCell() throws {
-        let diary = try Diary(path: tempPath())
-        func at(_ t: Double, _ lat: Double, _ kind: PointKind) -> FilteredPoint {
-            FilteredPoint(t: d(t), lat: lat, lon: 4.0, rawLat: lat, rawLon: 4.0, hAcc: 5, speed: 0, kind: kind)
-        }
-        // Three check-ins at one place (within a few metres), one 100 m away, one moving fix, one outside the time range.
-        try diary.append([at(100, 52.0, .still), at(200, 52.00002, .still), at(300, 52.00001, .still),
-                          at(400, 52.0009, .still), at(500, 52.0005, .moving), at(5000, 52.002, .still)])
-        let got = try diary.stillPoints(minLat: 51.5, maxLat: 52.5, minLon: 3.5, maxLon: 4.5, from: d(0), to: d(1000), cell: 0.000225, lonCell: 0.000365)
-        XCTAssertEqual(got.map { ($0.lat * 1000).rounded() }.sorted(), [52000, 52001])
-    }
-
     func testSmoothedReplace() throws {
         let diary = try Diary(path: tempPath())
         XCTAssertNil(try diary.smoothedUntil())

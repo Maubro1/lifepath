@@ -189,19 +189,6 @@ public final class Diary: Sendable {
         }
     }
 
-    /// One recorded still point per `cell`-degree grid cell (lon cells widened by `lonCell`) in the box and time range.
-    public func stillPoints(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, from: Date, to: Date,
-                            cell: Double, lonCell: Double) throws -> [(lat: Double, lon: Double)] {
-        try pool.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT lat, lon FROM point WHERE kind = 'still' AND lat >= ? AND lat <= ? AND lon >= ? AND lon <= ? AND t >= ? AND t <= ?
-                GROUP BY CAST(ROUND(lat / ?) AS INTEGER), CAST(ROUND(lon / ?) AS INTEGER)
-                """, arguments: [minLat, maxLat, minLon, maxLon, from.timeIntervalSince1970, to.timeIntervalSince1970, cell, lonCell]).map {
-                ($0["lat"], $0["lon"])
-            }
-        }
-    }
-
     public func smoothed(from: Date, to: Date) throws -> [(t: Date, lat: Double, lon: Double)] {
         try pool.read { db in
             try Row.fetchAll(db, sql: "SELECT * FROM smoothedPoint WHERE t >= ? AND t <= ? ORDER BY t",

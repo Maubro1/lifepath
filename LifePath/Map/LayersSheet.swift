@@ -51,7 +51,18 @@ struct LayersSheet: View {
     }
 
     @ViewBuilder private var legend: some View {
-        if colour == .date { HStack { swatch(Palette.mustard, "Newest"); swatch(Palette.satsuma, "Middle"); swatch(Palette.cherry, "Oldest") } }
+        if colour == .date {
+            HStack(spacing: 10) {   // the whole age range as one bar, sampled from the same ramp the lines use
+                Text("Newest").font(.footnote).foregroundStyle(Color.ink)
+                LinearGradient(colors: stride(from: 0.0, through: 1, by: 0.125).map { f in
+                    let r = Palette.dateRamp(f); return Color(UIColor(Hex(light: r.light, dark: r.dark)))
+                }, startPoint: .leading, endPoint: .trailing)
+                .frame(height: 12)
+                .clipShape(.capsule)
+                Text("Oldest").font(.footnote).foregroundStyle(Color.ink)
+            }
+            .frame(minHeight: 32)
+        }
         if colour == .speed {
             HStack {   // the unit once, so four swatches fit a phone's width
                 ForEach([5.0, 25, 80, 160], id: \.self) { k in swatch(ramp(k), k == 160 ? "160+" : "\(Int(k))") }
