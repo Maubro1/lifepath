@@ -5,8 +5,9 @@ public struct HealthInput: Sendable {
     public var events: [LoggedEvent]
     public var points: [FilteredPoint]
     public var settings: [String: String]
-    public init(now: Date, events: [LoggedEvent], points: [FilteredPoint], settings: [String: String]) {
-        self.now = now; self.events = events; self.points = points; self.settings = settings
+    public var streetOffsets: [[(t: Date, d: Double)]]   // `Residuals.offsets` of the window's walks
+    public init(now: Date, events: [LoggedEvent], points: [FilteredPoint], settings: [String: String], streetOffsets: [[(t: Date, d: Double)]] = []) {
+        self.now = now; self.events = events; self.points = points; self.settings = settings; self.streetOffsets = streetOffsets
     }
 }
 
@@ -110,6 +111,7 @@ public enum HealthReport {
         let sa = values("speedAcc"), ca = values("courseAcc")
         out.append(doppler.isEmpty ? "none" : "speed \(sa.isEmpty ? "-" : String(format: "%.2f m/s", sa[sa.count / 2])), "
                    + "direction \(ca.isEmpty ? "-" : String(format: "%.1f°", ca[ca.count / 2])), batches \(doppler.count)")
+        out += ["", "== Walks against their matched street ==", Residuals.summary(input.streetOffsets)]
         out += ["", "== Gaps over 15 min =="]
         var gaps = 0
         for (p, q) in zip(windowPoints, windowPoints.dropFirst()) where q.t.timeIntervalSince(p.t) > 15 * 60 {

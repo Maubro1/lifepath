@@ -391,6 +391,14 @@ import UIKit
     func healthReport() -> String {
         flush()
         let now = Date(), from = now.addingTimeInterval(-3 * 86400)
+        let points = (try? diary?.points(from: from, to: now)) ?? []
+        // Raw fixes of confident walking stretches against their street: the phone's own accuracy, no ground truth needed.
+        var offsets: [[(t: Date, d: Double)]] = []
+        for trip in Trips.split(points) {
+            guard let matches = try? diary?.matches(tripStart: trip.start), !matches.isEmpty,
+                  let ways = try? diary?.ways(ids: Array(Set(matches.map(\.wayId)))) else { continue }
+            offsets += Residuals.offsets(trip.points, matches: matches, ways: Dictionary(ways.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }))
+        }
         let info: [String: String] = [
             "version": Self.version, "quality": settings.quality.rawValue, "effectiveQuality": quality.rawValue,
             "showsIndicator": "\(settings.showsIndicator)", "deepSleep": deepSleep ? "on \(deepSleepReason)" : "off",
@@ -399,6 +407,6 @@ import UIKit
             "diary": diary == nil ? "failed \(diaryError ?? "not opened")" : notSavingSince.map { "write failed since \($0)" } ?? "open",
         ]
         return HealthReport.render(HealthInput(now: now, events: (try? diary?.events(from: from, to: now)) ?? [],
-                                               points: (try? diary?.points(from: from, to: now)) ?? [], settings: info))
+                                               points: points, settings: info, streetOffsets: offsets))
     }
 }
