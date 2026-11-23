@@ -485,8 +485,10 @@ public final class Diary: Sendable {
                 row += [m.start.timeIntervalSince1970, m.end.timeIntervalSince1970]
                 try db.execute(sql: "INSERT INTO modeStretch(tripStart, seq, mode, confidence, start, end) VALUES (?,?,?,?,?,?)", arguments: row)
             }
-            for m in stretches {
-                var row: StatementArguments = [tripStart.timeIntervalSince1970, m.seq, m.wayId, m.fromM, m.toM]
+            // Numbered here, in time order: a transit stretch joins the matcher's own with seq 0, and a repeated key made every
+            // later matching run fail (seen from 19 Nov 2026 on). Readers order by seq, so time order is kept.
+            for (seq, m) in stretches.sorted(by: { $0.start < $1.start }).enumerated() {
+                var row: StatementArguments = [tripStart.timeIntervalSince1970, seq, m.wayId, m.fromM, m.toM]
                 row += [m.confidence, m.start.timeIntervalSince1970, m.end.timeIntervalSince1970]
                 try db.execute(sql: "INSERT INTO matchedStretch(tripStart, seq, wayId, fromM, toM, confidence, start, end) VALUES (?,?,?,?,?,?,?,?)",
                                arguments: row)

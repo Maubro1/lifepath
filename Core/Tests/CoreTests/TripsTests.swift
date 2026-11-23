@@ -96,4 +96,21 @@ final class TripsTests: XCTestCase {
             XCTAssertEqual(got, whole, "chunk size \(size)")
         }
     }
+
+    /// Rest at home, a minute of wandering fixes within 20 m, rest at home again: no trip. A walk 300 m out and back is one.
+    func testPotteringBetweenRestsAtOneSpotIsNoTrip() {
+        func still(_ t: Double) -> FilteredPoint { var p = pt(0, dt: t, dLat: 0); p.kind = .still; p.hAcc = 25; return p }
+        let potter = (1...10).map { pt($0, dt: 300 + Double($0) * 6, dLat: Double($0 % 3) * 0.0001) }   // within ~22 m
+        XCTAssertTrue(Trips.split([still(0), still(300)] + potter + [still(700)]).isEmpty)
+        let out = (1...30).map { pt($0, dt: 300 + Double($0) * 10, dLat: Double(min($0, 30 - $0)) * 0.0002) }   // ~330 m out and back
+        XCTAssertEqual(Trips.split([still(0), still(300)] + out + [still(700)]).count, 1)
+        // Without a rest before it (a trip read on its own), nothing is dropped.
+        XCTAssertEqual(Trips.split(potter + [still(700)]).count, 1)
+        // Chunked reads judge it the same way: the rest before an open run travels in the carry.
+        var carry: [FilteredPoint] = []
+        let all = [still(0), still(300)] + potter + [still(700)]
+        var got = Trips.split(chunk: Array(all[..<6]), carry: &carry)
+        got += Trips.split(chunk: Array(all[6...]), carry: &carry) + Trips.split(carry)
+        XCTAssertTrue(got.isEmpty)
+    }
 }

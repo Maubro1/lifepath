@@ -25,13 +25,14 @@ public struct TripLine: Sendable, Equatable {
 
 public enum TripLines {
     public static let tolerance: Double = 3  // m: detail kept in the cache; the map thins by Visvalingam area per zoom
-    public static let version = 3   // a new version rebuilds the cache once; 3: top speed per trip
+    public static let version = 4   // a new version rebuilds the cache once; 3: top speed per trip; 4: pottering is no trip
 
     /// The trip's top speed (m/s): the highest mean speed it held for 15 s, so a one-second GPS spike cannot decide it while a
     /// bus or car reaching 50 km/h between lights still counts (Huss et al. 2014: a high speed percentile splits walk/bike from
     /// motorised best); -1 when no speed is known. Each point counts for the time to the next one (at most 30 s), so
     /// distance-spaced walking points and per-second vehicle points weigh alike. Doppler speeds are despiked by the median of
-    /// each point and its precise neighbours; a run of rough points (trains) counts at its end-to-end speed.
+    /// each point and its precise neighbours; a run of rough points (trains) counts at its end-to-end speed, and so does each
+    /// 30 s of a run of precise points without Doppler (iOS gives none indoors and LifePath keeps none above 20 m accuracy).
     public static func topSpeed(_ p: [FilteredPoint]) -> Double {
         func weight(_ k: Int) -> Double { k + 1 < p.count ? min(max(p[k + 1].t.timeIntervalSince(p[k].t), 0), 30) : 0 }
         var v: [(speed: Double, w: Double)] = []
@@ -43,6 +44,14 @@ public enum TripLines {
                 let dt = p[j].t.timeIntervalSince(p[i].t)
                 if dt > 0 { v.append((Geo.distance(p[i].lat, p[i].lon, p[j].lat, p[j].lon) / dt, dt)) }
                 i = j + 1
+                continue
+            }
+            if p[i].speed < 0 {
+                var j = i
+                while j + 1 < p.count, p[j + 1].kind != .rough, p[j + 1].speed < 0, p[j].t.timeIntervalSince(p[i].t) < 30 { j += 1 }
+                let dt = p[j].t.timeIntervalSince(p[i].t)
+                if j > i, dt > 0 { v.append((Geo.distance(p[i].lat, p[i].lon, p[j].lat, p[j].lon) / dt, dt)) }
+                i = max(j, i + 1)
                 continue
             }
             if p[i].speed >= 0 {

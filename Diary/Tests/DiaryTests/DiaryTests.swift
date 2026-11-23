@@ -774,4 +774,14 @@ final class DiaryTests: XCTestCase {
         XCTAssertTrue(try diary.places().isEmpty)                       // known only from the deleted day
         XCTAssertEqual(try diary.meta("coverageDirty"), "1")
     }
+
+    /// A transit stretch (seq 0) saved beside the matcher's stretches (also from seq 0) must not collide; they come back in time order.
+    func testMatchesWithRepeatedSeqSaveInTimeOrder() throws {
+        let diary = try Diary(path: tempPath())
+        let walk = MatchedStretch(seq: 0, wayId: 1, fromM: 0, toM: 50, confidence: 0.9, start: d(100), end: d(200))
+        let ride = MatchedStretch(seq: 0, wayId: -7, fromM: 0, toM: 900, confidence: 1, start: d(300), end: d(600))
+        let after = MatchedStretch(seq: 1, wayId: 2, fromM: 0, toM: 40, confidence: 0.9, start: d(700), end: d(800))
+        try diary.saveMatches(tripStart: d(100), [walk, after, ride], modes: [])
+        XCTAssertEqual(try diary.matches(tripStart: d(100)).map(\.wayId), [1, -7, 2])
+    }
 }

@@ -44,7 +44,10 @@ final class TripLineTests: XCTestCase {
     func testTopSpeedOfRoughTrainRunIsEndToEnd() {
         // Only rough fixes, 10 km in 300 s: 33.3 m/s; no known speed at all is -1.
         XCTAssertEqual(TripLines.topSpeed(points([0, 150, 300], [nil, nil, nil], north: [0, 5000, 10_000])), 10_000 / 300, accuracy: 0.5)
-        XCTAssertEqual(TripLines.topSpeed(points([0, 10], [-1, -1])), -1)
+        XCTAssertEqual(TripLines.topSpeed(points([0, 10], [-1, -1])), 0, "no Doppler: positions decide (here, standing still)")
+        // A city car ride with no Doppler (accuracy above 20 m): 1 min at 14 m/s from positions, every 5 s.
+        let ts = stride(from: 0.0, through: 60, by: 5).map { $0 }
+        XCTAssertEqual(TripLines.topSpeed(points(ts, ts.map { _ in -1 }, north: ts.map { $0 * 14 })), 14, accuracy: 0.1)
     }
 
     func testBoundingBoxCoversAllPoints() {

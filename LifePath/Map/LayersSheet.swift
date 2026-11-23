@@ -23,9 +23,9 @@ struct LayersSheet: View {
                     }
                     legend
                     if colour == .speed {
-                        // One side always stays on, so the map never goes blank by accident.
-                        Toggle("Top speed under 40 km/h", isOn: $showSlow).disabled(showSlow && !showFast)
-                        Toggle("Top speed 40 km/h and over", isOn: $showFast).disabled(showFast && !showSlow)
+                        // Switching off the last side switches the other on, so the map never goes blank and no toggle looks greyed out.
+                        Toggle("Top speed under 40 km/h", isOn: Binding(get: { showSlow }, set: { showSlow = $0; if !$0 { showFast = true } }))
+                        Toggle("Top speed 40 km/h and over", isOn: Binding(get: { showFast }, set: { showFast = $0; if !$0 { showSlow = true } }))
                     }
                 } header: { Text("Your lines") } footer: {
                     if colour == .speed {
