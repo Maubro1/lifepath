@@ -30,7 +30,23 @@ public struct Way: Sendable, Equatable {
 
 extension Way {
     /// The way's geometry from `fromM` to `toM` metres along it (partial end segments included), in that direction: reversed when `toM < fromM`.
-    public func slice(fromM: Double, toM: Double) -> [(lat: Double, lon: Double)] {
+    /// A closed way (a roundabout, a pond path) can be gone round either way: the node where its list happens to start is
+    /// no wall (a bike path drawn all the way round a roundabout, 16 Nov 2026). One-way: forward. Otherwise the way round
+    /// the stretch's `fixes` follow more closely, and with no fixes the shorter one.
+    public func slice(fromM: Double, toM: Double, near fixes: [(lat: Double, lon: Double)] = []) -> [(lat: Double, lon: Double)] {
+        guard nodes.count > 2, nodes.first == nodes.last else { return straight(fromM: fromM, toM: toM) }
+        let total = zip(coords, coords.dropFirst()).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.reduce(0, +)
+        let forward = toM >= fromM ? straight(fromM: fromM, toM: toM) : straight(fromM: fromM, toM: total) + straight(fromM: 0, toM: toM).dropFirst()
+        if oneway { return forward }
+        let back = toM < fromM ? straight(fromM: fromM, toM: toM) : straight(fromM: fromM, toM: 0) + straight(fromM: total, toM: toM).dropFirst()
+        func miss(_ s: [(lat: Double, lon: Double)]) -> Double {
+            fixes.isEmpty ? zip(s, s.dropFirst()).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.reduce(0, +)
+                : fixes.map { Transit.distance(FilteredPoint(t: .distantPast, lat: $0.lat, lon: $0.lon, rawLat: $0.lat, rawLon: $0.lon, hAcc: 0, speed: 0, kind: .moving), to: s) }.reduce(0, +)
+        }
+        return miss(forward) <= miss(back) ? forward : back
+    }
+
+    private func straight(fromM: Double, toM: Double) -> [(lat: Double, lon: Double)] {
         let lo = min(fromM, toM), hi = max(fromM, toM)
         var out: [(lat: Double, lon: Double)] = [], at = 0.0
         for i in 0..<max(0, coords.count - 1) {

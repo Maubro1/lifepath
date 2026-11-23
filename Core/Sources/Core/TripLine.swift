@@ -25,7 +25,7 @@ public struct TripLine: Sendable, Equatable {
 
 public enum TripLines {
     public static let tolerance: Double = 3  // m: detail kept in the cache; the map thins by Visvalingam area per zoom
-    public static let version = 5   // a new version rebuilds the cache once; 3: top speed per trip; 4: pottering is no trip; 5: rough fixes smoothed
+    public static let version = 6   // a new version rebuilds the cache once; 3: top speed per trip; 4: pottering is no trip; 5: rough fixes smoothed; 6: roundabouts the short way
 
     /// The trip's top speed (m/s): the highest mean speed it held for 15 s, so a one-second GPS spike cannot decide it while a
     /// bus or car reaching 50 km/h between lights still counts (Huss et al. 2014: a high speed percentile splits walk/bike from
@@ -100,7 +100,7 @@ public enum TripLines {
             guard let first = at[m.start], let last = at[m.end], first >= next, first <= last, let way = ways[m.wayId] else { continue }
             nc += coords[next..<first]; ns += speeds[next..<first]
             var j = first   // vertices run in travel order, so the nearest fix only moves forward
-            for v in way.slice(fromM: m.fromM, toM: m.toM) {
+            for v in way.slice(fromM: m.fromM, toM: m.toM, near: Array(coords[first...last])) {
                 while j < last, Geo.distance(v.lat, v.lon, coords[j + 1].lat, coords[j + 1].lon) < Geo.distance(v.lat, v.lon, coords[j].lat, coords[j].lon) { j += 1 }
                 nc.append(v); ns.append(speeds[j])
             }

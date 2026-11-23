@@ -197,7 +197,7 @@ struct MapOptions: Equatable {
                         guard let first = at[m.start], let last = at[m.end], first >= next, first <= last, let way = ways[m.wayId] else { continue }
                         nc += coords[next..<first]; ns += speeds[next..<first]; nm += modes[next..<first]; nr += rough[next..<first]
                         var j = first   // vertices run in travel order, so the nearest fix only moves forward
-                        for v in way.slice(fromM: m.fromM, toM: m.toM) {
+                        for v in way.slice(fromM: m.fromM, toM: m.toM, near: Array(coords[first...last])) {
                             while j < last, Geo.distance(v.lat, v.lon, coords[j + 1].lat, coords[j + 1].lon) < Geo.distance(v.lat, v.lon, coords[j].lat, coords[j].lon) { j += 1 }
                             nc.append(v); ns.append(speeds[j]); nm.append(modes[j]); nr.append(false)
                         }

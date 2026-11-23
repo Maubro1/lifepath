@@ -180,4 +180,20 @@ final class StreetsTests: XCTestCase {
         XCTAssertEqual(b.minLat, 51.984, accuracy: 1e-9); XCTAssertEqual(b.maxLat, 52.002, accuracy: 1e-9)
         XCTAssertEqual(Tile(lat: -0.001, lon: -0.001), Tile(x: -1, y: -1))
     }
+
+    /// A roundabout: a closed 400 m square whose node list starts at one corner. Crossing that corner goes the short way.
+    func testClosedWayIsCrossedTheShortWay() {
+        let c = [(0.0, 0.0), (0, 100), (100, 100), (100, 0), (0, 0)].map { Geo.offset(lat: 52, lon: 5, north: $0.0, east: $0.1) }
+        func length(_ s: [(lat: Double, lon: Double)]) -> Double { zip(s, s.dropFirst()).map { Geo.distance($0.lat, $0.lon, $1.lat, $1.lon) }.reduce(0, +) }
+        let ring = Way(id: 1, kind: .cycle, name: nil, oneway: false, nodes: [1, 2, 3, 4, 1], coords: c)
+        XCTAssertEqual(length(ring.slice(fromM: 350, toM: 50)), 100, accuracy: 1, "forward across the start")
+        XCTAssertEqual(length(ring.slice(fromM: 50, toM: 350)), 100, accuracy: 1, "backward across the start")
+        XCTAssertEqual(length(ring.slice(fromM: 100, toM: 250)), 150, accuracy: 1, "no seam: as before")
+        let oneway = Way(id: 2, kind: .road, name: nil, oneway: true, nodes: [1, 2, 3, 4, 1], coords: c)
+        XCTAssertEqual(length(oneway.slice(fromM: 50, toM: 350)), 300, accuracy: 1, "one-way: forward, even the long way")
+        XCTAssertEqual(length(oneway.slice(fromM: 350, toM: 50)), 100, accuracy: 1)
+        // Fixes along the far side (a walk round the pond the long way): the long way is drawn, not the short one.
+        let far = [(100.0, 50.0), (100, 100), (50, 100)].map { Geo.offset(lat: 52, lon: 5, north: $0.0, east: $0.1) }
+        XCTAssertEqual(length(ring.slice(fromM: 350, toM: 50, near: far)), 300, accuracy: 1)
+    }
 }
