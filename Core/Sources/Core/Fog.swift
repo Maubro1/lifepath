@@ -51,15 +51,13 @@ public enum Fog {
 
     /// Fog pockets closed in by cleared bands on every side and narrower than one walk's band (2 × `onFoot`), such as the
     /// road between two cycle paths ridden on both sides, closed off where the trips cross it. Each pocket comes back as cell
-    /// rectangles to clear. A pocket touching the edge of the box may not be closed, so it stays. Rasterised on a grid of
-    /// 2.5 m or coarser over the box, at most about 2 million cells; zoomed out past 5 m cells (where such a pocket is
-    /// under 2 pt) nothing is filled.
+    /// rectangles to clear. A pocket touching the edge of the box may not be closed, so it stays: callers pass a box well
+    /// beyond the screen. Rasterised on a grid of 2.5 m or coarser over the box, at most about 2 million cells.
     public static func enclosedGaps(_ strokes: [FogStroke], minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) -> [FogFill] {
         let k = cos((minLat + maxLat) / 2 * .pi / 180), m = 111_320.0
         let width = (maxLon - minLon) * m * k, height = (maxLat - minLat) * m
         guard width > 0, height > 0 else { return [] }
         let cell = max(2.5, (width * height / 2e6).squareRoot())
-        guard cell <= 5 else { return [] }
         let nx = Int((width / cell).rounded(.up)), ny = Int((height / cell).rounded(.up)), n = nx * ny
         func grid(_ c: (lat: Double, lon: Double)) -> (x: Double, y: Double) { ((c.lon - minLon) * m * k / cell, (c.lat - minLat) * m / cell) }
         var clear = [Bool](repeating: false, count: n)

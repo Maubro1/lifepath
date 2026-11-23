@@ -270,8 +270,10 @@ struct MapOptions: Equatable {
             out.heatMax = passes.values.max() ?? 0
             out.heatPlaces = q.places.compactMap { p in p.pin.map { (lat: $0.lat, lon: $0.lon, hours: p.totalSeconds / 3600) } }
         } else if q.mode == .fog {
-            // Fog: every cached trip line in the region, all time, plus this period's lines so a trip clears at once.
-            let cached = try diary.tripLines(minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon, from: .distantPast, to: q.to)
+            // Fog: every cached trip line in the region, all time, plus this period's lines so a trip clears at once. Read over at
+            // least 3 km around the view, so a closed pocket reaching past the screen edge is still seen whole when zoomed in.
+            let b = Self.fogBox(q)
+            let cached = try diary.tripLines(minLat: b.minLat, maxLat: b.maxLat, minLon: b.minLon, maxLon: b.maxLon, from: .distantPast, to: q.to)
             let modes = cached.isEmpty ? [:] : try diary.modes(from: cached.map(\.start).min()!, to: q.to)
             for l in cached where q.keep(l.topSpeed) {   // the top-speed choice holds in Fog too
                 for (i, st) in Fog.strokes(line: l, modes: modes[l.start] ?? []).enumerated() {
@@ -320,9 +322,18 @@ struct MapOptions: Equatable {
         }
         if q.mode == .fog {
             try Task.checkCancellation()
-            out.fogFills = Fog.enclosedGaps(out.fog.map(\.stroke), minLat: q.minLat, maxLat: q.maxLat, minLon: q.minLon, maxLon: q.maxLon)
+            let b = Self.fogBox(q)
+            out.fogFills = Fog.enclosedGaps(out.fog.map(\.stroke), minLat: b.minLat, maxLat: b.maxLat, minLon: b.minLon, maxLon: b.maxLon)
         }
         return out
+    }
+
+    /// The query box grown to at least 3 km across each way, around its centre.
+    private nonisolated static func fogBox(_ q: Query) -> (minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
+        let halfLat = max((q.maxLat - q.minLat) / 2, 1500 / 111_320.0)
+        let halfLon = max((q.maxLon - q.minLon) / 2, 1500 / (111_320 * cos(q.centerLat * .pi / 180)))
+        let lat = (q.minLat + q.maxLat) / 2, lon = (q.minLon + q.maxLon) / 2
+        return (lat - halfLat, lat + halfLat, lon - halfLon, lon + halfLon)
     }
 }
 

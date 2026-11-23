@@ -10,6 +10,7 @@ Last updated: 2026-11-23 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.9.10-preview.1 | Fog pockets fill at every zoom: trips and pockets are read over at least 3 km around the view, so a pocket past the screen edge stays filled when zoomed in; no zoomed-out cut-off. |
 | v0.9.9-preview.1 | A pin shows "Days visited": different local days a visit touched (a night counts both days, two visits on a day once). The map's "Show" period and custom dates are remembered (first launch: All); export format and "All history" too. Colour stays "One colour" by default. |
 | v0.9.8-preview.1 | The top-speed choice (under / from 40 km/h) applies to lines, Fog and Heat; its toggles are always in the layers panel. Owner data: no trip between 29.8 and 50.8 km/h top speed in 8 days, so 40 sits in the gap. |
 | v0.9.7-preview.1 | No spikes from lone rough fixes: trip lines draw rough fixes at their smoothed position (a "2 km" fix on 21 Nov drew a 700 m spike in a tram ride). Trip-line cache v5. |
@@ -32,7 +33,7 @@ Last updated: 2026-11-23 (update this line and the sections below whenever the h
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## Now: v0.9.9-preview.1 released (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
+## Now: v0.9.10-preview.1 released (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
 
 Accuracy round 1 and the top-speed filter shipped. Next from the report, in its order: measure first (the health report now gives iOS's speed/direction accuracy and the walks' offset from their street with a fade time; feed the measured fade time into `Drift.phone`), then the `.fitness` vs `.other` walk experiment (needs the owner's test walks), walker-tuned map matching (beta by spacing, off-network option), drift states in the smoother. Speed filter follow-ups: per stretch instead of per trip (a walk to the station currently counts with the train), and speed pedelecs (32-45 km/h) straddle the 40 km/h line. Known: km during a signal gap are not counted in the day's distance.
 
