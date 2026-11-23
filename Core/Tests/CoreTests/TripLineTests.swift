@@ -98,4 +98,16 @@ final class TripLineTests: XCTestCase {
         let t = trip(pts)
         XCTAssertEqual(TripLines.snapped(t, smoothed: [:], matches: [], ways: [:]), TripLines.make(t))
     }
+
+    /// A lone rough fix 700 m off a tram ride (21 Nov 2026) is drawn where the smoother put it, not as a spike.
+    func testRoughFixDrawnAtItsSmoothedPosition() {
+        var t = trip((0...10).map { i in let p = Geo.offset(lat: 50, lon: 4, north: 0, east: Double(i) * 50); return (p.lat, p.lon) })
+        let off = Geo.offset(lat: 50, lon: 4, north: 700, east: 250)
+        t.points[5].lat = off.lat; t.points[5].lon = off.lon; t.points[5].kind = .rough; t.points[5].hAcc = 2000
+        let smoothed = Dictionary(uniqueKeysWithValues: t.points.indices.map { i in
+            (t.points[i].t, (lat: 50.0, lon: Geo.offset(lat: 50, lon: 4, north: 0, east: Double(i) * 50).lon))
+        })
+        let line = TripLines.snapped(t, smoothed: smoothed, matches: [], ways: [:])
+        XCTAssertTrue(line.coords.allSatisfy { Geo.distance($0.lat, $0.lon, 50, $0.lon) < 1 }, "no spike: \(line.coords)")
+    }
 }

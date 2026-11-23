@@ -25,7 +25,7 @@ public struct TripLine: Sendable, Equatable {
 
 public enum TripLines {
     public static let tolerance: Double = 3  // m: detail kept in the cache; the map thins by Visvalingam area per zoom
-    public static let version = 4   // a new version rebuilds the cache once; 3: top speed per trip; 4: pottering is no trip
+    public static let version = 5   // a new version rebuilds the cache once; 3: top speed per trip; 4: pottering is no trip; 5: rough fixes smoothed
 
     /// The trip's top speed (m/s): the highest mean speed it held for 15 s, so a one-second GPS spike cannot decide it while a
     /// bus or car reaching 50 km/h between lights still counts (Huss et al. 2014: a high speed percentile splits walk/bike from
@@ -85,12 +85,14 @@ public enum TripLines {
                         coords: kept.map { (p[$0].lat, p[$0].lon, p[$0].speed >= 0 ? p[$0].speed : median) }, topSpeed: topSpeed(p))
     }
 
-    /// The trip as the map draws it: smoothed points, and every confident matched stretch drawn along its street, rail or
+    /// The trip as the map draws it: smoothed points (rough ones too), and every confident matched stretch drawn along its street, rail or
     /// ferry line (solid even when the fixes were rough); vertices borrow the nearest fix's speed. Then simplified like `make`.
     public static func snapped(_ trip: Trip, smoothed: [Date: (lat: Double, lon: Double)], matches: [MatchedStretch],
                                ways: [Int64: Way]) -> TripLine {
         let p = trip.points
-        var coords = p.map { q in q.kind == .rough ? (lat: q.lat, lon: q.lon) : smoothed[q.t] ?? (lat: q.lat, lon: q.lon) }
+        // Rough fixes too: the smoother weighs a lone one (iOS's "2 km" fix in a tram) almost to nothing, so drawing it raw
+        // put a 700 m spike on the line (21 Nov 2026); a long rough run keeps its shape through its own consistency.
+        var coords = p.map { q in smoothed[q.t] ?? (lat: q.lat, lon: q.lon) }
         var speeds = MapColors.filledSpeeds(p.map(\.speed))
         let at = Dictionary(p.enumerated().map { ($1.t, $0) }, uniquingKeysWith: { a, _ in a })
         var nc: [(lat: Double, lon: Double)] = [], ns: [Double] = [], next = 0
