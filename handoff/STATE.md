@@ -42,6 +42,14 @@ The owner runs these on their iPhone and reports that recording works well.
 
 Accuracy round 1 and the top-speed filter shipped. Next from the report, in its order: measure first (the health report now gives iOS's speed/direction accuracy and the walks' offset from their street with a fade time; feed the measured fade time into `Drift.phone`), then the `.fitness` vs `.other` walk experiment (needs the owner's test walks), walker-tuned map matching (beta by spacing, off-network option), drift states in the smoother. Speed filter follow-ups: per stretch instead of per trip (a walk to the station currently counts with the train), and speed pedelecs (32-45 km/h) straddle the 40 km/h line. Known: km during a signal gap are not counted in the day's distance.
 
+## Train snapping: diagnosis (2026-11-24, from the owner's backup of 22:32)
+
+The owner sees no change in old train rides after v0.9.15. Evidence from the backup: matcherVersion 3.5.2 (re-match started) but `streetsUntil` is stuck at 16 Nov 12:40; only 35 tiles and 14 route tiles on the phone; backoff 960 s; runs log "waiting". First blocked trip 16 Nov 12:47: its tiles are there but tile (170, 2894) (Utrecht Centraal) has no routes. That tile's route index alone is 138 routes (70 bus, 64 train, 4 light rail), 4.9 MB, 44 s; the geometry request for all of them at once (`routeGeometryQuery`) times out or is refused ("at capacity"). Train rides need 58-88 full street tiles each (rough fixes give a 1.5 km tile radius) and 50-71 of them are missing. So the v0.9.15 matcher and Transit fixes (verified offline on complete data: drawn line median 0 m from the rails) never run on those rides.
+
+Root cause: the design depends on huge, fragile downloads from one overloaded public Overpass server (88 full tiles + route geometry of every bus/train line per tile, strictly in order, one failure holds every later trip).
+
+Planned fix (smallest that removes the dependency): (1) route/tile download failures never hold the cursor or block later trips; (2) for a train ride fetch only what it needs: one light rail-only request for the ride's box (railway ways + stations) instead of 88 full tiles and route relations; (3) draw the ride along the rail graph between the platform anchors (shortest rail path through waypoints from the smoothed line), which needs path reconstruction in RoadGraph. Keep v0.9.15's matcher/Transit fixes.
+
 ## Questions for the owner (collected overnight, 2026-11-17)
 
 None of these block work; each has a default already built.
