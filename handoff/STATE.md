@@ -10,6 +10,7 @@ Last updated: 2026-11-23 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.9.20-preview.1 | No per-tile route downloads any more (central Utrecht's 138-route request kept failing and held the matching cursor): train, tram, bus and boat rides ask for the routes near both their ends; rough fixes need a 300 m strip of tiles instead of 1.5 km. Still open: keep extremely short trips out of pins. |
 | v0.9.19-preview.1 | Train and tram rides no route explains ask Overpass for the rail routes within 300 m of both platform ends (one small request per ride, no tiles needed; tested: Rotterdam CS-Utrecht CS gives 10 routes, 2.8 MB); routes saved without a tile. CI not yet checked. Still open: tile downloads keep stalling the cursor (route-per-tile requests; rough 1.5 km tile radius); keep extremely short trips out of pins. |
 | v0.9.18-preview.1 | Drawn lines drop out-and-back jumps (a run of up to 4 vertices more than 25 m out whose next vertex is back within 20 m; 35 in the owner's drawn lines since 21 Nov, mostly trip ends wandering at home). Trip-line cache v7. Still open from the spikes item: keep extremely short trips out of pins (owner's refinement). |
 | v0.9.17-preview.1 | Save extra battery switches on by itself from 01:00 to 05:30 while resting at a pinned place (deep sleep reason "night"). |
@@ -42,7 +43,7 @@ Last updated: 2026-11-23 (update this line and the sections below whenever the h
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## Now: v0.9.19-preview.1 released (CI unchecked) (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
+## Now: v0.9.20-preview.1 released (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
 
 Accuracy round 1 and the top-speed filter shipped. Next from the report, in its order: measure first (the health report now gives iOS's speed/direction accuracy and the walks' offset from their street with a fade time; feed the measured fade time into `Drift.phone`), then the `.fitness` vs `.other` walk experiment (needs the owner's test walks), walker-tuned map matching (beta by spacing, off-network option), drift states in the smoother. Speed filter follow-ups: per stretch instead of per trip (a walk to the station currently counts with the train), and speed pedelecs (32-45 km/h) straddle the 40 km/h line. Known: km during a signal gap are not counted in the day's distance.
 
