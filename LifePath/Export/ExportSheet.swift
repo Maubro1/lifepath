@@ -72,7 +72,7 @@ struct ExportSheet: View {
                         DatePicker("To", selection: $to, in: from..., displayedComponents: .date)
                     }
                 } footer: {
-                    Text("Your trips as a file other apps can open. Positions LifePath was unsure of (about a kilometre off, as in some trains) are left out, so the line breaks there. Rests and places are not included; they are in the backup.")
+                    Text("Your trips as a file other apps can open. GPX works in most fitness and hiking apps; GeoJSON and KML open in map tools such as Google Earth. Stretches where your phone only knew roughly where you were (as in some trains) are left out, so the line has gaps there. Places you stayed are not included; a backup keeps those.")
                 }
                 Section {
                     if task != nil {

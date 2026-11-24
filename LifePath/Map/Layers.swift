@@ -210,13 +210,15 @@ struct LinesContent: LayerContent {
         ctx.setLineCap(.round); ctx.setLineJoin(.round)
         let near = rect.insetBy(dx: -8 / scale, dy: -8 / scale)
         for (r, l) in lines where r.intersects(near) && l.coords.count > 1 {
-            let width = (l.rough ? 2.0 : 3.0) / scale
-            ctx.setLineDash(phase: 0, lengths: l.rough ? [4 / scale, 4 / scale] : [])
             // Only vertices whose Visvalingam area beats this zoom's pixel² (nested sets: zooming never reshapes a line).
             let px = 1 / (Double(scale) * pointsPerMetre(l.coords[0].lat)), cut = px * px
+            // Thinner zoomed out (3 pt in the street, ~1.5 pt over a city, 1 pt over a region), so trips side by side stay lines.
+            let k = Swift.max(1 / 3, Swift.min(1, 1 - 0.47 * log10(Swift.max(px, 2) / 2)))
+            let width = (l.rough ? 2.0 : 3.0) * k / scale
+            ctx.setLineDash(phase: 0, lengths: l.rough ? [4 / scale, 4 / scale] : [])
             let shown = l.importance.count == l.coords.count ? l.coords.indices.filter { l.importance[$0] >= cut } : Array(l.coords.indices)
             if edged {
-                ctx.setStrokeColor(cgColor(Palette.text, dark: dark)); ctx.setLineWidth(width + 2 / scale)
+                ctx.setStrokeColor(cgColor(Palette.text, dark: dark)); ctx.setLineWidth(width + 2 * k / scale)
                 ctx.addPath(renderer.curve(shown.map { l.coords[$0] })); ctx.strokePath()
             }
             ctx.setLineWidth(width)

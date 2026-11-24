@@ -172,4 +172,22 @@ final class TransitTests: XCTestCase {
         let r = try XCTUnwrap(OSM.parseRoutes(Data(geom.utf8)).routes.first)
         XCTAssertEqual(r.path.map(\.lon), [5.0, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6])   // one run east, no back-and-forth
     }
+
+    /// The real Rotterdam-Utrecht case (2026-11-24): the ride's first fix is a rough one 2 km off and its precise fixes are few, so
+    /// only the platform rest before it finds the boarding station; 27 s standing in the arrival station, 95 m off the route's
+    /// stop, must not outvote the fixes along the track.
+    func testRideAnchoredAtThePlatformAndNotOutvotedByTheStation() throws {
+        func fix(_ t: Double, _ e: Double, _ n: Double, _ kind: PointKind, hAcc: Double = 20) -> FilteredPoint {
+            let p = at(e, n); return FilteredPoint(t: t0 + t, lat: p.lat, lon: p.lon, rawLat: p.lat, rawLon: p.lon, hAcc: hAcc, speed: kind == .moving ? 25 : -1, kind: kind)
+        }
+        let rest = fix(-180, 2000, 40, .still, hAcc: 54)                           // on the platform at the 2 km stop, before the trip
+        var ride: [FilteredPoint] = [fix(0, 3500, 2000, .rough, hAcc: 1232)]       // the trip's first fix: 2 km off
+        for k in 1...5 { ride.append(fix(Double(k) * 4, 2000 + Double(k) * 100, 10, .moving)) }   // a few good fixes leaving the station
+        for k in 1...6 { ride.append(fix(30 + Double(k) * 60, 2500 + Double(k) * 800, 900, .rough, hAcc: 1500)) }
+        for k in 0..<27 { ride.append(fix(420 + Double(k), 8000, 95, .moving)) }    // standing in the 8 km station, 95 m off its stop
+        XCTAssertNil(Transit.match(ride, routes: [line(1)]), "unanchored: no station near the rough first fix")
+        let m = try XCTUnwrap(Transit.match(Transit.anchored([rest] + ride, from: ride[0].t, to: ride.last!.t), routes: [line(1)]))
+        XCTAssertEqual(m.from, 1); XCTAssertEqual(m.to, 4)
+        XCTAssertEqual(Transit.anchored([rest] + ride, from: ride[0].t, to: ride.last!.t).first, rest, "led by the platform rest")
+    }
 }

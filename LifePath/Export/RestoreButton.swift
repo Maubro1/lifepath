@@ -29,7 +29,7 @@ struct RestoreButton: View {
         case .ready(let s, _):
             List {
                 Section {
-                    InfoRow("Points", value: s.points.formatted())
+                    InfoRow("Saved locations", value: s.points.formatted())
                     InfoRow("From", value: s.first?.formatted(date: .abbreviated, time: .omitted) ?? "–")
                     InfoRow("To", value: s.last?.formatted(date: .abbreviated, time: .omitted) ?? "–")
                 } footer: {
@@ -56,7 +56,7 @@ struct RestoreButton: View {
             }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { service.cancel() } } }
         case .done(let n):
-            List { Text("Restored. \(n.formatted()) points added.") }
+            List { Text("Restored. \(n.formatted()) saved locations added.") }
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { service.cancel() } } }
         case .failed(let message):
             List { Label(message, systemImage: "exclamationmark.triangle") }

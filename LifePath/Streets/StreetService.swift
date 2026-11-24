@@ -119,9 +119,13 @@ enum StreetService {
             // Rides that start and end at stops of one route, in order, and follow its track: drawn as that route's track.
             let box = (lat: trip.points.map(\.lat), lon: trip.points.map(\.lon))
             let routes = try diary.routes(minLat: box.lat.min()! - 0.01, maxLat: box.lat.max()! + 0.01, minLon: box.lon.min()! - 0.01, maxLon: box.lon.max()! + 0.01)
+            // Rides are anchored where you stood on the platform, up to 30 min either side of the trip (often a rest before it).
+            let around = routes.isEmpty ? [] : try diary.points(from: trip.start.addingTimeInterval(-1800), to: trip.end.addingTimeInterval(1800))
             for k in modes.indices where !routes.isEmpty && ![.walk, .run, .bike].contains(modes[k].mode) {
                 let piece = trip.points.filter { $0.t >= modes[k].start && $0.t <= modes[k].end && $0.kind != .still }
-                guard let a = piece.first?.t, let z = piece.last?.t, let m = Transit.match(piece, routes: routes) else { continue }
+                guard let a = piece.first?.t, let z = piece.last?.t,
+                      let m = Transit.match(Transit.anchored(around, from: modes[k].start, to: modes[k].end), routes: routes)
+                        ?? Transit.match(piece, routes: routes) else { continue }
                 modes[k].mode = m.route.mode
                 modes[k].confidence = max(modes[k].confidence, 0.9)
                 matches.removeAll { $0.start <= z && $0.end >= a }

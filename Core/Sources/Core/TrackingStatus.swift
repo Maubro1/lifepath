@@ -28,10 +28,10 @@ public struct TrackingStatus: Sendable, Equatable {
             return problem("Precise Location is off", "Settings → LifePath → Location → Precise Location")
         }
         if let c = lastCheckIn, now.timeIntervalSince(c) > 60 * 60 {   // deep sleep too keeps a spot check every 15 min
-            return problem("No location check for over an hour", "Was LifePath swiped away, updated or refreshed in SideStore? Open it once to restart tracking.")
+            return problem("LifePath hasn't checked where you are for over an hour", "Was LifePath swiped away, updated or refreshed in SideStore? Open it once to restart tracking.")
         }
         if let e = signingExpiry, e.timeIntervalSince(now) < 24 * 3600 {
-            return problem("The app's signing expires soon", "Open SideStore and tap Refresh All, then open LifePath once.")
+            return problem("LifePath needs a refresh in SideStore soon", "Open SideStore and tap Refresh All, then open LifePath once.")
         }
         if state == .still {
             return TrackingStatus(level: .resting, headline: "Resting: you've been still since \(hhmm(stillSince ?? now))", hint: nil)

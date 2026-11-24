@@ -37,7 +37,7 @@ struct DeletePeriodSheet: View {
                 }
                 Section {
                     Button("Delete these days", role: .destructive) { confirming = true }
-                    if let done { Text("Deleted. \(done.formatted()) points removed.").foregroundStyle(Color.muted) }
+                    if let done { Text("Deleted. \(done.formatted()) saved locations removed.").foregroundStyle(Color.muted) }
                 }
             }
             .listRowBackground(Color.card) }

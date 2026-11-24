@@ -14,7 +14,7 @@ public struct MatchedStretch: Sendable, Equatable, Codable {
 
 /// Hidden Markov Model map matching with Viterbi decoding (Newson & Krumm 2009), in log space.
 public enum MapMatcher {
-    public static let version = 2
+    public static let version = 3   // 3: one candidate per way, bad fixes on rails skipped; re-matches history once
     public static let confident = 0.6
 
     /// A used point: its candidates, their log emissions, and the best log score of a path ending in each (forward Viterbi).
@@ -46,10 +46,17 @@ public enum MapMatcher {
             case .boat?: [.ferry]
             case nil: rough ? [.rail, .tram, .ferry] : walking ? [.foot, .cycle, .road] : [.road, .rail, .tram, .ferry]
             }
-            // shortcut: the 8 nearest segments keep Viterbi at 64 routes a step; a dense square can crowd out the true way, raise if matches show it
+            // The nearest point of each of the 8 nearest ways (64 routes a step): 8 nearest segments were often 8 bits of one or two
+            // ways, crowding out the way actually taken (a train ride broke into 1-minute pieces, 2026-11-24).
+            var seenWays = Set<Int64>()
             let cands = Array(graph.candidates(lat: p.lat, lon: p.lon, radius: rough ? min(p.hAcc, 1500) : max(30, 2 * p.hAcc))
-                .filter { kinds.contains(graph.ways[graph.index[$0.wayId]!].kind) }.prefix(8))
-            if cands.isEmpty { flush(); continue }
+                .filter { kinds.contains(graph.ways[graph.index[$0.wayId]!].kind) && seenWays.insert($0.wayId).inserted }.prefix(8))
+            if cands.isEmpty {
+                // On rails a fix with no track near it is a bad fix (in trains a quarter of "precise" fixes lie 190 m+ off): skip it.
+                // Elsewhere it may be a walk off the map (a park), which must not be drawn on a street, so the chain ends.
+                if rough || mode.map({ [.train, .tram, .boat].contains($0) }) == true { continue }
+                flush(); continue
+            }
             // shortcut: bikes may ride against one-way roads and the -2 road penalty ignores oneway:bicycle and cycle lanes on the road, upgrade if matches show bikes on the wrong side
             let emis = cands.map { -0.5 * ($0.distance / sigma) * ($0.distance / sigma)
                 - (mode == .bike && graph.ways[graph.index[$0.wayId]!].kind == .road ? 2 : 0) }

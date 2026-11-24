@@ -55,8 +55,10 @@ public enum Transit {
             let a = vertex(r.path, near: r.stops[i]), b = vertex(r.path, near: r.stops[j])
             guard a < b else { continue }
             let slice = Array(r.path[a...b])
-            // Fixes along the way follow the track; with no fixes between the stations (a metro) the stations decide.
-            let precise = piece.filter { $0.kind == .moving }
+            // Fixes along the way follow the track; with no fixes between the stations (a metro) the stations decide. Fixes inside
+            // the end stations say nothing about the track: 27 s standing in Utrecht Centraal, 95 m off the route's stop, outvoted a
+            // ride's good fixes (2026-11-24).
+            let precise = piece.filter { p in p.kind == .moving && ![r.stops[i], r.stops[j]].contains { Geo.distance(p.lat, p.lon, $0.lat, $0.lon) <= rad } }
             let near = precise.filter { distance($0, to: slice) <= tolerance(r.mode) }.count
             guard precise.isEmpty || Double(near) >= 0.7 * Double(precise.count) else { continue }
             let passed = r.stops[(i + 1)..<j].filter { s in piece.contains { Geo.distance($0.lat, $0.lon, s.lat, s.lon) <= rad } }.count
@@ -68,6 +70,15 @@ public enum Transit {
         }
         guard let best, !tied else { return nil }
         return (best.route, best.from, best.to, best.path)
+    }
+
+    /// A ride's fixes between `start` and `end`, led by the last precise fix before it and followed by the first after it (where
+    /// you stood on the platform): a ride's own first and last fixes are often rough and hundreds of metres off, so `match`
+    /// found no station at the ends (a Utrecht-Rotterdam ride starting with a "1.2 km" fix 2 km from any stop, 2026-11-24).
+    public static func anchored(_ points: [FilteredPoint], from start: Date, to end: Date) -> [FilteredPoint] {
+        let ride = points.filter { $0.t >= start && $0.t <= end && $0.kind != .still }
+        let lead = points.last { $0.t < start && $0.kind != .rough }, tail = points.first { $0.t > end && $0.kind != .rough }
+        return (lead.map { [$0] } ?? []) + ride + (tail.map { [$0] } ?? [])
     }
 
     /// The path vertex closest to a stop.
