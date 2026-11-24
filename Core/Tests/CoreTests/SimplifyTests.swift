@@ -66,4 +66,16 @@ final class SimplifyTests: XCTestCase {
         XCTAssertLessThan(a[1], 1)                 // collinear
         XCTAssertGreaterThan(a[2], 1000)            // the corner
     }
+
+    func testDropSpikesRemovesOutAndBackKeepsCorners() {
+        func at(_ e: Double, _ n: Double) -> (lat: Double, lon: Double) { Geo.offset(lat: 52, lon: 5, north: n, east: e) }
+        // A walk east every 10 m with one fix 60 m north and straight back, and a two-fix wander of 40 m at the end.
+        var c = (0...10).map { at(Double($0) * 10, 0) }
+        c.insert(at(50, 60), at: 6)
+        c += [at(100, 40), at(110, 35), at(105, 2)]
+        XCTAssertEqual(Simplify.dropSpikes(c).map { c[$0].lat }, ((0...10).map { at(Double($0) * 10, 0) } + [at(105, 2)]).map(\.lat))
+        // A real corner (east 100 m, then north 100 m) stays whole.
+        let corner = (0...10).map { at(Double($0) * 10, 0) } + (1...10).map { at(100, Double($0) * 10) }
+        XCTAssertEqual(Simplify.dropSpikes(corner).count, corner.count)
+    }
 }

@@ -25,7 +25,7 @@ public struct TripLine: Sendable, Equatable {
 
 public enum TripLines {
     public static let tolerance: Double = 3  // m: detail kept in the cache; the map thins by Visvalingam area per zoom
-    public static let version = 6   // a new version rebuilds the cache once; 3: top speed per trip; 4: pottering is no trip; 5: rough fixes smoothed; 6: roundabouts the short way
+    public static let version = 7   // a new version rebuilds the cache once; 3: top speed per trip; 4: pottering is no trip; 5: rough fixes smoothed; 6: roundabouts the short way; 7: no out-and-back jumps
 
     /// The trip's top speed (m/s): the highest mean speed it held for 15 s, so a one-second GPS spike cannot decide it while a
     /// bus or car reaching 50 km/h between lights still counts (Huss et al. 2014: a high speed percentile splits walk/bike from
@@ -77,7 +77,8 @@ public enum TripLines {
         let p = trip.points
         let valid = p.map(\.speed).filter { $0 >= 0 }.sorted()
         let median = valid.isEmpty ? -1 : valid[valid.count / 2]
-        let kept = Simplify.douglasPeucker(p.map { ($0.lat, $0.lon) }, tolerance: tolerance)
+        let pts = p.map { (lat: $0.lat, lon: $0.lon) }, clean = Simplify.dropSpikes(pts)   // out-and-back jumps first
+        let kept = Simplify.douglasPeucker(clean.map { pts[$0] }, tolerance: tolerance).map { clean[$0] }
         let lats = p.map(\.lat), lons = p.map(\.lon)
         return TripLine(start: trip.start, end: trip.end,
                         minLat: lats.min()!, maxLat: lats.max()!, minLon: lons.min()!, maxLon: lons.max()!,
@@ -108,7 +109,8 @@ public enum TripLines {
         }
         if next > 0 { nc += coords[next...]; ns += speeds[next...]; coords = nc; speeds = ns }
         guard next > 0 || !smoothed.isEmpty else { return make(trip) }
-        let kept = Simplify.douglasPeucker(coords, tolerance: tolerance)
+        let clean = Simplify.dropSpikes(coords)   // out-and-back jumps first
+        let kept = Simplify.douglasPeucker(clean.map { coords[$0] }, tolerance: tolerance).map { clean[$0] }
         let lats = coords.map(\.lat), lons = coords.map(\.lon)
         return TripLine(start: trip.start, end: trip.end, minLat: lats.min()!, maxLat: lats.max()!, minLon: lons.min()!, maxLon: lons.max()!,
                         distance: trip.distance, coords: kept.map { (coords[$0].lat, coords[$0].lon, speeds[$0]) }, topSpeed: topSpeed(p))

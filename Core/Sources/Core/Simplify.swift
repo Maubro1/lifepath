@@ -87,4 +87,26 @@ public enum Simplify {
         }
         return area
     }
+
+    /// Indices of `c` without out-and-back jumps: a run of at most `maxRun` vertices that strays more than `out` metres from the
+    /// vertex before it while the vertex after it lies within `back` metres of that one. GPS noise draws these (a fix 30-150 m
+    /// out and straight back, a trip end wandering around the room); the owner's walks showed 35 in four days (2026-11-24).
+    public static func dropSpikes(_ c: [(lat: Double, lon: Double)], maxRun: Int = 4, out: Double = 25, back: Double = 20) -> [Int] {
+        var keep = Array(c.indices), changed = true
+        while changed {
+            changed = false
+            var k = 1
+            while k < keep.count - 1 {
+                let a = c[keep[k - 1]]
+                // A jump starts at a vertex that is itself far out, so the good vertex before it is never taken along.
+                if Geo.distance(a.lat, a.lon, c[keep[k]].lat, c[keep[k]].lon) > out, let len = (1...maxRun).first(where: { L in
+                    k + L < keep.count && Geo.distance(a.lat, a.lon, c[keep[k + L]].lat, c[keep[k + L]].lon) <= back
+                        && (k..<k + L).contains { Geo.distance(a.lat, a.lon, c[keep[$0]].lat, c[keep[$0]].lon) > out }
+                }) {
+                    keep.removeSubrange(k..<k + len); changed = true
+                } else { k += 1 }
+            }
+        }
+        return keep
+    }
 }
