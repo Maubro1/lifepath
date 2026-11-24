@@ -44,9 +44,10 @@ struct SettingsView: View {
         let s = TrackingStatus.evaluate(
             authorization: recorder.authorization, preciseLocation: recorder.preciseLocation, state: recorder.state,
             stillSince: recorder.stillSince, lastCheckIn: recorder.lastCheckIn, notSavingSince: recorder.notSavingSince,
-            signingExpiry: expiry, now: now)
+            signingExpiry: expiry, now: now, paused: recorder.paused)
         Group {   // pushed from the You tab, inside its navigation stack
             List { Group {
+                Section { Toggle("Pause", isOn: settings.$paused) }
                 Section("Status") {
                     Label(s.headline, systemImage: s.level == .problem ? "exclamationmark.triangle" : s.level == .resting ? "moon" : "checkmark.circle")
                         .foregroundStyle(s.level == .problem ? Color(UIColor(Palette.cherry)) : s.level == .resting ? Color.muted : Color(UIColor(Palette.mode(.bike))))   // as the You pill

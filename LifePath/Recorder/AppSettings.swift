@@ -9,4 +9,5 @@ import SwiftUI
     @AppStorage("streetsOnCellular") var streetsOnCellular = true
     @AppStorage("countCycling") var countCycling = false   // read by the map through UserDefaults
     @AppStorage("onboarded") var onboarded = false
+    @AppStorage("paused") var paused = false   // the owner's Pause switch: no tracking at all while on
 }

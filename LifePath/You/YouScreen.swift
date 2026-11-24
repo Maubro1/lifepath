@@ -60,7 +60,7 @@ struct YouScreen: View {
         let r = Recorder.shared
         let s = TrackingStatus.evaluate(authorization: r.authorization, preciseLocation: r.preciseLocation, state: r.state,
                                         stillSince: r.stillSince, lastCheckIn: r.lastCheckIn, notSavingSince: r.notSavingSince,
-                                        signingExpiry: SigningReminder.expiry, now: Date())
+                                        signingExpiry: SigningReminder.expiry, now: Date(), paused: r.paused)
         let colour: Color = s.level == .problem ? Color(UIColor(Palette.cherry)) : s.level == .resting ? Color.muted : Color(UIColor(Palette.mode(.bike)))
         return HStack(spacing: 8) {
             Circle().fill(colour).frame(width: 8, height: 8)

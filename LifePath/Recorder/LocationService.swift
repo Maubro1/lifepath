@@ -9,7 +9,7 @@ import CoreLocation
     private var serviceSession: CLServiceSession?
     private var backgroundSession: CLBackgroundActivitySession?
     private var monitor: Task<CLMonitor, Never>?
-    private var gpsOn = false, keepAliveOn = false
+    private var gpsOn = false, keepAliveOn = false, paused = false
 
     init(recorder: Recorder) {
         self.recorder = recorder
@@ -75,6 +75,18 @@ import CoreLocation
         if on { recording.startUpdatingLocation() } else { recording.stopUpdatingLocation() }
     }
 
+    /// Pause stops every location service, the relaunch nets included; resuming restarts what was on.
+    func setPaused(_ on: Bool) {
+        paused = on
+        if on {
+            recording.stopUpdatingLocation(); keepAlive.stopUpdatingLocation()
+            safety.stopMonitoringSignificantLocationChanges(); safety.stopMonitoringVisits()
+        } else {
+            if keepAliveOn { keepAlive.startUpdatingLocation() }
+            safety.startMonitoringSignificantLocationChanges(); safety.startMonitoringVisits()
+        }
+    }
+
     func setKeepAlive(_ on: Bool) {
         keepAliveOn = on
         if on { keepAlive.startUpdatingLocation() } else { keepAlive.stopUpdatingLocation() }
@@ -129,7 +141,7 @@ import CoreLocation
             default: .denied
             }
             recorder.authorizationChanged(a, precise: precise)
-            guard serviceSession != nil, a == .always || a == .whenInUse else { return }   // nothing starts before start()
+            guard serviceSession != nil, !paused, a == .always || a == .whenInUse else { return }   // nothing starts before start() or while paused
             // Starts issued before the grant may not have taken; re-issuing is harmless.
             if gpsOn { recording.startUpdatingLocation() }
             if keepAliveOn { keepAlive.startUpdatingLocation() }

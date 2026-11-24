@@ -55,4 +55,10 @@ final class TrackingStatusTests: XCTestCase {
         XCTAssertEqual(eval(expiry: now.addingTimeInterval(23 * 3600)).hint, "Open SideStore and tap Refresh All, then open LifePath once.")
         XCTAssertEqual(eval(expiry: now.addingTimeInterval(25 * 3600)).level, .healthy)
     }
+
+    func testPausedSaysPaused() {
+        let s = TrackingStatus.evaluate(authorization: .always, preciseLocation: true, state: .moving, stillSince: nil,
+                                        lastCheckIn: nil, notSavingSince: nil, signingExpiry: nil, now: Date(), paused: true)
+        XCTAssertEqual(s, TrackingStatus(level: .resting, headline: "Paused", hint: nil), "no warnings about missing checks while paused")
+    }
 }

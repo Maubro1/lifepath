@@ -19,6 +19,8 @@ import UIKit
     private(set) var preciseLocation = false
     /// Effective deep sleep: the manual setting or thermal (fair counts only off the charger)/low power/battery.
     private(set) var deepSleep = false
+    /// The Pause switch: GPS, keep-alive, significant-change and visit monitoring all off; every input ignored.
+    private(set) var paused = false
 
     @ObservationIgnored let settings = AppSettings()
     @ObservationIgnored private var location: LocationService!
@@ -114,6 +116,7 @@ import UIKit
     // MARK: Inputs from the services
 
     func send(_ e: MotionEvent) {
+        guard !paused else { return }   // paused: nothing reaches the engine, nothing is recorded
         let now = Date()
         lastCheckIn = now
         let before = engine.state
@@ -193,7 +196,7 @@ import UIKit
             setSpotTimer(20) { self.endSpotCheck() }
         case .stopSpotCheck: endSpotCheck()
         case .scheduleSpotCheck(let after): setSpotTimer(after) { self.send(.spotCheckDue) }
-        case .setKeepAlive(let on): location.setKeepAlive(on)
+        case .setKeepAlive(let on): location.setKeepAlive(on && !paused)
         case .armGeofence(let f): location.arm(f)
         case .disarmGeofence: location.disarm()
         case .writeStillPoint(let p):
@@ -254,7 +257,7 @@ import UIKit
     }
 
     private func applyGPS() {
-        let on = recordingWanted || spotChecking
+        let on = !paused && (recordingWanted || spotChecking)
         if recordingWanted { gpsSpot = false }
         guard on != gpsOn else { return }
         gpsOn = on
@@ -280,7 +283,17 @@ import UIKit
                            automotive: lastActivity == .automotive, struggle: struggle && !probing, showsIndicator: settings.showsIndicator)
     }
 
+    private func setPaused(_ on: Bool) {
+        paused = on
+        buffer.add(LoggedEvent(t: Date(), kind: "pause", detail: on ? "on" : "off"))
+        if on { spotTimer?.invalidate(); spotChecking = false }
+        location.setPaused(on)
+        applyGPS()
+        flush()
+    }
+
     private func refreshConditions() {
+        if settings.paused != paused { setPaused(settings.paused) }   // UserDefaults changes land here
         let now = Date(), p = ProcessInfo.processInfo
         let t = p.thermalState, low = p.isLowPowerModeEnabled
         let name = switch t {

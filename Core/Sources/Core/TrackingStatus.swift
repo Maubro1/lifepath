@@ -9,7 +9,9 @@ public struct TrackingStatus: Sendable, Equatable {
     public var hint: String?
 
     public static func evaluate(authorization: Authorization, preciseLocation: Bool, state: MotionState,
-                                stillSince: Date?, lastCheckIn: Date?, notSavingSince: Date?, signingExpiry: Date?, now: Date) -> TrackingStatus {
+                                stillSince: Date?, lastCheckIn: Date?, notSavingSince: Date?, signingExpiry: Date?, now: Date,
+                                paused: Bool = false) -> TrackingStatus {
+        if paused { return TrackingStatus(level: .resting, headline: "Paused", hint: nil) }
         func problem(_ headline: String, _ hint: String) -> TrackingStatus {
             TrackingStatus(level: .problem, headline: headline, hint: hint)
         }
