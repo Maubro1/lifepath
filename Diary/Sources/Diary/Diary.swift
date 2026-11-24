@@ -681,7 +681,8 @@ public final class Diary: Sendable {
     }
 
     /// Routes found for a tile; the tile is then marked so its routes are not asked for again.
-    public func saveRoutes(_ routes: [Route], tile: Tile) throws {
+    /// `tile`: marks that tile's routes as stored; nil for the routes of one ride (asked for by its two ends).
+    public func saveRoutes(_ routes: [Route], tile: Tile?) throws {
         try pool.write { db in
             for r in routes {
                 let lats = r.path.map(\.lat), lons = r.path.map(\.lon)
@@ -689,7 +690,7 @@ public final class Diary: Sendable {
                 row += [Self.pack(r.stops.flatMap { [UInt64(bitPattern: $0.id), $0.lat.bitPattern, $0.lon.bitPattern] }), Self.packRings([r.path])]
                 try db.execute(sql: "INSERT OR REPLACE INTO route(id, mode, minLat, maxLat, minLon, maxLon, stops, path) VALUES (?,?,?,?,?,?,?,?)", arguments: row)
             }
-            try db.execute(sql: "INSERT OR REPLACE INTO routeTile(x, y) VALUES (?, ?)", arguments: [tile.x, tile.y])
+            if let tile { try db.execute(sql: "INSERT OR REPLACE INTO routeTile(x, y) VALUES (?, ?)", arguments: [tile.x, tile.y]) }
         }
     }
 

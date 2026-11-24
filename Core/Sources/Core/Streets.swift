@@ -173,6 +173,14 @@ public enum OSM {
         return "[out:json][timeout:60];rel[\"type\"=\"route\"][\"route\"~\"^(train|subway|light_rail|monorail|tram|bus|trolleybus|ferry)$\"]\(b);out body;"
     }
 
+    /// Rail routes (train, metro, light rail, tram, ferry) passing within 300 m of both ends of one ride, with their shapes: a
+    /// handful of lines in one small request, instead of every route of every tile along the way (138 for one tile of central
+    /// Utrecht, which the public server kept refusing, 2026-11-24). Only the two places travel, never the track.
+    public static func rideRoutesQuery(from a: (lat: Double, lon: Double), to b: (lat: Double, lon: Double)) -> String {
+        let f = "[\"type\"=\"route\"][\"route\"~\"^(train|subway|light_rail|monorail|tram|ferry)$\"]"
+        return "[out:json][timeout:60];rel(around:300,\(a.lat),\(a.lon))\(f)->.a;rel(around:300,\(b.lat),\(b.lon))\(f)->.b;rel.a.b;out geom;"
+    }
+
     public static func routeGeometryQuery(ids: [Int64]) -> String {
         "[out:json][timeout:120];rel(id:\(ids.map(String.init).joined(separator: ",")));out geom;"
     }

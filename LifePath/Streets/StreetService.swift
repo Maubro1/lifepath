@@ -42,6 +42,7 @@ enum StreetService {
         var backoff = try diary.meta("streetsBackoff").flatMap(TimeInterval.init) ?? 0
         var retryAt = try diary.meta("streetsRetryAt").flatMap(TimeInterval.init) ?? 0
         var tiles = 0, matched = 0, modeCount = 0, unsure = 0, waiting = false, borders = true, routesOK = true
+        var asked = Set<String>()   // ride ends already asked for routes in this run
         let session = download ? makeSession(cellular: cellular) : nil
         defer { session?.finishTasksAndInvalidate() }
         var fetching = session != nil
@@ -120,12 +121,19 @@ enum StreetService {
             let box = (lat: trip.points.map(\.lat), lon: trip.points.map(\.lon))
             let routes = try diary.routes(minLat: box.lat.min()! - 0.01, maxLat: box.lat.max()! + 0.01, minLon: box.lon.min()! - 0.01, maxLon: box.lon.max()! + 0.01)
             // Rides are anchored where you stood on the platform, up to 30 min either side of the trip (often a rest before it).
-            let around = routes.isEmpty ? [] : try diary.points(from: trip.start.addingTimeInterval(-1800), to: trip.end.addingTimeInterval(1800))
-            for k in modes.indices where !routes.isEmpty && ![.walk, .run, .bike].contains(modes[k].mode) {
+            let around = try diary.points(from: trip.start.addingTimeInterval(-1800), to: trip.end.addingTimeInterval(1800))
+            for k in modes.indices where ![.walk, .run, .bike].contains(modes[k].mode) {
                 let piece = trip.points.filter { $0.t >= modes[k].start && $0.t <= modes[k].end && $0.kind != .still }
-                guard let a = piece.first?.t, let z = piece.last?.t,
-                      let m = Transit.match(Transit.anchored(around, from: modes[k].start, to: modes[k].end), routes: routes)
-                        ?? Transit.match(piece, routes: routes) else { continue }
+                let anchored = Transit.anchored(around, from: modes[k].start, to: modes[k].end)
+                var m = Transit.match(anchored, routes: routes) ?? Transit.match(piece, routes: routes)
+                // A rail ride no stored route explains: ask for the routes serving both its ends (one small request, no tiles needed).
+                if m == nil, [.train, .tram].contains(modes[k].mode), fetching, let session, let p = anchored.first, let q = anchored.last,
+                   asked.insert("\(Int(p.lat * 1e3)),\(Int(p.lon * 1e3)),\(Int(q.lat * 1e3)),\(Int(q.lon * 1e3))").inserted,
+                   let found = try? OSM.parseRoutes(await post(OSM.rideRoutesQuery(from: (p.lat, p.lon), to: (q.lat, q.lon)), session)).routes, !found.isEmpty {
+                    try diary.saveRoutes(found, tile: nil)
+                    m = Transit.match(anchored, routes: found) ?? Transit.match(piece, routes: found)
+                }
+                guard let a = piece.first?.t, let z = piece.last?.t, let m else { continue }
                 modes[k].mode = m.route.mode
                 modes[k].confidence = max(modes[k].confidence, 0.9)
                 matches.removeAll { $0.start <= z && $0.end >= a }
