@@ -76,7 +76,7 @@ struct SettingsView: View {
                 Section {
                     Toggle("Save extra battery", isOn: settings.$deepSleep)
                 } footer: {
-                    Text("LifePath already saves battery by itself when the battery is low, your phone is warm or Low Power Mode is on. Turn this on to always save battery: it checks where you are every 15 minutes instead of every 5, so the first minutes of a trip can be missed.")
+                    Text("LifePath already saves battery by itself when the battery is low, your phone is warm, Low Power Mode is on, or at night (1:00 to 5:30) while you're at one of your places. Turn this on to always save battery: it checks where you are every 15 minutes instead of every 5, so the first minutes of a trip can be missed.")
                 }
                 Section {
                     Picker("Appearance", selection: $appearance) {

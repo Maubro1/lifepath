@@ -136,6 +136,13 @@ import UIKit
         configureRecording()
         applyGPS()
         if engine.state != before || buffer.isDue(at: now) { flush() }
+        if !settings.deepSleep, nightRest(now) != (deepSleepReason == "night") { refreshConditions() }   // 01:00 and 05:30 pass, a rest starts or ends
+    }
+
+    /// 01:00-05:30 at rest on a pinned place: save extra battery (owner, 2026-11-24).
+    private func nightRest(_ now: Date) -> Bool {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: now), m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+        return (60..<330).contains(m) && engine.state == .still && knownPlace(now) != nil
     }
 
     /// The visible pin whose shape holds the rest's centre, from the places last loaded; nil elsewhere.
@@ -309,6 +316,7 @@ import UIKit
         if onCharge != charging { charging = onCharge; buffer.add(LoggedEvent(t: now, kind: "charging", detail: onCharge ? "on" : "off")) }
         let battery = UIDevice.current.batteryLevel   // -1 when unknown
         let reason: String? = settings.deepSleep ? "manual"
+            : nightRest(now) ? "night"
             : t.rawValue >= ProcessInfo.ThermalState.serious.rawValue || (t == .fair && !onCharge) ? "thermal"
             : low ? "lowPower"
             : battery >= 0 && battery < 0.2 && !onCharge ? "battery" : nil   // on the charger a low battery costs nothing
