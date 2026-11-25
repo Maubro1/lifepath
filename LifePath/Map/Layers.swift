@@ -244,17 +244,19 @@ struct HeatContent: LayerContent {
     var grid: GridIndex
     var max: Double   // passes through the busiest cell at the loading zoom
     var dark: Bool
-    static let row: [Float] = [1, 8, 28, 56, 70, 56, 28, 8, 1]   // binomial blur row, run once or three times
+    /// A Gaussian blur row with standard deviation `sigma` buffer px, normalised: one pass whose width follows the zoom smoothly.
+    static func row(sigma: Double) -> [Float] {
+        let r = Int((3 * sigma).rounded(.up)), w = (-r...r).map { exp(-Double($0 * $0) / (2 * sigma * sigma)) }, s = w.reduce(0, +)
+        return w.map { Float($0 / s) }
+    }
     /// Passes for full heat; variant 2 (screenshots only) heats up sooner, for comparison.
     static let full: Double = DemoData.variant == 2 ? 15 : 40
     /// Restores one trip to a count of 1 on its centre line after the blur spreads it out, so counts stay true passes.
-    static func gain(width: CGFloat, blurs: Int) -> Double {
-        let n = 61, r = row.count / 2, k = row.map(Double.init), s = k.reduce(0, +)
-        var p = (0..<n).map { abs(Double($0 - n / 2)) <= Double(width) / 2 ? 1.0 : 0 }
-        for _ in 0..<blurs {
-            p = (0..<n).map { i in (0..<k.count).reduce(0.0) { a, j in let x = i + j - r; return x >= 0 && x < n ? a + p[x] * k[j] / s : a } }
-        }
-        return 1 / p[n / 2]
+    static func gain(width: CGFloat, row: [Float]) -> Double {
+        let n = 81, r = row.count / 2, k = row.map(Double.init)
+        let p = (0..<n).map { abs(Double($0 - n / 2)) <= Double(width) / 2 ? 1.0 : 0 }
+        let q = (0..<n).map { i in (0..<k.count).reduce(0.0) { a, j in let x = i + j - r; return x >= 0 && x < n ? a + p[x] * k[j] : a } }
+        return 1 / q[n / 2]
     }
     static let pass: Float = 1 / 4096   // grey added per trip (plusLighter clamps at 1): up to 4096 passes; count = value × 4096
 
@@ -270,13 +272,14 @@ struct HeatContent: LayerContent {
 
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
         // Density at half the tile's points, a margin so strokes and blur cross tile seams, then smoothly scaled up to full points.
-        let px = Double(scale) / 2, m = 16   // margin covers the blur reach (3 x 4 px) plus half the line
-        // Narrower and less blurred zoomed out (like the lines), so trips side by side stay apart instead of melting into blobs:
-        // 4 buffer px and three blurs in the street, down to 2 px and one blur over a region.
+        let px = Double(scale) / 2, m = 16   // margin covers the blur reach (3 sigma, at most 8 px) plus half the line
+        // Narrower and less blurred zoomed out (like the lines), so trips side by side stay apart instead of melting into blobs.
+        // Width and blur follow the zoom continuously (one Gaussian pass whose sigma scales), never in steps: 4 px wide with
+        // sigma 2.45 px (exactly the old three binomial passes: variance 3 x 2) in the street, down to 2 px and 0.8 px over a region.
         let mid = MKMapPoint(x: rect.midX, y: rect.midY).coordinate.latitude
         let mpp = 1 / (Double(scale) * pointsPerMetre(mid))
         let k = Swift.max(1 / 3, Swift.min(1, 1 - 0.47 * log10(Swift.max(mpp, 2) / 2)))
-        let width = CGFloat(Swift.max(2, 4 * k)), blurs = k > 0.6 ? 3 : 1, gain = Self.gain(width: width, blurs: blurs)
+        let width = CGFloat(Swift.max(2, 4 * k)), row = Self.row(sigma: 2.45 * k), gain = Self.gain(width: width, row: row)
         let w = Int((rect.width * px).rounded(.up)) + 2 * m, h = Int((rect.height * px).rounded(.up)) + 2 * m
         let ow = Swift.max(1, Int((rect.width * Double(scale)).rounded())), oh = Swift.max(1, Int((rect.height * Double(scale)).rounded()))
         guard w > 2 * m, h > 2 * m, max > 0,
@@ -303,19 +306,15 @@ struct HeatContent: LayerContent {
             density.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
         }
         guard let data = density.data else { return }
-        // Blur three times with a 9×9 Gaussian (binomial): the lines soften into wide gradients.
+        // One Gaussian blur pass: the lines soften into gradients as wide as this zoom calls for.
         var src = vImage_Buffer(data: data, height: vImagePixelCount(h), width: vImagePixelCount(w), rowBytes: w * 4)
-        let row = Self.row, sum = row.reduce(0, +), n = UInt32(row.count)
-        let kernel = row.flatMap { a in row.map { a * $0 / (sum * sum) } }
+        let n = UInt32(row.count)
+        let kernel = row.flatMap { a in row.map { a * $0 } }
         var blurred = [Float](repeating: 0, count: w * h)
         var big = [Float](repeating: 0, count: ow * oh)
         blurred.withUnsafeMutableBytes { t in
             var dst = vImage_Buffer(data: t.baseAddress, height: src.height, width: src.width, rowBytes: w * 4)
             _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
-            for _ in 0..<(blurs - 1) / 2 {   // up to two more passes, back and forth between the two buffers
-                _ = vImageConvolve_PlanarF(&dst, &src, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
-                _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
-            }
             // Crop the margins and scale up to the tile's points with high-quality resampling: no visible pixels.
             var crop = vImage_Buffer(data: t.baseAddress! + (m * w + m) * 4, height: vImagePixelCount(h - 2 * m),
                                      width: vImagePixelCount(w - 2 * m), rowBytes: w * 4)
