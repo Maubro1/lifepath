@@ -278,7 +278,9 @@ struct HeatContent: LayerContent {
         // sigma 2.45 px (exactly the old three binomial passes: variance 3 x 2) in the street, down to 2 px and 0.8 px over a region.
         let mid = MKMapPoint(x: rect.midX, y: rect.midY).coordinate.latitude
         let mpp = 1 / (Double(scale) * pointsPerMetre(mid))
-        let k = Swift.max(1 / 3, Swift.min(1, 1 - 0.47 * log10(Swift.max(mpp, 2) / 2)))
+        let thin = Swift.max(1 / 3, Swift.min(1, 1 - 0.47 * log10(Swift.max(mpp, 2) / 2)))
+        // Past region zoom (150 m per point) it grows again, gradually, so a whole country's heat stays visible (owner, 25 Nov).
+        let k = Swift.max(thin, Swift.min(1.2, sqrt(Swift.max(mpp, 150) / 150) / 3))
         let width = CGFloat(Swift.max(2, 4 * k)), row = Self.row(sigma: 2.45 * k), gain = Self.gain(width: width, row: row)
         let w = Int((rect.width * px).rounded(.up)) + 2 * m, h = Int((rect.height * px).rounded(.up)) + 2 * m
         let ow = Swift.max(1, Int((rect.width * Double(scale)).rounded())), oh = Swift.max(1, Int((rect.height * Double(scale)).rounded()))
