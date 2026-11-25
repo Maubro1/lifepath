@@ -244,20 +244,18 @@ struct HeatContent: LayerContent {
     var grid: GridIndex
     var max: Double   // passes through the busiest cell at the loading zoom
     var dark: Bool
-    static let width: CGFloat = 4                                 // line width in buffer px (half the screen points)
-    static let row: [Float] = [1, 8, 28, 56, 70, 56, 28, 8, 1]   // binomial blur row, run three times: wide and soft
-    static let blurs = 3
+    static let row: [Float] = [1, 8, 28, 56, 70, 56, 28, 8, 1]   // binomial blur row, run once or three times
     /// Passes for full heat; variant 2 (screenshots only) heats up sooner, for comparison.
     static let full: Double = DemoData.variant == 2 ? 15 : 40
     /// Restores one trip to a count of 1 on its centre line after the blur spreads it out, so counts stay true passes.
-    static let gain: Double = {
+    static func gain(width: CGFloat, blurs: Int) -> Double {
         let n = 61, r = row.count / 2, k = row.map(Double.init), s = k.reduce(0, +)
         var p = (0..<n).map { abs(Double($0 - n / 2)) <= Double(width) / 2 ? 1.0 : 0 }
         for _ in 0..<blurs {
             p = (0..<n).map { i in (0..<k.count).reduce(0.0) { a, j in let x = i + j - r; return x >= 0 && x < n ? a + p[x] * k[j] / s : a } }
         }
         return 1 / p[n / 2]
-    }()
+    }
     static let pass: Float = 1 / 4096   // grey added per trip (plusLighter clamps at 1): up to 4096 passes; count = value × 4096
 
     var style: String { "heat\(dark)\(Int(max))" }
@@ -273,6 +271,12 @@ struct HeatContent: LayerContent {
     func draw(_ rect: MKMapRect, scale: MKZoomScale, in ctx: CGContext, renderer: MKOverlayRenderer) {
         // Density at half the tile's points, a margin so strokes and blur cross tile seams, then smoothly scaled up to full points.
         let px = Double(scale) / 2, m = 16   // margin covers the blur reach (3 x 4 px) plus half the line
+        // Narrower and less blurred zoomed out (like the lines), so trips side by side stay apart instead of melting into blobs:
+        // 4 buffer px and three blurs in the street, down to 2 px and one blur over a region.
+        let mid = MKMapPoint(x: rect.midX, y: rect.midY).coordinate.latitude
+        let mpp = 1 / (Double(scale) * pointsPerMetre(mid))
+        let k = Swift.max(1 / 3, Swift.min(1, 1 - 0.47 * log10(Swift.max(mpp, 2) / 2)))
+        let width = CGFloat(Swift.max(2, 4 * k)), blurs = k > 0.6 ? 3 : 1, gain = Self.gain(width: width, blurs: blurs)
         let w = Int((rect.width * px).rounded(.up)) + 2 * m, h = Int((rect.height * px).rounded(.up)) + 2 * m
         let ow = Swift.max(1, Int((rect.width * Double(scale)).rounded())), oh = Swift.max(1, Int((rect.height * Double(scale)).rounded()))
         guard w > 2 * m, h > 2 * m, max > 0,
@@ -290,11 +294,11 @@ struct HeatContent: LayerContent {
         for i in grid.items(in: near) where lines[i].rect.intersects(near) && lines[i].points.count > 1 {
             let path = CGMutablePath()
             path.addLines(between: lines[i].points.map(b))
-            density.setStrokeColor(gray: 1, alpha: CGFloat(Self.pass)); density.setLineWidth(Self.width)
+            density.setStrokeColor(gray: 1, alpha: CGFloat(Self.pass)); density.setLineWidth(width)
             density.addPath(path); density.strokePath()   // one stroke per trip: a trip counts once where it overlaps itself
         }
         for p in places where near.contains(p.point) {
-            let c = b(p.point), r = 5.0
+            let c = b(p.point), r = 5.0 * k   // place glows shrink with the lines
             density.setFillColor(gray: 1, alpha: CGFloat(Swift.min(1, Double(Self.pass) * (1 + log1p(p.hours)))))
             density.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
         }
@@ -308,7 +312,7 @@ struct HeatContent: LayerContent {
         blurred.withUnsafeMutableBytes { t in
             var dst = vImage_Buffer(data: t.baseAddress, height: src.height, width: src.width, rowBytes: w * 4)
             _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
-            for _ in 0..<(Self.blurs - 1) / 2 {   // two more passes, back and forth between the two buffers
+            for _ in 0..<(blurs - 1) / 2 {   // up to two more passes, back and forth between the two buffers
                 _ = vImageConvolve_PlanarF(&dst, &src, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
                 _ = vImageConvolve_PlanarF(&src, &dst, nil, 0, 0, kernel, n, n, 0, vImage_Flags(kvImageEdgeExtend))
             }
@@ -323,7 +327,7 @@ struct HeatContent: LayerContent {
         // Colour through the ramp, the count restored from the blur's spread.
         var rgba = [UInt8](repeating: 0, count: ow * oh * 4)
         for i in 0..<(ow * oh) {
-            let count = Double(big[i] / Self.pass) * Self.gain
+            let count = Double(big[i] / Self.pass) * gain
             guard count > 0.05 else { continue }
             let c = HeatRamp.colour(HeatRamp.level(count: count, max: max, full: Self.full)), k = i * 4
             rgba[k] = UInt8(c.r * c.a * 255); rgba[k + 1] = UInt8(c.g * c.a * 255); rgba[k + 2] = UInt8(c.b * c.a * 255); rgba[k + 3] = UInt8(c.a * 255)
