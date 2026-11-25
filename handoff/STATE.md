@@ -10,6 +10,7 @@ Last updated: 2026-11-23 (update this line and the sections below whenever the h
 | v0.1.0-preview.1 / .2 | Stage 1: the recorder. IMM Kalman filter with Doppler, motion engine (moving/settling/still, wander backoff, fidget-proof wakes, tunnels, indoor fallback), deep-sleep automatic mix (thermal fair only counts off the charger), diary, status box, health report, onboarding, SideStore reminder. |
 | v0.2.0-preview.1 | Stage 2a: map tab (lines by date or speed, time filters, satellite, heat map, rest dots, locate-me), offline RTS trip smoothing (open or charging only). |
 | v0.2.1-preview.1 | Life-long map: per-trip level-of-detail line cache; every trip shown at every zoom; chunked reads instead of any cap; heat and rest dots from all points. |
+| v0.9.22-preview.1 | Heat blur is one Gaussian whose width follows the zoom smoothly (no step from three passes to one). Lines left as they are: smooth widths during a pinch would need MapKit's built-in renderers (vectors since iOS 13, per WWDC19 236), giving up the custom renderer's stable, flicker-free, per-segment-coloured lines for an undocumented gain; owner said to leave it if it can't be done reliably. |
 | v0.9.21-preview.1 | Heat map thinner zoomed out: stroke width 4 to 2 buffer px and three blurs to one as you zoom out (same zoom curve as the lines), place glows shrink with it, counts kept true by a matching gain. |
 | v0.9.20-preview.1 | No per-tile route downloads any more (central Utrecht's 138-route request kept failing and held the matching cursor): train, tram, bus and boat rides ask for the routes near both their ends; rough fixes need a 300 m strip of tiles instead of 1.5 km. Still open: keep extremely short trips out of pins. |
 | v0.9.19-preview.1 | Train and tram rides no route explains ask Overpass for the rail routes within 300 m of both platform ends (one small request per ride, no tiles needed; tested: Rotterdam CS-Utrecht CS gives 10 routes, 2.8 MB); routes saved without a tile. CI not yet checked. Still open: tile downloads keep stalling the cursor (route-per-tile requests; rough 1.5 km tile radius); keep extremely short trips out of pins. |
@@ -44,13 +45,9 @@ Last updated: 2026-11-23 (update this line and the sections below whenever the h
 
 The owner runs these on their iPhone and reports that recording works well.
 
-## Now: v0.9.21-preview.1 released (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
+## Now: v0.9.22-preview.1 released (owner said release without waiting for screenshots; fix and re-release if the checks find issues)
 
 Accuracy round 1 and the top-speed filter shipped. Next from the report, in its order: measure first (the health report now gives iOS's speed/direction accuracy and the walks' offset from their street with a fade time; feed the measured fade time into `Drift.phone`), then the `.fitness` vs `.other` walk experiment (needs the owner's test walks), walker-tuned map matching (beta by spacing, off-network option), drift states in the smoother. Speed filter follow-ups: per stretch instead of per trip (a walk to the station currently counts with the train), and speed pedelecs (32-45 km/h) straddle the 40 km/h line. Known: km during a signal gap are not counted in the day's distance.
-
-## In progress (2026-11-25): smooth width changes while zooming
-
-Owner: line and heat thickness must change gradually while zooming, never in steps. Done locally (committed, not released): the heat blur is one Gaussian pass whose sigma follows the zoom continuously (2.45 px in the street = the old three binomial passes, down to 0.8 px), replacing the 3-to-1 pass switch. Remaining: MapKit draws the custom LayerRenderer as tiles at discrete zoom levels and stretches old tiles during a pinch, so widths jump at each redraw; a research subagent is checking whether built-in MKPolylineRenderer/MKMultiPolylineRenderer render smooth vectors (notes in the session scratchpad smooth-zoom.md). Then release lines + heat together with [screens].
 
 ## Next after the usage reset (owner, 2026-11-24 evening), in this order
 
